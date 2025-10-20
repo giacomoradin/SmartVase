@@ -1,1 +1,109 @@
-<div align="center"><img src="https://www.google.com/search?q=https://placehold.co/1200x400/1a2a1a/c2f0c2%3Ftext%3DSmartVase%250A%250AEnterprise-Grade%2520IoT%2520Greenhouse%26font%3Draleway" alt="SmartVase Project Banner"></div><div align="center"></div>A highly reliable, resilient, and observable IoT system for a mobile, fully automated greenhouse, controlled via a native Android application.This document presents a comprehensive technical specification for the SmartVase project. It is designed to serve as the definitive reference document for the engineering team, detailing the system's architecture, foundational design principles, communication protocols, and development workflow.🗺️ Table of ContentsProject Vision & Foundational PrinciplesSystem Architecture AnalysisCommunication Protocol: ProtobufKey Firmware ConceptsTeam Roles & ResponsibilitiesDeveloper Onboarding & WorkflowLicense🎯 1. Project Vision & Foundational PrinciplesThe objective of the SmartVase project is to engineer an enterprise-ready IoT product that automates plant cultivation with a high degree of reliability. The system's architecture is predicated on four foundational principles:Resilience & Robustness: The system is required to operate autonomously for extended durations and possess the capability to recover gracefully from software stalls, hardware faults, and anomalous environmental conditions.Observability & Diagnostics: Guided by the principle that system performance cannot be improved without precise measurement, each component is engineered to generate structured logs, granular telemetry, and comprehensive health status reports.Performance & Efficiency: Within a resource-constrained embedded environment, every CPU cycle, byte of RAM, and transmitted bit is a critical resource. The architecture consequently prioritizes efficient data serialization and non-blocking execution models.Modularity & Maintainability: The system employs a rigorous separation of concerns, which enables parallel development, independent testing of subsystems, and facilitates long-term maintenance.🏗️ 2. System Architecture AnalysisThe system utilizes a distributed architecture that decouples responsibilities across specialized hardware components and a central communication backbone.Firmware SubsystemsThe firmware is structured as a triumvirate of microcontrollers, each assigned a distinct and non-overlapping operational role.ComponentCodenameCore FunctionArduino MegaThe BrawnDirect hardware control, sensor reading, and physical interaction.ESP32 StandardThe BrainLogic coordination, data aggregation, and external communication hub.ESP32-CAMThe EyeSpecialized vision processing and image analysis.Android ApplicationThe user-facing control center is constructed upon a modern, robust, and scalable native Android technology stack (Kotlin, Jetpack Compose, MVVM).Cloud & Communication BackboneA central MQTT Broker serves as the simple, reliable, and scalable backbone for all communication between the IoT device and the Android application.⚡ 3. Communication Protocol: Protobuf over MQTT & SerialTo satisfy the project's stringent requirements for efficiency and robustness, the use of JSON is explicitly not used for data exchange. The entire system relies on Protocol Buffers.Protocol Buffers (Protobuf) is a binary serialization format that offers critical advantages in an embedded context: significantly smaller payload sizes, faster parsing speeds, minimal RAM overhead, and a strict, strongly-typed schema that eliminates an entire class of runtime errors.All message structures for the entire system are defined in a single file: smartvase.proto. This file serves as the canonical definition—the single source of truth— for all data interchange schemas.🛠️ 4. Elucidation of Key Firmware ConceptsThe firmware of the Platform Controller incorporates several critical mechanisms designed to ensure operational resilience:Hardware Watchdog (WDT): Perpetually active to ensure recovery from software faults.Low Memory Detection: Activates a "degraded mode" to prevent system crashes when SRAM is critically low.Hub Deadman Timer: Enters a safe state if communication from the Logic Hub is lost.Resilient Data Persistence: A dual-slot, CRC-validated storage strategy protects configuration and statistics against data corruption.👨‍💻 5. Team Roles & ResponsibilitiesMemberRoleKey ResponsibilitiesGiacomoProject Manager & Lead Firmware EngineerOverall project supervision, system architecture, and firmware development for the ESP32 Hub and ESP32-CAM.AntonioComputer Vision SpecialistDevelopment of all image processing and analysis logic on the ESP32-CAM.FiaBackend & Cloud ArchitectDesign, setup, and maintenance of the MQTT broker infrastructure.GabrielAndroid Application DeveloperEnd-to-end development of the native Android control application.🚀 6. Developer Onboarding & WorkflowDevelopment PrerequisitesProtocol Buffer Compiler (protoc)Nanopb (C implementation for embedded)PlatformIO IDEAndroid StudioCore Development Workflow MandateAdherence to the following schema-first workflow is mandatory for any modification affecting inter-component communication:✍️ Define in .proto: The process is initiated by editing the smartvase.proto file.⚙️ Generate Code: Run the protoc compiler and plugins to generate code for all platforms.💡 Implement Logic: Utilize the newly generated, type-safe structures in the application or firmware code.📜 7. LicenseThis project is licensed under the MIT License. See the LICENSE file for full details.
+<div align="center">
+  <img src="https://placehold.co/1200x400/1a2a1a/c2f0c2?text=SmartVase%0A%0AEnterprise-Grade%20IoT%20Greenhouse&font=raleway" alt="SmartVase Project Banner">
+</div>
+
+<div align="center">
+  <h3>A highly reliable, resilient, and observable IoT system for a mobile, fully automated greenhouse, controlled via a native Android application.</h3>
+</div>
+
+---
+
+This document presents a comprehensive technical specification for the **SmartVase** project.  
+It is designed to serve as the definitive reference for the engineering team, detailing the system's architecture, foundational design principles, communication protocols, and development workflow.
+
+---
+
+## 🗺️ Table of Contents
+1. [Project Vision & Foundational Principles](#-1-project-vision--foundational-principles)  
+2. [System Architecture Analysis](#-2-system-architecture-analysis)  
+3. [Communication Protocol: Protobuf](#-3-communication-protocol-protobuf-over-mqtt--serial)  
+4. [Key Firmware Concepts](#-4-elucidation-of-key-firmware-concepts)  
+5. [Team Roles & Responsibilities](#-5-team-roles--responsibilities)  
+6. [Developer Onboarding & Workflow](#-6-developer-onboarding--workflow)  
+7. [License](#-7-license)  
+
+---
+
+## 🎯 1. Project Vision & Foundational Principles
+
+The objective of the SmartVase project is to engineer an enterprise-ready IoT product that automates plant cultivation with a high degree of reliability.  
+The system's architecture is predicated on four foundational principles:
+
+- **Resilience & Robustness**: Operate autonomously for extended durations and recover gracefully from software stalls, hardware faults, and anomalous conditions.  
+- **Observability & Diagnostics**: Structured logs, granular telemetry, and comprehensive health status reports.  
+- **Performance & Efficiency**: Efficient data serialization and non-blocking execution models in resource-constrained environments.  
+- **Modularity & Maintainability**: Rigorous separation of concerns, enabling parallel development and long-term maintainability.  
+
+---
+
+## 🏗️ 2. System Architecture Analysis
+
+The system utilizes a distributed architecture that decouples responsibilities across specialized hardware components and a central communication backbone.
+
+### Firmware Subsystems
+
+| Component       | Codename | Core Function                                        |
+|-----------------|----------|------------------------------------------------------|
+| Arduino Mega    | The Brawn | Direct hardware control, sensor reading, physical I/O |
+| ESP32 Standard  | The Brain | Logic coordination, data aggregation, comms hub      |
+| ESP32-CAM       | The Eye   | Vision processing and image analysis                 |
+| Android App     | —        | User-facing control center (Kotlin, Compose, MVVM)   |
+
+### Cloud & Communication Backbone
+- Central **MQTT Broker** as the reliable, scalable backbone for all communication between IoT devices and the Android application.
+
+---
+
+## ⚡ 3. Communication Protocol: Protobuf over MQTT & Serial
+
+To satisfy efficiency and robustness requirements, **Protocol Buffers (Protobuf)** are used instead of JSON.
+
+Advantages:
+- Smaller payloads  
+- Faster parsing  
+- Minimal RAM overhead  
+- Strongly-typed schema eliminating runtime errors  
+
+All message structures are defined in a single canonical file: **`smartvase.proto`**.
+
+---
+
+## 🛠️ 4. Elucidation of Key Firmware Concepts
+
+- **Hardware Watchdog (WDT)**: Ensures recovery from software faults.  
+- **Low Memory Detection**: Activates degraded mode to prevent crashes.  
+- **Hub Deadman Timer**: Safe state if hub communication is lost.  
+- **Resilient Data Persistence**: Dual-slot, CRC-validated storage for config and stats.  
+
+---
+
+## 👨‍💻 5. Team Roles & Responsibilities
+
+| Member   | Role                                | Key Responsibilities |
+|----------|-------------------------------------|----------------------|
+| Giacomo  | Project Manager & Lead Firmware Eng | Supervision, system architecture, firmware (ESP32 Hub & CAM) |
+| Antonio  | Computer Vision Specialist          | Image processing & analysis on ESP32-CAM |
+| Fia      | Backend & Cloud Architect           | MQTT broker design, setup, maintenance |
+| Gabriel  | Android Application Developer       | Native Android app (MVVM, Compose, MQTT integration) |
+
+---
+
+## 🚀 6. Developer Onboarding & Workflow
+
+### Development Prerequisites
+- Protocol Buffer Compiler (`protoc`)  
+- Nanopb (C implementation for embedded)  
+- PlatformIO IDE  
+- Android Studio  
+
+### Core Workflow (Schema-First)
+1. **✍️ Define in `.proto`**: Edit `smartvase.proto`.  
+2. **⚙️ Generate Code**: Run `protoc` to generate code for all platforms.  
+3. **💡 Implement Logic**: Use generated, type-safe structures in firmware/app.  
+
+---
+
+## 📜 7. License
+
+This project is licensed under the **MIT License**.  
+See the [LICENSE](LICENSE) file for full details.
