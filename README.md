@@ -84,7 +84,7 @@ All message structures are defined in a single canonical file: **`smartvase.prot
 | Giacomo  | PM & Lead Firmware Eng | Supervision, system architecture, firmware (ESP32 Hub & CAM) |
 | Antonio  | Computer Vision Specialist          | Image processing & analysis on ESP32-CAM |
 | Fia      | Backend & Cloud Architect           | MQTT broker design, setup, maintenance |
-| Gabriel  | Android Application Developer       | Native Android app (MVVM, Compose, MQTT integration) |
+| Francesco  | Android Application Developer       | Native Android app (MVVM, Compose, MQTT integration) |
 
 ---
 
