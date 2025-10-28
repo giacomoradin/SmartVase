@@ -1,0 +1,125 @@
+// Autore: Giacomo Radin
+// Versione 3.0: Aggiunto monitoraggio batteria
+// - Aggiunto il campo 'battery_voltage' al messaggio TelemetryDeep
+// - Mantiene tutte le migliorie della v2 (cmd_id, device_id, etc.)
+syntax = "proto3";
+
+import "nanopb.proto";
+
+package smartvase;
+
+// ===================================================================
+// Messaggi Atomici
+// ===================================================================
+message TelemetryFast {
+  float front_dist_cm = 1;
+  int32 lux = 2;
+  MovementState movement_state = 3;
+  float left_dist_cm = 4;
+  float right_dist_cm = 5;
+  float water_level_cm = 6;
+  string device_id = 7 [(nanopb).max_size = 16];
+}
+
+message TelemetryDeep {
+  float temperature_c = 1;
+  float humidity_percent = 2;
+  float pressure_hpa = 3;
+  uint32 gas_resistance_ohms = 4;
+  uint32 uptime_s = 5;
+  uint32 free_ram_bytes = 6;
+  uint32 watchdog_resets = 7;
+  uint32 total_irrigations = 8;
+  uint32 obstacles_avoided = 9;
+  uint32 stuck_events = 10;
+  uint32 bme_read_errors = 11;
+  uint32 log_overflows = 12;
+  uint32 total_irrigation_duration_s = 13;
+  uint32 total_motor_active_time_s = 14;
+  uint32 pb_decode_failures = 15;
+  string device_id = 16 [(nanopb).max_size = 16];
+  // NUOVO CAMPO
+  float battery_voltage = 17;
+}
+
+message Log {
+  enum LogLevel { INFO = 0; WARN = 1; ERROR = 2; CRITICAL = 3; }
+  LogLevel level = 1;
+  string event = 2 [(nanopb).max_size = 24];
+  string detail = 3 [(nanopb).max_size = 32];
+  uint32 timestamp_ms = 4;
+  string source_device = 5 [(nanopb).max_size = 16];
+}
+
+message Heartbeat {
+  uint32 uptime_s = 1;
+  bool is_degraded = 2;
+  string device_id = 3 [(nanopb).max_size = 16];
+}
+
+// ===================================================================
+// Comandi e Risposte
+// ===================================================================
+message Command {
+  uint32 cmd_id = 99;
+  oneof command_type {
+    WaterCommand water = 1;
+    SetModeCommand set_mode = 2;
+    StopCommand stop = 3;
+    RequestDiagnosticsCommand request_diagnostics = 4;
+    SetMotionParamsCommand set_motion_params = 5;
+    ReadSoilCommand read_soil = 6;
+    SoftResetCommand soft_reset = 7;
+  }
+}
+
+message CommandResponse {
+  enum Status { OK = 0; ERROR = 1; }
+  Status status = 1;
+  string detail = 2 [(nanopb).max_size = 64];
+  uint32 cmd_id = 99;
+  uint32 exec_time_ms = 100;
+}
+
+// ===================================================================
+// Definizioni dei Comandi Specifici
+// ===================================================================
+message WaterCommand {
+  uint32 duration_ms = 1;
+}
+
+message SetModeCommand {
+  enum Mode { IDLE = 0; LIGHT = 1; SHADOW = 2; }
+  Mode mode = 1;
+}
+
+message SetMotionParamsCommand {
+    uint32 reverse_ms = 1;
+    uint32 turn_ms = 2;
+}
+
+message StopCommand {}
+message RequestDiagnosticsCommand {}
+message ReadSoilCommand {}
+message SoftResetCommand {}
+
+// ===================================================================
+// Enums Globali
+// ===================================================================
+enum MovementState {
+  M_IDLE = 0; M_MOVING = 1; M_AVOID_START = 2; M_AVOID_REVERSING = 3; M_AVOID_TURNING = 4; M_STUCK = 5;
+}
+
+// ===================================================================
+// Messaggio Contenitore (Wrapper)
+// ===================================================================
+message WrapperMessage {
+  oneof payload {
+    TelemetryFast telemetry_fast = 1;
+    TelemetryDeep telemetry_deep = 2;
+    Log log = 3;
+    Command command = 4;
+    CommandResponse command_response = 5;
+    Heartbeat heartbeat = 6;
+  }
+}
