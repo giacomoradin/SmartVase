@@ -2,7 +2,7 @@
 #include "esp_log.h"
 #include <ArduinoJson.h> // Per la creazione dei JSON
 #include <time.h>        // Per timestamp (se necessario)
-#include <esp_wifi.h>    // <-- INCLUDE MANCANTE per esp_wifi_get_mac e WIFI_IF_STA
+#include <esp_wifi.h>    // Per esp_wifi_get_mac
 
 // Tag per i log di questo modulo
 static const char *TAG = "MainLogic";
@@ -175,60 +175,57 @@ void MainLogic::checkMegaConnection() {
 }
 
 // Converte la telemetria Protobuf in JSON e la invia alla coda MQTT
-// NOTA: Questa funzione ora prende i dati come parametri (dovrai salvarli in variabili membro)
 void MainLogic::publishTelemetryJson(const TelemetryFast& tf, const TelemetryDeep& td) {
     ESP_LOGD(TAG, "Preparing Telemetry JSON...");
 
     StaticJsonDocument<MAX_JSON_MESSAGE_LENGTH> doc;
 
-    doc["ts"] = millis(); // Timestamp dell'Hub al momento dell'invio
-    doc["megaConnected"] = _isMegaConnected;
-
-    // Includi dati Mega solo se connesso e validi
-    if (_isMegaConnected) {
-        if (!isnan(tf.front_dist_cm)) doc["frontDistCm"] = round(tf.front_dist_cm * 10) / 10.0; // Arrotonda a 1 decimale
-        if (!isnan(tf.left_dist_cm)) doc["leftDistCm"] = round(tf.left_dist_cm * 10) / 10.0;
-        if (!isnan(tf.right_dist_cm)) doc["rightDistCm"] = round(tf.right_dist_cm * 10) / 10.0;
-        if (!isnan(tf.water_level_cm)) doc["waterLvlCm"] = round(tf.water_level_cm * 10) / 10.0;
-        if (tf.lux >= 0) doc["lux"] = tf.lux;
-        doc["moveState"] = tf.movement_state;
-
-        if (!isnan(td.temperature_c)) doc["tempC"] = round(td.temperature_c * 10) / 10.0;
-        if (!isnan(td.humidity_percent)) doc["humidity"] = round(td.humidity_percent * 10) / 10.0;
-        if (!isnan(td.pressure_hpa)) doc["pressureHpa"] = round(td.pressure_hpa); // Arrotonda all'intero
-        doc["gasOhm"] = td.gas_resistance_ohms;
-        doc["megaUptimeS"] = td.uptime_s;
-        doc["megaRamB"] = td.free_ram_bytes;
-        doc["megaWdtResets"] = td.watchdog_resets; // Includi WDT resets
-        // Aggiungi altri campi Deep Telemetry che vuoi inviare...
+    // Campi allineati con SmartVase_data_structure.md
+    doc["timestamp_utc"] = millis(); // Usiamo millis() come placeholder, ideale sarebbe un RTC
+    doc["uptime_s"] = td.uptime_s;
+    if (!isnan(_lastBatteryVoltage)) {
+        doc["battery_voltage"] = round(_lastBatteryVoltage * 100) / 100.0;
     }
+    if (!isnan(tf.water_level_cm)) {
+        doc["water_level_cm"] = round(tf.water_level_cm * 10) / 10.0;
+    }
+    // 'soil_moisture' non è presente nei dati Protobuf ricevuti, andrà aggiunto quando disponibile
+    if (!isnan(td.temperature_c)) {
+        doc["temperature_c"] = round(td.temperature_c * 10) / 10.0;
+    }
+    if (!isnan(td.humidity_percent)) {
+        doc["humidity_percent"] = round(td.humidity_percent * 10) / 10.0;
+    }
+    if (tf.lux >= 0) {
+        doc["lux"] = tf.lux;
+    }
+    doc["device_status"] = _isMegaConnected ? "NOMINAL" : "DEGRADED_NO_MEGA";
 
-    // Aggiungi dati specifici dell'Hub
-     if (!isnan(_lastBatteryVoltage)) { // Usa il valore salvato
-         doc["hubBatteryV"] = round(_lastBatteryVoltage * 100) / 100.0; // Arrotonda a 2 decimali
-     }
-    doc["hubFreeHeapB"] = ESP.getFreeHeap();
+    // Campi aggiuntivi di diagnostica (non nella specifica ma utili)
+    JsonObject diagnostics = doc.createNestedObject("diagnostics");
+    diagnostics["mega_connected"] = _isMegaConnected;
+    diagnostics["mega_ram_bytes"] = td.free_ram_bytes;
+    diagnostics["mega_wdt_resets"] = td.watchdog_resets;
+    diagnostics["hub_free_heap_bytes"] = ESP.getFreeHeap();
+    diagnostics["movement_state"] = tf.movement_state;
 
 
     MqttMessage mqttMsg;
     uint8_t mac[6];
-    esp_wifi_get_mac(WIFI_IF_STA, mac); // Ora funziona grazie all'include
-    // Usa il topic definito nel contratto API
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
     snprintf(mqttMsg.topic, sizeof(mqttMsg.topic), "smartvase/HUB_%02X%02X%02X/telemetry", mac[3], mac[4], mac[5]);
 
     size_t len = serializeJson(doc, mqttMsg.payload, sizeof(mqttMsg.payload));
-    if (len >= sizeof(mqttMsg.payload)) { // Controlla overflow (serializeJson ritorna 0 anche in caso di overflow)
+    if (len >= sizeof(mqttMsg.payload)) {
         ESP_LOGE(TAG, "Telemetry JSON buffer too small! Truncated. Needed: %d, Available: %d", serializeJson(doc, NULL, 0), sizeof(mqttMsg.payload));
-        // Potresti inviare un payload troncato o un messaggio di errore
-        return; // Non inviare messaggio corrotto
+        return;
     } else if (len == 0) {
          ESP_LOGE(TAG, "Telemetry JSON serialization failed!");
          return;
     }
-    mqttMsg.payload[len] = '\0'; // Assicura terminazione
+    mqttMsg.payload[len] = '0';
 
     ESP_LOGD(TAG, "Sending Telemetry JSON to MQTT Queue: Topic='%s', Payload_len=%d", mqttMsg.topic, len);
-    // ESP_LOGV(TAG, "Payload: %s", mqttMsg.payload); // Logga il payload solo a livello Verbose
 
     if (xQueueSend(_mqttTxQueue, &mqttMsg, (TickType_t)0) != pdPASS) {
         ESP_LOGW(TAG, "MQTT TX Queue is full! Discarding telemetry message.");
@@ -241,8 +238,7 @@ void MainLogic::publishLogJson(const Log& log) {
 
     StaticJsonDocument<MAX_JSON_MESSAGE_LENGTH> doc;
 
-    doc["ts"] = log.timestamp_ms ? log.timestamp_ms : millis(); // Usa ts Mega o fallback a Hub
-    // Converti LogLevel enum a stringa per leggibilità (opzionale)
+    doc["timestamp_utc"] = log.timestamp_ms ? log.timestamp_ms : millis();
     switch(log.level) {
         case Log_LogLevel_INFO: doc["level"] = "INFO"; break;
         case Log_LogLevel_WARN: doc["level"] = "WARN"; break;
@@ -250,7 +246,7 @@ void MainLogic::publishLogJson(const Log& log) {
         case Log_LogLevel_CRITICAL: doc["level"] = "CRITICAL"; break;
         default: doc["level"] = "UNKNOWN"; break;
     }
-    doc["device"] = log.source_device;
+    doc["source_device"] = log.source_device;
     doc["event"] = log.event;
     if (strlen(log.detail) > 0) {
         doc["detail"] = log.detail;
@@ -258,7 +254,7 @@ void MainLogic::publishLogJson(const Log& log) {
 
     MqttMessage mqttMsg;
     uint8_t mac[6];
-    esp_wifi_get_mac(WIFI_IF_STA, mac); // Ora funziona
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
     snprintf(mqttMsg.topic, sizeof(mqttMsg.topic), "smartvase/HUB_%02X%02X%02X/logs", mac[3], mac[4], mac[5]);
 
     size_t len = serializeJson(doc, mqttMsg.payload, sizeof(mqttMsg.payload));
@@ -269,7 +265,7 @@ void MainLogic::publishLogJson(const Log& log) {
          ESP_LOGE(TAG, "Log JSON serialization failed!");
          return;
     }
-    mqttMsg.payload[len] = '\0';
+    mqttMsg.payload[len] = '0';
 
     ESP_LOGD(TAG, "Sending Log JSON to MQTT Queue: Topic='%s', Payload_len=%d", mqttMsg.topic, len);
 
@@ -284,20 +280,22 @@ void MainLogic::publishAlarmJson(const char* alarmType, const char* detail) {
 
     StaticJsonDocument<MAX_JSON_MESSAGE_LENGTH> doc;
 
-    doc["ts"] = millis(); // Timestamp Hub
+    doc["timestamp_utc"] = millis();
     doc["type"] = alarmType;
     if (detail) {
         doc["detail"] = detail;
     }
-    doc["megaConnected"] = _isMegaConnected; // Stato Mega al momento dell'allarme
-    if (!isnan(_lastBatteryVoltage)) { // Aggiungi batteria Hub se disponibile
-        doc["hubBatteryV"] = round(_lastBatteryVoltage * 100) / 100.0;
+    
+    // Aggiungi dati di contesto utili
+    JsonObject context = doc.createNestedObject("context");
+    context["mega_connected"] = _isMegaConnected;
+    if (!isnan(_lastBatteryVoltage)) {
+        context["battery_voltage"] = round(_lastBatteryVoltage * 100) / 100.0;
     }
 
     MqttMessage mqttMsg;
     uint8_t mac[6];
-    esp_wifi_get_mac(WIFI_IF_STA, mac); // Ora funziona
-    // Usa il topic dedicato agli allarmi
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
     snprintf(mqttMsg.topic, sizeof(mqttMsg.topic), "smartvase/HUB_%02X%02X%02X/alarms", mac[3], mac[4], mac[5]);
 
     size_t len = serializeJson(doc, mqttMsg.payload, sizeof(mqttMsg.payload));
@@ -308,7 +306,7 @@ void MainLogic::publishAlarmJson(const char* alarmType, const char* detail) {
          ESP_LOGE(TAG, "Alarm JSON serialization failed!");
          return;
     }
-    mqttMsg.payload[len] = '\0';
+    mqttMsg.payload[len] = '0';
 
     ESP_LOGD(TAG, "Sending Alarm JSON to MQTT Queue: Topic='%s', Payload_len=%d", mqttMsg.topic, len);
 

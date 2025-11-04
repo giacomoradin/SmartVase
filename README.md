@@ -54,17 +54,13 @@ The system utilizes a distributed architecture that decouples responsibilities a
 
 ---
 
-## ⚡ 3. Communication Protocol: Protobuf over MQTT & Serial
+## ⚡ 3. Communication Protocol: JSON for MQTT, Protobuf for Serial
 
-To satisfy efficiency and robustness requirements, **Protocol Buffers (Protobuf)** are used instead of JSON.
+To ensure interoperability with the broader ecosystem (cloud services, mobile app) while maintaining high performance for inter-controller communication, the project uses a hybrid communication strategy:
 
-Advantages:
-- Smaller payloads  
-- Faster parsing  
-- Minimal RAM overhead  
-- Strongly-typed schema eliminating runtime errors  
+- **External Communication (MQTT)**: **JSON** is the designated data format for all messages exchanged over the MQTT broker. This simplifies development for the backend and mobile application teams. The canonical JSON structures are defined in the `SmartVase_data_structure.md` document.
 
-All message structures are defined in a single canonical file: **`smartvase.proto`**.
+- **Internal Communication (Serial)**: **Protocol Buffers (Protobuf)** are used for the high-speed, low-overhead serial link between the ESP32-Hub and the Arduino Mega. This ensures efficient and robust data exchange in a resource-constrained environment. The Protobuf message structures are defined in the `smartvase.proto` file.
 
 ---
 

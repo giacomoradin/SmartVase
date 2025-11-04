@@ -123,7 +123,7 @@ void handleJpegRequest(long frameId) {
     doc["crc32"] = crc;
     doc["capture_time_ms"] = captureTime;
     doc["analysis_quality"] = 85.5; // Placeholder
-    doc["timestamp"] = millis();
+    doc["timestamp_utc"] = millis();
     
     String header;
     serializeJson(doc, header);
@@ -146,7 +146,7 @@ void handlePingRequest(long frameId) {
     doc["device_id"] = DEVICE_ID;
     doc["frame_id"] = frameId;
     doc["free_ram_bytes"] = ESP.getFreeHeap();
-    doc["uptime_ms"] = millis();
+    doc["uptime_s"] = millis() / 1000; // Convert to seconds
     
     JsonObject cumulative = doc.createNestedObject("cumulative");
     cumulative["successful_frames"] = camStats.successful_frames;
