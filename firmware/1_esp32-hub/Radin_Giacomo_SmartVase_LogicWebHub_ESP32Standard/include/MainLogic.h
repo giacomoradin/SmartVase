@@ -54,6 +54,10 @@ private:
     // Stato interno (esempio: ultimo valore batteria)
     float _lastBatteryVoltage;
 
+    // Cache per gli ultimi dati di telemetria ricevuti dal Mega
+    TelemetryFast _lastFastTelemetry;
+    TelemetryDeep _lastDeepTelemetry;
+
     // Funzione principale del Task (loop infinito)
     void taskRun();
 

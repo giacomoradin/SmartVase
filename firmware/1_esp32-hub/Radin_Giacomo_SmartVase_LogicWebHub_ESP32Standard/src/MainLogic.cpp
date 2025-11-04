@@ -28,6 +28,9 @@ MainLogic::MainLogic(QueueHandle_t serialRxQueue, QueueHandle_t serialTxQueue,
       _isMegaConnected(false), // Inizia come disconnesso
       _lastBatteryVoltage(0.0f) // Inizializza
 {
+    // Inizializza le strutture di telemetria a zero
+    memset(&_lastFastTelemetry, 0, sizeof(TelemetryFast));
+    memset(&_lastDeepTelemetry, 0, sizeof(TelemetryDeep));
     // Il costruttore riceve le dipendenze (code, config)
 }
 
@@ -99,7 +102,7 @@ void MainLogic::processSerialMessage(const WrapperMessage& msg) {
     switch (msg.which_payload) {
         case WrapperMessage_telemetry_fast_tag:
             ESP_LOGD(TAG, "Received Fast Telemetry: Front=%.1f", msg.payload.telemetry_fast.front_dist_cm);
-            // TODO: Salvare i dati in variabili membro (es. this->_lastFastTelemetry = msg.payload.telemetry_fast;)
+            _lastFastTelemetry = msg.payload.telemetry_fast;
             break;
 
         case WrapperMessage_telemetry_deep_tag:
@@ -107,7 +110,7 @@ void MainLogic::processSerialMessage(const WrapperMessage& msg) {
                      msg.payload.telemetry_deep.uptime_s,
                      msg.payload.telemetry_deep.free_ram_bytes,
                      msg.payload.telemetry_deep.battery_voltage); // Assumendo che battery_voltage sia nel proto v3
-            // TODO: Salvare i dati in variabili membro (es. this->_lastDeepTelemetry = msg.payload.telemetry_deep;)
+            _lastDeepTelemetry = msg.payload.telemetry_deep;
             _lastBatteryVoltage = msg.payload.telemetry_deep.battery_voltage; // Salva specificamente il voltaggio
 
             // --- Logica Allarmi basata su Deep Telemetry ---
@@ -149,20 +152,10 @@ void MainLogic::telemetryTimerCallback(TimerHandle_t xTimer) {
     MainLogic* instance = static_cast<MainLogic*>(pvTimerGetTimerID(xTimer));
     if (instance) {
         ESP_LOGI(TAG, "Telemetry timer triggered. Publishing data...");
-        // --- QUI DOBBIAMO PUBBLICARE I DATI ---
         // Recupera gli ultimi dati salvati dalle variabili membro
-        // (che dovresti aver aggiunto e aggiornato in processSerialMessage)
-        // Esempio:
-        // TelemetryFast lastFastData = instance->_lastFastTelemetry;
-        // TelemetryDeep lastDeepData = instance->_lastDeepTelemetry;
-        // instance->publishTelemetryJson(lastFastData, lastDeepData);
-
-        // Placeholder: Pubblichiamo solo i dati che abbiamo salvato finora
-        TelemetryFast dummyFast = TelemetryFast_init_zero; // Crea struct vuote
-        TelemetryDeep dummyDeep = TelemetryDeep_init_zero;
-        dummyDeep.battery_voltage = instance->_lastBatteryVoltage; // Usa almeno la batteria
-        // Copia qui altri valori salvati se li hai aggiunti
-        instance->publishTelemetryJson(dummyFast, dummyDeep); // Chiamata di esempio
+        TelemetryFast lastFastData = instance->_lastFastTelemetry;
+        TelemetryDeep lastDeepData = instance->_lastDeepTelemetry;
+        instance->publishTelemetryJson(lastFastData, lastDeepData);
     }
 }
 
