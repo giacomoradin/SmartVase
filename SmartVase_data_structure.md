@@ -105,7 +105,7 @@ JSON Payload Example:
   "content_type": "image/jpeg",
   "capture_angle_deg": 45
 }
-
+```
 
 
 
