@@ -12,7 +12,7 @@ FrameQuality = str  # "ok" | "too_dark" | "too_bright" | "blurry"
 
 @dataclass(frozen=True)
 class QualityGateConfig:
-    # These are initial defaults. You will calibrate them on real images later.
+    # INITIAL DEFAULTS 40/220/60: calibration on real images needed
     too_dark_mean_gray: float = 40.0
     too_bright_mean_gray: float = 220.0
     blurry_laplacian_var: float = 60.0
