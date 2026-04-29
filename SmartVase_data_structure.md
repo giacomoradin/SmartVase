@@ -85,9 +85,9 @@ JSON Payload Example:
 
 
 
-## 4. Image Ready Notification
+## 4. Image Ready Notification (Vision Input)
 
-Purpose: Notification sent by the ESP32 Hub after successfully uploading a new image to storage.
+Purpose: Notification produced when the ESP32 Hub has uploaded a new image to storage. The Vision component consumes this document/topic to start the analysis.
 
 Direction: ESP32 Hub -> HiveMQ -> Cloud Function -> Firestore -> Vision Component
 
@@ -97,11 +97,13 @@ Firestore Path: smartvase/{device_id}/vision/image
 
 JSON Payload Example:
 
-```
+```json
 {
   "timestamp_utc": 1678886400,
   "image_url": "...",
-  "resolution": "144x144"
+  "resolution": "144x144",
+  "content_type": "image/jpeg",
+  "capture_angle_deg": 45
 }
 ```
 
@@ -109,7 +111,7 @@ JSON Payload Example:
 
 ## 5. Vision Analysis Result
 
-Purpose: Results of the image analysis performed by the Vision component.
+Purpose: Results of the image analysis performed by the Vision component. This output can be consumed by the ESP32 Hub (for automation), and by the Flutter App (for UI/diagnostics).
 
 Direction: Vision Component -> Firestore -> Cloud Function -> HiveMQ -> ESP32 Hub (and potentially read by Flutter App)
 
@@ -117,17 +119,112 @@ MQTT Topic: smartvase/{device_id}/vision/result
 
 Firestore Path: smartvase/{device_id}/vision/result
 
-JSON Payload Example:
+### Versioning
 
-```
+To prevent breaking changes between components (Hub, Cloud Functions, App, Vision), two version fields are REQUIRED:
+
+- schema_version: version of this JSON schema (changes when fields or their meaning change).
+- model_version: version of the vision model used to generate this result (changes when weights/architecture/training change).
+
+### Required Fields
+
+These fields MUST always be present:
+
+- timestamp_utc
+- schema_version
+- model_version
+- image_url
+- frame_quality
+- leaf_health
+
+### Enumerations (Allowed Values)
+
+frame_quality:
+- ok
+- too_dark
+- too_bright
+- blurry
+- occluded
+- unknown
+
+leaf_health:
+- healthy
+- warning
+- critical
+- unknown
+
+symptoms (optional array values):
+- yellowing
+- spots
+- wilting
+
+recommendations.alert_water (optional):
+- more
+- less
+
+recommendations.alert_light (optional):
+- more
+- less
+
+
+#### Notes
+
+confidence: values are floats in [0, 1]. Missing keys imply "not evaluated".
+
+metrics: optional diagnostics for observability/debugging. Fields may expand over time.
+
+plant_bbox: optional bounding box (pixels) of the plant region in the original image (useful if the image contains background).
+
+recommendations: optional best-effort suggestions derived from vision. Final control decisions can also incorporate sensor telemetry.
+
+error: null if analysis succeeded. If analysis failed, error should be an object:
+
+### JSON Payload Example
+
+```json
 {
   "timestamp_utc": 1678886405,
-  "leaf_health": "healthy", // e.g., healthy, warning, critical
-  "suggestion": "add nitrogen", // Optional action suggestion
-  "alert_water": null, // or "more", "less"
-  "alert_light": "less light", // or "more", null
-  "color_dominant_hex": "#008000",
-  "knn_confidence": 0.85 // Example metric from the vision model
-}
-```
 
+  "schema_version": 1,
+  "model_version": "vision-0.1.0",
+
+  "image_url": "...",
+  "resolution": "144x144",
+
+  "frame_quality": "ok",
+
+  "leaf_health": "warning",
+  "symptoms": ["yellowing", "spots"],
+
+  "confidence": {
+    "leaf_health": 0.78,
+    "yellowing": 0.81,
+    "spots": 0.62,
+    "wilting": 0.20
+  },
+
+  "metrics": {
+    "color_dominant_hex": "#2f7d2a",
+    "green_index": 0.61,
+    "yellow_ratio": 0.18,
+    "brown_ratio": 0.02,
+    "sharpness": 112.4,
+    "plant_area_ratio": 0.34
+  },
+
+  "plant_bbox": {
+    "x": 12,
+    "y": 20,
+    "w": 96,
+    "h": 84
+  },
+
+  "recommendations": {
+    "alert_water": null,
+    "alert_light": "less",
+    "suggestion": null,
+    "confidence": 0.55
+  },
+
+  "error": null
+}
