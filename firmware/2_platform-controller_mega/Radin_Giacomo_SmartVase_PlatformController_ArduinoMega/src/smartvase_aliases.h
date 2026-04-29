@@ -73,4 +73,50 @@ typedef smartvase_CommandResponse        CommandResponse;
 #define M_AVOID_TURNING   smartvase_MovementState_M_AVOID_TURNING
 #define M_STUCK           smartvase_MovementState_M_STUCK
 
+
+// Definizioni specifiche per la logica C++
+// Queste non fanno parte del protocollo Protobuf ma sono usate internamente dal firmware.
+
+// Struttura per la configurazione del dispositivo, salvata in EEPROM
+typedef struct {
+    uint32_t magic_number;
+    uint16_t crc16;
+    uint8_t motorCalibLeft;
+    uint8_t motorCalibRight;
+    uint16_t avoid_reverse_ms;
+    uint16_t avoid_turn_ms;
+} DeviceConfig;
+
+// Struttura per le statistiche cumulative, salvate in EEPROM
+typedef struct {
+    uint32_t magic_number;
+    uint16_t crc16;
+    uint32_t total_move_time_ms;
+    uint32_t water_cycles;
+    uint32_t light_seeking_sessions;
+    uint32_t shadow_seeking_sessions;
+    uint32_t obstacles_avoided;
+    uint32_t escape_attempts;
+    uint32_t stuck_events;
+    uint32_t watchdog_resets;
+} CumulativeStats;
+
+// Stati della macchina a stati del movimento (lato C++)
+typedef enum {
+    CPP_M_IDLE,
+    CPP_M_MOVING,
+    CPP_M_AVOID_START,
+    CPP_M_AVOID_REVERSING,
+    CPP_M_AVOID_TURNING,
+    CPP_M_STUCK
+} CppMovementState;
+
+// Modalità di funzionamento (lato C++)
+typedef enum {
+    CPP_IDLE,
+    CPP_LIGHT,
+    CPP_SHADOW
+} CppMode;
+
+
 #endif // SMARTVASE_ALIASES_H_INCLUDED

@@ -15,16 +15,25 @@
 #include <Arduino.h>
 #include "ConfigManager.h"
 #include "WifiManager.h"
-// Includeremo qui altri moduli (MqttManager, SerialMega, etc.)
+#include "SerialManager.h"
+#include "MQTTManager.h"
+#include "MainLogic.h"
+
+// --- Definizioni delle Code FreeRTOS ---
+// Code per la comunicazione seriale (Mega <-> Hub)
+QueueHandle_t serialRxQueue; // Messaggi Protobuf dal Mega all'Hub (MainLogic)
+QueueHandle_t serialTxQueue; // Messaggi Protobuf dall'Hub (MainLogic) al Mega
+
+// Code per la comunicazione MQTT (Hub <-> Broker)
+QueueHandle_t mqttTxQueue;   // Messaggi JSON dall'Hub (MainLogic) al Broker MQTT
+QueueHandle_t mqttRxQueue;   // Messaggi JSON dal Broker MQTT all'Hub (MainLogic)
 
 // --- Istanziazione dei Moduli Globali ---
 ConfigManager configManager;
-WifiManager wifiManager(configManager); // Il WifiManager dipende dal ConfigManager
-
-// --- Prototipi dei Task (da implementare) ---
-void taskSerialMega(void *pvParameters);
-void taskMqttLink(void *pvParameters);
-void taskMainLogic(void *pvParameters);
+WifiManager wifiManager(configManager);
+SerialManager serialManager(serialRxQueue, serialTxQueue);
+MqttManager mqttManager(mqttTxQueue, mqttRxQueue, configManager);
+MainLogic mainLogic(serialRxQueue, serialTxQueue, mqttTxQueue, mqttRxQueue, configManager);
 
 // =================================================================
 // SETUP
@@ -35,55 +44,61 @@ void setup() {
     Serial.println("\n[SmartVase Hub] Avvio... v1.0");
 
     // 2. Inizializza il gestore della configurazione NVS
-    // Questo è il primo passo FONDAMENTALE.
     if (!configManager.init()) {
         Serial.println("[CRITICAL] Impossibile inizializzare NVS. Riavvio.");
         delay(2000);
         ESP.restart();
     }
-    configManager.loadConfig(); // Carica o crea la configurazione di default
+    configManager.loadConfig();
 
     // 3. Inizializza e avvia il Wi-Fi
-    // Questa funzione è bloccante: o si connette, o avvia
-    // l'Access Point di provisioning e attende lì.
     wifiManager.connect();
     Serial.println("[SETUP] Connessione Wi-Fi stabilita.");
 
-    // 4. Inizializzazione altri moduli (RTC, Serial1 per Mega, etc.)
-    // ... (da aggiungere)
+    // 4. Creazione delle Code FreeRTOS
+    serialRxQueue = xQueueCreate(10, sizeof(SerialMessage)); // Coda per messaggi dal Mega
+    serialTxQueue = xQueueCreate(10, sizeof(SerialMessage)); // Coda per messaggi al Mega
+    mqttTxQueue = xQueueCreate(10, sizeof(MqttMessage));     // Coda per messaggi MQTT in uscita
+    mqttRxQueue = xQueueCreate(10, sizeof(MqttCommand));   // Coda per comandi MQTT in entrata
 
-    // 5. Creazione dei Task FreeRTOS
-    // Questi task inizieranno a girare in parallelo dopo il setup.
-    
-    // Task per la comunicazione con il Mega (Core 1)
-    xTaskCreatePinnedToCore(
-        taskSerialMega,     // Funzione del task
-        "TaskSerialMega",   // Nome (per debug)
-        4096,               // Stack size (bytes)
-        NULL,               // Parametri
-        3,                  // Priorità (alta)
-        NULL,               // Handle
-        1);                 // Core 1 (dedicato alle periferiche)
+    if (serialRxQueue == NULL || serialTxQueue == NULL || mqttTxQueue == NULL || mqttRxQueue == NULL) {
+        Serial.println("[CRITICAL] Impossibile creare le code FreeRTOS. Riavvio.");
+        delay(2000);
+        ESP.restart();
+    }
 
-    // Task per la comunicazione MQTT (Core 0)
-    xTaskCreatePinnedToCore(
-        taskMqttLink,       // Funzione del task
-        "TaskMqttLink",     // Nome
-        4096,               // Stack size
-        NULL,               // Parametri
-        2,                  // Priorità (media)
-        NULL,               // Handle
-        0);                 // Core 0 (dedicato alla connettività)
+    // 5. Inizializzazione dei Manager
+    serialManager.init();
+    mqttManager.init();
+    mainLogic.init();
 
-    // Task per la logica principale (Core 0)
+    // 6. Creazione dei Task FreeRTOS
     xTaskCreatePinnedToCore(
-        taskMainLogic,      // Funzione del task
-        "TaskMainLogic",    // Nome
-        4096,               // Stack size
-        NULL,               // Parametri
-        1,                  // Priorità (bassa)
-        NULL,               // Handle
-        0);                 // Core 0
+        SerialManager::taskEntry,   // Funzione del task (statica)
+        "TaskSerialMega",           // Nome
+        4096,                       // Stack size
+        &serialManager,             // Parametri: puntatore all'istanza
+        3,                          // Priorità (alta)
+        NULL,                       // Handle
+        1);                         // Core 1
+
+    xTaskCreatePinnedToCore(
+        MqttManager::taskEntry,     // Funzione del task (statica)
+        "TaskMqttLink",             // Nome
+        8192,                       // Stack size (aumentato per MQTT + SSL)
+        &mqttManager,               // Parametri: puntatore all'istanza
+        2,                          // Priorità (media)
+        NULL,                       // Handle
+        0);                         // Core 0
+
+    xTaskCreatePinnedToCore(
+        MainLogic::taskEntry,       // Funzione del task (statica)
+        "TaskMainLogic",            // Nome
+        8192,                       // Stack size (aumentato per JSON/Protobuf)
+        &mainLogic,                 // Parametri: puntatore all'istanza
+        1,                          // Priorità (bassa)
+        NULL,                       // Handle
+        0);                         // Core 0
 
     Serial.println("[SETUP] Setup completato. Avvio dei Task.");
 }
@@ -99,76 +114,4 @@ void loop() {
 
     // Diamo un piccolo respiro al task
     vTaskDelay(pdMS_TO_TICKS(100));
-}
-
-
-// =================================================================
-// DEFINIZIONI DEI TASK
-// =================================================================
-
-/**
- * @brief Task #1: Gestione Seriale con Mega
- * * Si occupa di:
- * - Leggere i frame Protobuf da Serial1 (UART per il Mega)
- * - Decodificare i messaggi (Telemetry, Log, Heartbeat)
- * - Mettere i messaggi decodificati in una Coda (Queue) per il TaskMainLogic
- * - Rimanere in attesa di comandi da inviare (da un'altra Coda)
- * - Inviare comandi Protobuf al Mega
- */
-void taskSerialMega(void *pvParameters) {
-    Serial.println("[TaskSerialMega] Avviato.");
-    // Inizializza Serial1 per il Mega
-    // ...
-    for(;;) {
-        // Logica robusta di lettura frame (SOF, len, CRC, decode)
-        // ...
-
-        // Non bloccare mai!
-        vTaskDelay(pdMS_TO_TICKS(10)); 
-    }
-}
-
-/**
- * @brief Task #2: Gestione Connessione MQTT
- * * Si occupa di:
- * - Connettersi e rimanere connesso al broker MQTT
- * - Sottoscriversi ai topic di comando (es. .../command/config)
- * - Gestire i messaggi in ingresso e metterli in una Coda
- * - Prendere messaggi (telemetria, log) da una Coda e pubblicarli
- */
-void taskMqttLink(void *pvParameters) {
-    Serial.println("[TaskMqttLink] Avviato.");
-    // Inizializza il client MQTT
-    // ...
-    for(;;) {
-        // loop() del client MQTT (gestisce keepalive, etc.)
-        // ...
-
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
-}
-
-/**
- * @brief Task #3: Logica Principale (Orchestratore)
- * * Si occupa di:
- * - Controllare la Coda di messaggi dal Mega
- * - Tradurre i messaggi Protobuf in JSON
- * - Passare i JSON alla Coda di pubblicazione MQTT
- * - Controllare la Coda di comandi da MQTT
- * - Tradurre i comandi JSON in Protobuf
- * - Passare i Protobuf alla Coda di invio SerialMega
- * - Gestire i "deadman switch" e la logica degli Allarmi
- */
-void taskMainLogic(void *pvParameters) {
-    Serial.println("[TaskMainLogic] Avviato.");
-    TickType_t xLastWakeTime = xTaskGetTickCount();
-    const TickType_t xFrequency = pdMS_TO_TICKS(1000); // Esegui logica ogni secondo
-
-    for(;;) {
-        // Attendi per un intervallo fisso
-        vTaskDelayUntil(&xLastWakeTime, xFrequency);
-        
-        // Esegui logica di controllo (deadman switch, allarmi, etc.)
-        // ...
-    }
 }

@@ -22,12 +22,19 @@ typedef struct {
     char payload[MAX_JSON_MESSAGE_LENGTH]; // Payload JSON
 } MqttMessage;
 
+// Struttura per i comandi JSON ricevuti via MQTT
+typedef struct {
+    uint32_t timestamp; // Timestamp di ricezione
+    char topic[64];     // Topic da cui è arrivato il messaggio
+    char payload[MAX_JSON_MESSAGE_LENGTH]; // Payload JSON del comando
+} MqttCommand;
+
 
 class MainLogic {
 public:
     // Costruttore: Riceve le code di comunicazione e il ConfigManager
     MainLogic(QueueHandle_t serialRxQueue, QueueHandle_t serialTxQueue,
-              QueueHandle_t mqttTxQueue, ConfigManager& configManager);
+              QueueHandle_t mqttTxQueue, QueueHandle_t mqttRxQueue, ConfigManager& configManager);
 
     // Funzione statica entry point per il Task FreeRTOS
     static void taskEntry(void* pvParameters);
@@ -40,6 +47,7 @@ private:
     QueueHandle_t _serialRxQueue; // Riceve Protobuf decodificati dal Mega
     QueueHandle_t _serialTxQueue; // Invia comandi Protobuf al Mega
     QueueHandle_t _mqttTxQueue;   // Invia JSON al MqttManager
+    QueueHandle_t _mqttRxQueue;   // Riceve comandi JSON dal MqttManager
 
     // Riferimento al ConfigManager
     ConfigManager& _configManager;
@@ -63,6 +71,9 @@ private:
 
     // Gestisce un messaggio Protobuf ricevuto dal Mega
     void processSerialMessage(const WrapperMessage& msg);
+
+    // Gestisce un comando JSON ricevuto via MQTT
+    void processMqttCommand(const MqttCommand& cmd);
 
     // Converte la telemetria Protobuf in JSON e la invia alla coda MQTT
     void publishTelemetryJson(const TelemetryFast& tf, const TelemetryDeep& td);

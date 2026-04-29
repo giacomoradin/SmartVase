@@ -19,7 +19,7 @@
 class MqttManager {
 public:
     // Costruttore: Riceve la coda TX e il ConfigManager
-    MqttManager(QueueHandle_t txQueue, ConfigManager& configManager);
+    MqttManager(QueueHandle_t txQueue, QueueHandle_t rxQueue, ConfigManager& configManager);
 
     // Funzione statica entry point per il Task FreeRTOS
     static void taskEntry(void* pvParameters);
@@ -28,8 +28,9 @@ public:
     void init();
 
 private:
-    // Coda FreeRTOS per ricevere messaggi JSON da MainLogic
-    QueueHandle_t _txQueue;
+    // Code FreeRTOS
+    QueueHandle_t _txQueue; // Coda per inviare JSON a questo task
+    QueueHandle_t _rxQueue; // Coda per inviare comandi ricevuti a MainLogic
 
     // Riferimento al ConfigManager
     ConfigManager& _configManager;

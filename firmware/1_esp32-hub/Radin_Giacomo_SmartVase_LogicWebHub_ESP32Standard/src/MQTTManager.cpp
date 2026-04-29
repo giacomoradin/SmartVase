@@ -1,6 +1,7 @@
 #include "MqttManager.h"
 #include "esp_log.h"
 #include <esp_wifi.h> // Per MAC address
+#include <ArduinoJson.h> // Per la gestione dei messaggi JSON
 
 // Tag per i log di questo modulo
 static const char *TAG = "MqttManager";
@@ -10,8 +11,7 @@ static const char *TAG = "MqttManager";
 const char* hivemq_ca_cert = \
 "-----BEGIN CERTIFICATE-----\n" \
 "MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw\n" \
-"TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\n" \
-"cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4\n" \
+"TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3NlarchIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4\n" \
 "WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu\n" \
 "ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY\n" \
 "MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc\n" \
@@ -45,8 +45,9 @@ MqttManager* MqttManager::_instance = nullptr;
 
 // --- Implementazione Metodi Classe MqttManager ---
 
-MqttManager::MqttManager(QueueHandle_t txQueue, ConfigManager& configManager)
+MqttManager::MqttManager(QueueHandle_t txQueue, QueueHandle_t rxQueue, ConfigManager& configManager)
     : _txQueue(txQueue),
+      _rxQueue(rxQueue),
       _configManager(configManager),
       _mqttClient(_wifiClientSecure) // Passa il client sicuro al costruttore di PubSubClient
 {
@@ -191,41 +192,34 @@ bool MqttManager::reconnect() {
 void MqttManager::mqttCallback(char* topic, byte* payload, unsigned int length) {
     ESP_LOGI(TAG, "Message arrived [%s]", topic);
 
-    // Copia il payload in un buffer locale perché il puntatore originale
-    // potrebbe non essere più valido dopo questa funzione.
-    // Assicurati che il buffer sia abbastanza grande!
-    char messageBuffer[MQTT_BUFFER_SIZE];
-    if (length >= sizeof(messageBuffer)) {
-        ESP_LOGE(TAG, "Incoming MQTT message too large (%d bytes)! Max buffer: %d. Discarding.", length, sizeof(messageBuffer));
+    // Controlla se l'istanza e la coda sono valide
+    if (!_instance || !_instance->_rxQueue) {
+        ESP_LOGE(TAG, "Callback invoked without a valid instance or RX queue!");
         return;
     }
-    memcpy(messageBuffer, payload, length);
-    messageBuffer[length] = '\0'; // Aggiungi terminatore nullo per trattarlo come stringa C
 
-    ESP_LOGI(TAG, "Payload: %s", messageBuffer);
+    // Controlla che il payload non sia troppo grande per la nostra struct
+    if (length >= sizeof(MqttCommand::payload)) {
+        ESP_LOGE(TAG, "Incoming MQTT message payload too large (%d bytes)! Max: %d. Discarding.", length, sizeof(MqttCommand::payload) - 1);
+        return;
+    }
 
-    // --- Qui va la logica per processare il comando ---
-    // 1. Parsificare il JSON ricevuto (messageBuffer) usando ArduinoJson
-    // 2. Validare il comando
-    // 3. Creare un messaggio/struct appropriato per il Task MainLogic
-    // 4. Inviare il messaggio alla coda _mqttRxQueue (che dobbiamo ancora creare)
+    // Crea il comando da inviare alla coda
+    MqttCommand cmd;
+    cmd.timestamp = millis(); // Usa millis() o un'altra fonte di tempo
 
-    // Esempio Placeholder:
-    // StaticJsonDocument<256> doc; // Dimensione da adattare
-    // DeserializationError error = deserializeJson(doc, messageBuffer);
-    // if (error) {
-    //     ESP_LOGE(TAG, "deserializeJson() failed: %s", error.c_str());
-    //     return;
-    // }
-    // const char* commandType = doc["type"];
-    // if (commandType) {
-    //     if (strcmp(commandType, "setPlantConfig") == 0) {
-    //         // Estrai parametri, crea messaggio per MainLogic, invia a _mqttRxQueue
-    //         ESP_LOGI(TAG,"Received setPlantConfig command");
-    //     } else if (...) { ... }
-    // } else {
-    //     ESP_LOGW(TAG,"Received MQTT message without 'type' field.");
-    // }
+    // Copia il topic e il payload nel comando
+    strncpy(cmd.topic, topic, sizeof(cmd.topic) - 1);
+    cmd.topic[sizeof(cmd.topic) - 1] = '\0'; // Assicura terminazione nulla
 
-    // Per ora, logghiamo solo il messaggio ricevuto.
+    memcpy(cmd.payload, payload, length);
+    cmd.payload[length] = '\0'; // Assicura terminazione nulla
+
+    ESP_LOGD(TAG, "Payload: %s", cmd.payload);
+
+    // Invia il comando alla coda di MainLogic per il processamento
+    // Usa un timeout breve per non bloccare il callback MQTT a lungo
+    if (xQueueSend(_instance->_rxQueue, &cmd, pdMS_TO_TICKS(100)) != pdPASS) {
+        ESP_LOGW(TAG, "Failed to queue incoming MQTT command. RX Queue may be full.");
+    }
 }
