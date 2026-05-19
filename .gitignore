@@ -1,8 +1,15 @@
-node_modules/ 
-*.log 
+node_modules/
+*.log
 
 # PlatformIO
 .pio/
 
 # VSCode
 .vscode/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+.venv/

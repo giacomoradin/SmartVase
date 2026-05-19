@@ -1,19 +1,16 @@
 /*
  * =================================================================
- * SmartVase - Protobuf Alias Definitions
+ * SmartVase - Protobuf Alias Definitions (lato Hub ESP32)
  * =================================================================
- * Questo file mappa i simboli generati da nanopb (con prefisso 'smartvase_')
- * ai nomi più brevi utilizzati nel firmware, risolvendo gli errori di
- * compilazione dell'Arduino IDE.
- *
- * Includere questo file subito dopo il blocco extern "C" con gli
- * header di nanopb.
+ * Schema v4.0 — 2026-05-19. Solo alias Protobuf — niente tipi C++ interni
+ * del Mega (DeviceConfig, CumulativeStats, ecc.).
  */
 
 #ifndef SMARTVASE_ALIASES_H_INCLUDED
 #define SMARTVASE_ALIASES_H_INCLUDED
 
 #include "smartvase.pb.h"
+
 // --- Alias per Tipi (Structs & Enums) ---
 typedef smartvase_WrapperMessage         WrapperMessage;
 typedef smartvase_Log_LogLevel           Log_LogLevel;
@@ -27,9 +24,10 @@ typedef smartvase_Log                    Log;
 typedef smartvase_Heartbeat              Heartbeat;
 typedef smartvase_CommandResponse        CommandResponse;
 
-// --- Alias per i Descrittori dei Messaggi ---
+// --- Descrittori dei Messaggi ---
 #define WrapperMessage_fields smartvase_WrapperMessage_fields
-// --- Alias per le Macro di Inizializzazione ---
+
+// --- Macro di Inizializzazione ---
 #define WrapperMessage_init_zero    smartvase_WrapperMessage_init_zero
 #define Log_init_zero               smartvase_Log_init_zero
 #define Command_init_zero           smartvase_Command_init_zero
@@ -37,7 +35,8 @@ typedef smartvase_CommandResponse        CommandResponse;
 #define TelemetryFast_init_zero     smartvase_TelemetryFast_init_zero
 #define TelemetryDeep_init_zero     smartvase_TelemetryDeep_init_zero
 #define Heartbeat_init_zero         smartvase_Heartbeat_init_zero
-// --- Alias per i Tag dei Campi 'oneof' ---
+
+// --- Tag dei Campi 'oneof' ---
 #define WrapperMessage_telemetry_fast_tag   smartvase_WrapperMessage_telemetry_fast_tag
 #define WrapperMessage_telemetry_deep_tag   smartvase_WrapperMessage_telemetry_deep_tag
 #define WrapperMessage_log_tag              smartvase_WrapperMessage_log_tag
@@ -53,7 +52,7 @@ typedef smartvase_CommandResponse        CommandResponse;
 #define Command_read_soil_tag             smartvase_Command_read_soil_tag
 #define Command_soft_reset_tag            smartvase_Command_soft_reset_tag
 
-// --- Alias per i Valori degli Enum ---
+// --- Valori degli Enum ---
 #define Log_LogLevel_INFO      smartvase_Log_LogLevel_INFO
 #define Log_LogLevel_WARN      smartvase_Log_LogLevel_WARN
 #define Log_LogLevel_ERROR     smartvase_Log_LogLevel_ERROR
@@ -62,15 +61,15 @@ typedef smartvase_CommandResponse        CommandResponse;
 #define CommandResponse_Status_OK    smartvase_CommandResponse_Status_OK
 #define CommandResponse_Status_ERROR smartvase_CommandResponse_Status_ERROR
 
-#define IDLE   smartvase_SetModeCommand_Mode_IDLE
-#define LIGHT  smartvase_SetModeCommand_Mode_LIGHT
-#define SHADOW smartvase_SetModeCommand_Mode_SHADOW
+#define SetModeCommand_Mode_IDLE   smartvase_SetModeCommand_Mode_IDLE
+#define SetModeCommand_Mode_LIGHT  smartvase_SetModeCommand_Mode_LIGHT
+#define SetModeCommand_Mode_SHADOW smartvase_SetModeCommand_Mode_SHADOW
 
-#define M_IDLE            smartvase_MovementState_M_IDLE
-#define M_MOVING          smartvase_MovementState_M_MOVING
-#define M_AVOID_START     smartvase_MovementState_M_AVOID_START
-#define M_AVOID_REVERSING smartvase_MovementState_M_AVOID_REVERSING
-#define M_AVOID_TURNING   smartvase_MovementState_M_AVOID_TURNING
-#define M_STUCK           smartvase_MovementState_M_STUCK
+#define MS_IDLE            smartvase_MovementState_M_IDLE
+#define MS_MOVING          smartvase_MovementState_M_MOVING
+#define MS_AVOID_START     smartvase_MovementState_M_AVOID_START
+#define MS_AVOID_REVERSING smartvase_MovementState_M_AVOID_REVERSING
+#define MS_AVOID_TURNING   smartvase_MovementState_M_AVOID_TURNING
+#define MS_STUCK           smartvase_MovementState_M_STUCK
 
 #endif // SMARTVASE_ALIASES_H_INCLUDED

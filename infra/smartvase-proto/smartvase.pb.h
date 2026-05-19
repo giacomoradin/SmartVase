@@ -3,7 +3,7 @@
 
 #ifndef PB_SMARTVASE_SMARTVASE_PB_H_INCLUDED
 #define PB_SMARTVASE_SMARTVASE_PB_H_INCLUDED
-#include <pb.h>
+#include "pb.h"
 
 #if PB_PROTO_HEADER_VERSION != 40
 #error Regenerate this file with the current version of nanopb generator.
@@ -41,26 +41,39 @@ typedef enum _smartvase_SetModeCommand_Mode {
 } smartvase_SetModeCommand_Mode;
 
 /* Struct definitions */
-/* ===================================================================
- Messaggi Atomici
- =================================================================== */
+/* Telemetria ad alta frequenza (sensori in tempo reale per la navigazione) */
 typedef struct _smartvase_TelemetryFast {
-    float front_dist_cm;
-    int32_t lux;
-    smartvase_MovementState movement_state;
-    float left_dist_cm;
-    float right_dist_cm;
+    /* 5 sensori HC-SR04 per navigazione e obstacle avoidance */
+    float top_dist_cm; /* US1 - frontale alto */
+    float front_right_dist_cm; /* US2 - frontale destro */
+    float front_left_dist_cm; /* US3 - frontale sinistro */
+    float left_dist_cm; /* US5 - laterale sinistro */
+    float right_dist_cm; /* US6 - laterale destro */
+    /* US4 - livello acqua nella tanica */
     float water_level_cm;
+    /* Umidita' del suolo (forcella su A0). Range ADC grezzo 0..1023. */
+    int32_t soil_moisture;
+    /* Luminosita' ambientale (fotoresistore su A1). Range ADC grezzo 0..1023. */
+    int32_t lux;
+    /* Stato corrente della macchina a stati del movimento */
+    smartvase_MovementState movement_state;
+    /* Timestamp Unix epoch (s) dal RTC DS3232 (0 se RTC non disponibile) */
+    uint32_t epoch_s;
     char device_id[16];
 } smartvase_TelemetryFast;
 
+/* Telemetria a bassa frequenza (sensori ambientali + statistiche cumulative) */
 typedef struct _smartvase_TelemetryDeep {
+    /* BME680 (I2C 0x76) */
     float temperature_c;
     float humidity_percent;
     float pressure_hpa;
     uint32_t gas_resistance_ohms;
+    /* Stato del sistema */
     uint32_t uptime_s;
     uint32_t free_ram_bytes;
+    uint32_t epoch_s; /* da RTC */
+    /* Contatori cumulativi (persistiti in EEPROM) */
     uint32_t watchdog_resets;
     uint32_t total_irrigations;
     uint32_t obstacles_avoided;
@@ -71,7 +84,8 @@ typedef struct _smartvase_TelemetryDeep {
     uint32_t total_motor_active_time_s;
     uint32_t pb_decode_failures;
     char device_id[16];
-    /* NUOVO CAMPO */
+    /* Batteria (disabilitato finche' non viene cablato il partitore resistivo).
+ Quando attivo: tensione VBATT in volt dopo divisore. */
     float battery_voltage;
 } smartvase_TelemetryDeep;
 
@@ -92,6 +106,8 @@ typedef struct _smartvase_Heartbeat {
 typedef struct _smartvase_CommandResponse {
     smartvase_CommandResponse_Status status;
     char detail[64];
+    /* Valore numerico opzionale (es. risposta a ReadSoilCommand) */
+    int32_t value;
     uint32_t cmd_id;
     uint32_t exec_time_ms;
 } smartvase_CommandResponse;
@@ -202,12 +218,12 @@ extern "C" {
 
 
 /* Initializer values for message structs */
-#define smartvase_TelemetryFast_init_default     {0, 0, _smartvase_MovementState_MIN, 0, 0, 0, ""}
-#define smartvase_TelemetryDeep_init_default     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", 0}
+#define smartvase_TelemetryFast_init_default     {0, 0, 0, 0, 0, 0, 0, 0, _smartvase_MovementState_MIN, 0, ""}
+#define smartvase_TelemetryDeep_init_default     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", 0}
 #define smartvase_Log_init_default               {_smartvase_Log_LogLevel_MIN, "", "", 0, ""}
 #define smartvase_Heartbeat_init_default         {0, 0, ""}
 #define smartvase_Command_init_default           {0, {smartvase_WaterCommand_init_default}, 0}
-#define smartvase_CommandResponse_init_default   {_smartvase_CommandResponse_Status_MIN, "", 0, 0}
+#define smartvase_CommandResponse_init_default   {_smartvase_CommandResponse_Status_MIN, "", 0, 0, 0}
 #define smartvase_WaterCommand_init_default      {0}
 #define smartvase_SetModeCommand_init_default    {_smartvase_SetModeCommand_Mode_MIN}
 #define smartvase_SetMotionParamsCommand_init_default {0, 0}
@@ -216,12 +232,12 @@ extern "C" {
 #define smartvase_ReadSoilCommand_init_default   {0}
 #define smartvase_SoftResetCommand_init_default  {0}
 #define smartvase_WrapperMessage_init_default    {0, {smartvase_TelemetryFast_init_default}}
-#define smartvase_TelemetryFast_init_zero        {0, 0, _smartvase_MovementState_MIN, 0, 0, 0, ""}
-#define smartvase_TelemetryDeep_init_zero        {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", 0}
+#define smartvase_TelemetryFast_init_zero        {0, 0, 0, 0, 0, 0, 0, 0, _smartvase_MovementState_MIN, 0, ""}
+#define smartvase_TelemetryDeep_init_zero        {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", 0}
 #define smartvase_Log_init_zero                  {_smartvase_Log_LogLevel_MIN, "", "", 0, ""}
 #define smartvase_Heartbeat_init_zero            {0, 0, ""}
 #define smartvase_Command_init_zero              {0, {smartvase_WaterCommand_init_zero}, 0}
-#define smartvase_CommandResponse_init_zero      {_smartvase_CommandResponse_Status_MIN, "", 0, 0}
+#define smartvase_CommandResponse_init_zero      {_smartvase_CommandResponse_Status_MIN, "", 0, 0, 0}
 #define smartvase_WaterCommand_init_zero         {0}
 #define smartvase_SetModeCommand_init_zero       {_smartvase_SetModeCommand_Mode_MIN}
 #define smartvase_SetMotionParamsCommand_init_zero {0, 0}
@@ -232,30 +248,35 @@ extern "C" {
 #define smartvase_WrapperMessage_init_zero       {0, {smartvase_TelemetryFast_init_zero}}
 
 /* Field tags (for use in manual encoding/decoding) */
-#define smartvase_TelemetryFast_front_dist_cm_tag 1
-#define smartvase_TelemetryFast_lux_tag          2
-#define smartvase_TelemetryFast_movement_state_tag 3
+#define smartvase_TelemetryFast_top_dist_cm_tag  1
+#define smartvase_TelemetryFast_front_right_dist_cm_tag 2
+#define smartvase_TelemetryFast_front_left_dist_cm_tag 3
 #define smartvase_TelemetryFast_left_dist_cm_tag 4
 #define smartvase_TelemetryFast_right_dist_cm_tag 5
 #define smartvase_TelemetryFast_water_level_cm_tag 6
-#define smartvase_TelemetryFast_device_id_tag    7
+#define smartvase_TelemetryFast_soil_moisture_tag 7
+#define smartvase_TelemetryFast_lux_tag          8
+#define smartvase_TelemetryFast_movement_state_tag 9
+#define smartvase_TelemetryFast_epoch_s_tag      10
+#define smartvase_TelemetryFast_device_id_tag    11
 #define smartvase_TelemetryDeep_temperature_c_tag 1
 #define smartvase_TelemetryDeep_humidity_percent_tag 2
 #define smartvase_TelemetryDeep_pressure_hpa_tag 3
 #define smartvase_TelemetryDeep_gas_resistance_ohms_tag 4
 #define smartvase_TelemetryDeep_uptime_s_tag     5
 #define smartvase_TelemetryDeep_free_ram_bytes_tag 6
-#define smartvase_TelemetryDeep_watchdog_resets_tag 7
-#define smartvase_TelemetryDeep_total_irrigations_tag 8
-#define smartvase_TelemetryDeep_obstacles_avoided_tag 9
-#define smartvase_TelemetryDeep_stuck_events_tag 10
-#define smartvase_TelemetryDeep_bme_read_errors_tag 11
-#define smartvase_TelemetryDeep_log_overflows_tag 12
-#define smartvase_TelemetryDeep_total_irrigation_duration_s_tag 13
-#define smartvase_TelemetryDeep_total_motor_active_time_s_tag 14
-#define smartvase_TelemetryDeep_pb_decode_failures_tag 15
-#define smartvase_TelemetryDeep_device_id_tag    16
-#define smartvase_TelemetryDeep_battery_voltage_tag 17
+#define smartvase_TelemetryDeep_epoch_s_tag      7
+#define smartvase_TelemetryDeep_watchdog_resets_tag 8
+#define smartvase_TelemetryDeep_total_irrigations_tag 9
+#define smartvase_TelemetryDeep_obstacles_avoided_tag 10
+#define smartvase_TelemetryDeep_stuck_events_tag 11
+#define smartvase_TelemetryDeep_bme_read_errors_tag 12
+#define smartvase_TelemetryDeep_log_overflows_tag 13
+#define smartvase_TelemetryDeep_total_irrigation_duration_s_tag 14
+#define smartvase_TelemetryDeep_total_motor_active_time_s_tag 15
+#define smartvase_TelemetryDeep_pb_decode_failures_tag 16
+#define smartvase_TelemetryDeep_device_id_tag    17
+#define smartvase_TelemetryDeep_battery_voltage_tag 18
 #define smartvase_Log_level_tag                  1
 #define smartvase_Log_event_tag                  2
 #define smartvase_Log_detail_tag                 3
@@ -266,6 +287,7 @@ extern "C" {
 #define smartvase_Heartbeat_device_id_tag        3
 #define smartvase_CommandResponse_status_tag     1
 #define smartvase_CommandResponse_detail_tag     2
+#define smartvase_CommandResponse_value_tag      3
 #define smartvase_CommandResponse_cmd_id_tag     99
 #define smartvase_CommandResponse_exec_time_ms_tag 100
 #define smartvase_WaterCommand_duration_ms_tag   1
@@ -289,13 +311,17 @@ extern "C" {
 
 /* Struct field encoding specification for nanopb */
 #define smartvase_TelemetryFast_FIELDLIST(X, a) \
-X(a, STATIC,   SINGULAR, FLOAT,    front_dist_cm,     1) \
-X(a, STATIC,   SINGULAR, INT32,    lux,               2) \
-X(a, STATIC,   SINGULAR, UENUM,    movement_state,    3) \
+X(a, STATIC,   SINGULAR, FLOAT,    top_dist_cm,       1) \
+X(a, STATIC,   SINGULAR, FLOAT,    front_right_dist_cm,   2) \
+X(a, STATIC,   SINGULAR, FLOAT,    front_left_dist_cm,   3) \
 X(a, STATIC,   SINGULAR, FLOAT,    left_dist_cm,      4) \
 X(a, STATIC,   SINGULAR, FLOAT,    right_dist_cm,     5) \
 X(a, STATIC,   SINGULAR, FLOAT,    water_level_cm,    6) \
-X(a, STATIC,   SINGULAR, STRING,   device_id,         7)
+X(a, STATIC,   SINGULAR, INT32,    soil_moisture,     7) \
+X(a, STATIC,   SINGULAR, INT32,    lux,               8) \
+X(a, STATIC,   SINGULAR, UENUM,    movement_state,    9) \
+X(a, STATIC,   SINGULAR, UINT32,   epoch_s,          10) \
+X(a, STATIC,   SINGULAR, STRING,   device_id,        11)
 #define smartvase_TelemetryFast_CALLBACK NULL
 #define smartvase_TelemetryFast_DEFAULT NULL
 
@@ -306,17 +332,18 @@ X(a, STATIC,   SINGULAR, FLOAT,    pressure_hpa,      3) \
 X(a, STATIC,   SINGULAR, UINT32,   gas_resistance_ohms,   4) \
 X(a, STATIC,   SINGULAR, UINT32,   uptime_s,          5) \
 X(a, STATIC,   SINGULAR, UINT32,   free_ram_bytes,    6) \
-X(a, STATIC,   SINGULAR, UINT32,   watchdog_resets,   7) \
-X(a, STATIC,   SINGULAR, UINT32,   total_irrigations,   8) \
-X(a, STATIC,   SINGULAR, UINT32,   obstacles_avoided,   9) \
-X(a, STATIC,   SINGULAR, UINT32,   stuck_events,     10) \
-X(a, STATIC,   SINGULAR, UINT32,   bme_read_errors,  11) \
-X(a, STATIC,   SINGULAR, UINT32,   log_overflows,    12) \
-X(a, STATIC,   SINGULAR, UINT32,   total_irrigation_duration_s,  13) \
-X(a, STATIC,   SINGULAR, UINT32,   total_motor_active_time_s,  14) \
-X(a, STATIC,   SINGULAR, UINT32,   pb_decode_failures,  15) \
-X(a, STATIC,   SINGULAR, STRING,   device_id,        16) \
-X(a, STATIC,   SINGULAR, FLOAT,    battery_voltage,  17)
+X(a, STATIC,   SINGULAR, UINT32,   epoch_s,           7) \
+X(a, STATIC,   SINGULAR, UINT32,   watchdog_resets,   8) \
+X(a, STATIC,   SINGULAR, UINT32,   total_irrigations,   9) \
+X(a, STATIC,   SINGULAR, UINT32,   obstacles_avoided,  10) \
+X(a, STATIC,   SINGULAR, UINT32,   stuck_events,     11) \
+X(a, STATIC,   SINGULAR, UINT32,   bme_read_errors,  12) \
+X(a, STATIC,   SINGULAR, UINT32,   log_overflows,    13) \
+X(a, STATIC,   SINGULAR, UINT32,   total_irrigation_duration_s,  14) \
+X(a, STATIC,   SINGULAR, UINT32,   total_motor_active_time_s,  15) \
+X(a, STATIC,   SINGULAR, UINT32,   pb_decode_failures,  16) \
+X(a, STATIC,   SINGULAR, STRING,   device_id,        17) \
+X(a, STATIC,   SINGULAR, FLOAT,    battery_voltage,  18)
 #define smartvase_TelemetryDeep_CALLBACK NULL
 #define smartvase_TelemetryDeep_DEFAULT NULL
 
@@ -358,6 +385,7 @@ X(a, STATIC,   SINGULAR, UINT32,   cmd_id,           99)
 #define smartvase_CommandResponse_FIELDLIST(X, a) \
 X(a, STATIC,   SINGULAR, UENUM,    status,            1) \
 X(a, STATIC,   SINGULAR, STRING,   detail,            2) \
+X(a, STATIC,   SINGULAR, INT32,    value,             3) \
 X(a, STATIC,   SINGULAR, UINT32,   cmd_id,           99) \
 X(a, STATIC,   SINGULAR, UINT32,   exec_time_ms,    100)
 #define smartvase_CommandResponse_CALLBACK NULL
@@ -448,7 +476,7 @@ extern const pb_msgdesc_t smartvase_WrapperMessage_msg;
 
 /* Maximum encoded size of messages (where known) */
 #define SMARTVASE_SMARTVASE_PB_H_MAX_SIZE        smartvase_WrapperMessage_size
-#define smartvase_CommandResponse_size           81
+#define smartvase_CommandResponse_size           92
 #define smartvase_Command_size                   21
 #define smartvase_Heartbeat_size                 25
 #define smartvase_Log_size                       83
@@ -458,10 +486,10 @@ extern const pb_msgdesc_t smartvase_WrapperMessage_msg;
 #define smartvase_SetMotionParamsCommand_size    12
 #define smartvase_SoftResetCommand_size          0
 #define smartvase_StopCommand_size               0
-#define smartvase_TelemetryDeep_size             111
-#define smartvase_TelemetryFast_size             50
+#define smartvase_TelemetryDeep_size             118
+#define smartvase_TelemetryFast_size             77
 #define smartvase_WaterCommand_size              6
-#define smartvase_WrapperMessage_size            113
+#define smartvase_WrapperMessage_size            120
 
 #ifdef __cplusplus
 } /* extern "C" */

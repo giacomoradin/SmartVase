@@ -1,114 +1,98 @@
-SmartVase - Firmware Platform Controller (Arduino Mega)
+# SmartVase - Firmware Platform Controller (Arduino Mega)
 
-Questo repository contiene il firmware per il Platform Controller (basato su Arduino Mega) del progetto SmartVase, un sistema IoT per una serra automatizzata e mobile.
+Firmware del **Platform Controller** SmartVase. Versione **5.0** (2026-05-19),
+refactor totale per allinearsi al nuovo PIN map (`docs/PINS - Sheet1.csv`).
 
-Questo firmware è responsabile della gestione a basso livello di tutto l'hardware, inclusi motori, sensori e attuatori. È stato progettato con un'enfasi su robustezza, resilienza e diagnostica avanzata, per un'operatività di livello "enterprise-ready".
+## Architettura
 
-Architettura del Sistema
+Il Mega è "il braccio": pilota direttamente l'hardware (motori, pompa,
+sensori, RTC) e parla **solo** con l'ESP32 Hub via Serial1 a 115200 baud
+(framing Protobuf+CRC16).
 
-Il sistema SmartVase è composto da tre microcontrollori che collaborano:
+Moduli (`src/`):
 
-Arduino Mega (Questo Firmware) - Platform Controller: Il "braccio" del sistema. Gestisce direttamente tutto l'hardware (motori, pompa, sensori a ultrasuoni, sensore BME680, etc.). Comunica esclusivamente con l'Hub.
+| File              | Responsabilità                                                                           |
+|-------------------|------------------------------------------------------------------------------------------|
+| `main.cpp`        | Setup + loop non bloccante, scheduler telemetria/heartbeat/log, WDT, degraded mode       |
+| `Sensors.{h,cpp}` | 6 HC-SR04 (round-robin), BME680, RTC DS3232, forcella umidità, fotoresistore             |
+| `Movement.{h,cpp}`| State machine motori (IDLE/MOVING/AVOID*/STUCK), light-seek / shadow-seek                |
+| `Pump.{h,cpp}`    | Pompa irrigazione non-bloccante (relè D10, max 60s safety)                               |
+| `Persistence.{h,cpp}` | EEPROM dual-slot con magic+CRC16, wear leveling                                       |
+| `Communication.{h,cpp}` | Framing seriale SOF/len/payload/CRC16, parser stato, log queue, dispatcher comandi |
+| `SystemStatus.h`  | Struct condivisa di stato (degraded mode, deviceId, ecc.)                                |
+| `smartvase_aliases.h` | Typedef/define per i simboli nanopb + tipi C++ interni                               |
 
-ESP32 Standard - Logic & Web Hub: Il "cervello". Gestisce la connettività Wi-Fi, un server web con API REST per l'app Android e coordina le azioni.
+## PIN map autoritativo
 
-ESP32-CAM - Vision Co-Processor: L'"occhio". Gestisce la cattura e l'analisi base delle immagini.
+Vedi `docs/PINS - Sheet1.csv`. Sintesi:
 
-Funzionalità Chiave del Firmware
+| Periferica           | Pin                             |
+|----------------------|---------------------------------|
+| US1 (front-top)      | trig D33 / echo D35             |
+| US2 (front-right)    | trig D26 / echo D27             |
+| US3 (front-left)     | trig D36 / echo D37             |
+| US4 (water tank)     | trig D50 / echo D51             |
+| US5 (left)           | trig D4  / echo D5              |
+| US6 (right)          | trig D28 / echo D29             |
+| Motori H-bridge L    | IN1=D43, IN2=D45, ENA=D6 (PWM)  |
+| Motori H-bridge R    | IN3=D47, IN4=D49, ENB=D7 (PWM)  |
+| Relè pompa           | IN1=D10 (active-low), backup D11|
+| RTC DS3232 (I²C)     | SDA=D20, SCL=D21 (addr 0x68)    |
+| Forcella umidità     | A0                              |
+| Fotoresistore (LDR)  | A1 (spostato da A0)             |
+| Batteria (partitore) | A2 (disabilitato finché non cablato) |
+| BME680 (I²C)         | addr 0x76                       |
 
-Codice Non Bloccante: Tutta la logica è basata su millis() e macchine a stati. Non ci sono delay().
+Le costanti pin sono centralizzate in `Sensors.cpp` e `Movement.cpp`.
 
-Watchdog Hardware (WDT): Reset automatico in caso di stallo software, con conteggio e logging dei reset.
+## Dipendenze (PlatformIO)
 
-Gestione Memoria Ottimizzata: Nessun uso della classe String e monitoraggio attivo della SRAM libera con ingresso in modalità di funzionamento degradata in caso di criticità.
+```ini
+lib_deps =
+    adafruit/Adafruit BME680 Library @ ^2.0.1
+    enjoyneering/HCSR04 @ ^1.1.0
+    paulstoffregen/Time @ ^1.6.1
+    jchristensen/DS3232RTC @ ^2.0.1
+```
 
-Persistenza su EEPROM: Configurazioni e statistiche cumulative sono salvate in EEPROM con wear leveling (doppio slot) e convalida tramite CRC16.
+I file Nanopb (`pb_*.c/h`, `smartvase.pb.{c,h}`) sono già in `src/` e
+vengono compilati con lo sketch.
 
-Protocollo di Comunicazione Robusto: Comunicazione seriale con l'Hub tramite messaggi Protobuf incapsulati in un frame con Start-of-Frame, lunghezza e CRC16 per garantire l'integrità dei dati.
+## Build
 
-Diagnostica Avanzata:
+```
+build_mega.bat
+```
 
-Logging Strutturato: Tutti gli eventi importanti vengono loggati e inviati all'Hub.
+Equivalente a `pio run -d firmware/2_platform-controller_mega/...`.
 
-CLI di Debug: Interfaccia a riga di comando su porta USB per test manuali e diagnostica sul campo senza bisogno dell'Hub.
+## Funzionalità chiave
 
-Fail-Safe per Sensori: Monitoraggio dei fallimenti consecutivi dei sensori e gestione di dati inaffidabili.
+- **Non-blocking**: nessun `delay()` nel main loop (ad eccezione di
+  `Movement::testMove`, usato solo dalla CLI manuale).
+- **Hardware Watchdog**: `WDTO_4S`. Reset count salvato in EEPROM stats.
+- **Degraded mode**: si attiva se `freeRam() < 800 B` o se l'Hub tace
+  >120 s. Ferma motori, ferma pompa, ignora comandi di movimento.
+- **EEPROM dual-slot**: doppio slot (alternato) con magic number + CRC16
+  per `DeviceConfig` (60 s throttle) e `CumulativeStats` (300 s throttle).
+- **Framing seriale**: `SOF=0xAA | len(2) | payload | crc16(2)`, CRC-CCITT
+  (poly `0x1021`).
+- **Log queue**: circolare a 20 slot, drenata a 200 ms dal main loop.
+- **Comandi supportati** (da Hub):
+  `WaterCommand`, `SetModeCommand`, `StopCommand`,
+  `RequestDiagnosticsCommand`, `SetMotionParamsCommand`,
+  `ReadSoilCommand`, `SoftResetCommand`. Ogni comando produce un
+  `CommandResponse` (status OK/ERROR, detail, value, cmd_id, exec_time_ms).
 
-Setup e Compilazione
+## TODO aperti
 
-Per compilare questo firmware, segui attentamente questi passaggi.
+- [ ] Confermare partitore batteria a banco → settare
+      `BATTERY_MONITORING_ENABLED 1` in `Sensors.h`.
+- [ ] CLI di debug su Serial USB (oggi non implementata: tutto via comando
+      Protobuf dall'Hub).
+- [ ] Integrazione corrente motori (INA219) per stallo.
+- [ ] OTA via Hub.
 
-1. Dipendenze Hardware
+## Licenza
 
-<!-- Descrivi qui l'hardware necessario: Arduino Mega, motori, sensori, etc. -->
-
-Arduino Mega 2560
-
-...
-
-2. Librerie Arduino
-
-Installa le seguenti librerie tramite il Library Manager dell'IDE di Arduino:
-
-Adafruit BME680 Library
-
-HCSR04 by gamegine
-
-DS3232RTC
-
-3. Configurazione di Nanopb (Cruciale)
-
-Questo progetto usa Nanopb per la serializzazione dei dati con Protobuf. Il setup è manuale.
-
-Copia i File Core di Nanopb:
-
-Trova la cartella della libreria nanopb di Arduino.
-
-Copia i 7 file (pb.h, pb_common.c, pb_common.h, pb_decode.c, pb_decode.h, pb_encode.c, pb_encode.h) nella cartella principale di questo sketch.
-
-Genera i File dello Sketch:
-
-Installa Python e nanopb (pip install nanopb).
-
-Esegui il generatore sul file smartvase_v3.proto per creare smartvase.pb.c and smartvase.pb.h.
-
-Posiziona i file generati nella cartella di questo sketch.
-
-Modifica Manuale (Importante!):
-
-Apri il file smartvase.pb.h appena generato.
-
-Trova la riga #include <pb.h>.
-
-Modificala in #include "pb.h".
-
-Salva il file.
-
-4. Compila e Carica
-
-Dopo aver seguito i passaggi precedenti, il progetto compilerà e potrà essere caricato sull'Arduino Mega.
-
-Utilizzo della CLI di Debug
-
-Collega l'Arduino Mega al PC via USB e apri il Serial Monitor a 115200 baud con terminatore di riga "Newline". Digita help per la lista dei comandi disponibili.
-
---- SmartVase CLI ---
-help             - Mostra questo menu
-status           - Mostra stato operativo
-stats            - Mostra statistiche cumulative
-config           - Mostra configurazione attuale
-sensors          - Mostra valori sensori
-reboot           - Riavvia il microcontrollore
-motor <dir> <ms> - Test motori (dir: f,b,l,r)
-pump <ms>        - Test pompa
-
-
-Roadmap Futura
-
-[ ] Integrazione di un sensore di corrente (es. INA219) per il rilevamento di stallo dei motori.
-
-[ ] Implementazione di un sistema di aggiornamento firmware Over-The-Air (OTA) gestito dall'Hub.
-
-Licenza
-
-Questo progetto è rilasciato sotto la Licenza MIT. Vedi il file LICENSE per maggiori dettagli.
+MIT — vedi `LICENSE`.

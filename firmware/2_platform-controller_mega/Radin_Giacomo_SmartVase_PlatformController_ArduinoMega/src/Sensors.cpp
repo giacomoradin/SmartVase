@@ -1,134 +1,236 @@
 #include "Sensors.h"
+#include <Wire.h>
 
-// --- Pinout ---
-const int photoresistorPin = A0;
-const int batteryPin = A2;
-#define TRIG_PIN_WATER 12
-#define ECHO_PIN_WATER 8
-#define TRIG_PIN_FRONT 38
-#define ECHO_PIN_FRONT 39
-#define TRIG_PIN_LEFT 13
-#define ECHO_PIN_LEFT 11
-#define TRIG_PIN_RIGHT 9
-#define ECHO_PIN_RIGHT 10
+// =================================================================
+// PIN MAP — fonte autoritativa: docs/PINS - Sheet1.csv (2026-05-19)
+// =================================================================
 
-// --- Costanti per Monitoraggio Batteria (da calibrare) ---
-#define ADC_REFERENCE_VOLTAGE 5.0
-#define VOLTAGE_DIVIDER_R1 30000.0 // Valore R1 del partitore
-#define VOLTAGE_DIVIDER_R2 7500.0  // Valore R2 del partitore
+// Sensori HC-SR04 (trigger, echo)
+#define US1_TOP_TRIG          33
+#define US1_TOP_ECHO          35
+#define US2_FRONT_RIGHT_TRIG  26
+#define US2_FRONT_RIGHT_ECHO  27
+#define US3_FRONT_LEFT_TRIG   36
+#define US3_FRONT_LEFT_ECHO   37
+#define US4_WATER_TRIG        50
+#define US4_WATER_ECHO        51
+#define US5_LEFT_TRIG          4
+#define US5_LEFT_ECHO          5
+#define US6_RIGHT_TRIG        28
+#define US6_RIGHT_ECHO        29
 
-Sensors::Sensors() : 
-    waterSensor(TRIG_PIN_WATER, ECHO_PIN_WATER),
-    frontSensor(TRIG_PIN_FRONT, ECHO_PIN_FRONT),
-    leftSensor(TRIG_PIN_LEFT, ECHO_PIN_LEFT),
-    rightSensor(TRIG_PIN_RIGHT, ECHO_PIN_RIGHT)
+// ADC analogici
+#define SOIL_MOISTURE_PIN     A0   // Forcella umidita' suolo
+#define PHOTORESISTOR_PIN     A1   // Spostato da A0 per liberare la forcella
+
+#if BATTERY_MONITORING_ENABLED
+// TODO: confermare a banco quando il partitore resistivo viene cablato.
+#define BATTERY_PIN           A2
+#define ADC_REFERENCE_VOLTAGE 5.0f
+#define VOLTAGE_DIVIDER_R1    30000.0f
+#define VOLTAGE_DIVIDER_R2     7500.0f
+#endif
+
+// Indirizzi I2C
+#define BME680_I2C_ADDRESS    0x76
+
+// Throttling lettura ultrasuoni: una sonda ogni N ms (round-robin sui 6).
+// 6 sonde × 30 ms => refresh completo ~180 ms.
+#define US_SAMPLE_INTERVAL_MS 30
+
+Sensors::Sensors() :
+    us1_top         (US1_TOP_TRIG,         US1_TOP_ECHO),
+    us2_front_right (US2_FRONT_RIGHT_TRIG, US2_FRONT_RIGHT_ECHO),
+    us3_front_left  (US3_FRONT_LEFT_TRIG,  US3_FRONT_LEFT_ECHO),
+    us4_water       (US4_WATER_TRIG,       US4_WATER_ECHO),
+    us5_left        (US5_LEFT_TRIG,        US5_LEFT_ECHO),
+    us6_right       (US6_RIGHT_TRIG,       US6_RIGHT_ECHO),
+    us_cycle_idx(0),
+    last_us_sample_ms(0),
+    cached_top_dist_cm(NAN),
+    cached_front_right_dist_cm(NAN),
+    cached_front_left_dist_cm(NAN),
+    cached_water_level_cm(NAN),
+    cached_left_dist_cm(NAN),
+    cached_right_dist_cm(NAN),
+    invalid_streak_top(0),
+    invalid_streak_fr(0),
+    invalid_streak_fl(0),
+    invalid_streak_water(0),
+    invalid_streak_left(0),
+    invalid_streak_right(0),
+    cached_lux(-1),
+    cached_soil_moisture(-1),
+    cached_battery_voltage(NAN),
+    bme_status(false),
+    rtc_status(false)
 {
-    cached_battery_voltage = NAN;
-    cached_water_level_cm = NAN;
-    cached_front_dist_cm = NAN;
-    cached_left_dist_cm = NAN;
-    cached_right_dist_cm = NAN;
-    cached_lux = -1;
-    invalid_streak_water = 0;
-    invalid_streak_front = 0;
-    invalid_streak_left = 0;
-    invalid_streak_right = 0;
-    bme_status = false;
 }
 
 void Sensors::init() {
-    pinMode(batteryPin, INPUT);
-    if (bme.begin(0x76)) {
+    pinMode(SOIL_MOISTURE_PIN, INPUT);
+    pinMode(PHOTORESISTOR_PIN, INPUT);
+#if BATTERY_MONITORING_ENABLED
+    pinMode(BATTERY_PIN, INPUT);
+#endif
+
+    Wire.begin();
+
+    // BME680 (T / RH / pressione / VOC)
+    if (bme.begin(BME680_I2C_ADDRESS)) {
+        bme.setTemperatureOversampling(BME680_OS_8X);
+        bme.setHumidityOversampling(BME680_OS_2X);
+        bme.setPressureOversampling(BME680_OS_4X);
+        bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
+        bme.setGasHeater(320, 150); // 320 C per 150 ms
         bme_status = true;
     }
+
+    // RTC DS3232 (I2C 0x68)
+    rtc.begin();
+    // begin() non ritorna stato — probiamo a leggere per verificare presenza.
+    time_t t = rtc.get();
+    rtc_status = (t != 0);
 }
 
-void Sensors::sampleSensors() {
-    unsigned long currentMillis = millis();
-    // ... (rest of the implementation from the .ino file)
-}
-
-float Sensors::applyEmaFilter(float raw_value, float last_value, unsigned int& invalid_streak, float min_valid, float max_valid) {
-    const float alpha = 0.4;
+float Sensors::applyEmaFilter(float raw_value, float last_value,
+                              unsigned int& invalid_streak,
+                              float min_valid, float max_valid) {
+    const float alpha = 0.4f;
     if (isnan(raw_value) || raw_value < min_valid || raw_value > max_valid) {
         invalid_streak++;
+        // Dopo 10 letture invalide consecutive il valore diventa NAN.
         return (invalid_streak >= 10) ? NAN : last_value;
     }
     invalid_streak = 0;
     if (isnan(last_value)) return raw_value;
-    return (alpha * raw_value) + ((1.0 - alpha) * last_value);
+    return (alpha * raw_value) + ((1.0f - alpha) * last_value);
 }
 
-float Sensors::getBatteryVoltage() {
-    int rawAdc = analogRead(batteryPin);
-    float voltage = (rawAdc / 1023.0) * ADC_REFERENCE_VOLTAGE;
-    cached_battery_voltage = voltage * ((VOLTAGE_DIVIDER_R1 + VOLTAGE_DIVIDER_R2) / VOLTAGE_DIVIDER_R2);
-    return cached_battery_voltage;
+void Sensors::sampleNextUltrasonic() {
+    // Range valido HC-SR04: 2..400 cm. La tanica accetta range piu' ampio.
+    const float MIN_DIST = 2.0f;
+    const float MAX_DIST = 400.0f;
+
+    float raw = NAN;
+    switch (us_cycle_idx) {
+        case 0:
+            raw = us1_top.getDistance();
+            cached_top_dist_cm = applyEmaFilter(raw, cached_top_dist_cm,
+                                                invalid_streak_top, MIN_DIST, MAX_DIST);
+            break;
+        case 1:
+            raw = us2_front_right.getDistance();
+            cached_front_right_dist_cm = applyEmaFilter(raw, cached_front_right_dist_cm,
+                                                        invalid_streak_fr, MIN_DIST, MAX_DIST);
+            break;
+        case 2:
+            raw = us3_front_left.getDistance();
+            cached_front_left_dist_cm = applyEmaFilter(raw, cached_front_left_dist_cm,
+                                                       invalid_streak_fl, MIN_DIST, MAX_DIST);
+            break;
+        case 3:
+            raw = us4_water.getDistance();
+            cached_water_level_cm = applyEmaFilter(raw, cached_water_level_cm,
+                                                   invalid_streak_water, MIN_DIST, MAX_DIST);
+            break;
+        case 4:
+            raw = us5_left.getDistance();
+            cached_left_dist_cm = applyEmaFilter(raw, cached_left_dist_cm,
+                                                 invalid_streak_left, MIN_DIST, MAX_DIST);
+            break;
+        case 5:
+            raw = us6_right.getDistance();
+            cached_right_dist_cm = applyEmaFilter(raw, cached_right_dist_cm,
+                                                  invalid_streak_right, MIN_DIST, MAX_DIST);
+            break;
+    }
+    us_cycle_idx = (us_cycle_idx + 1) % 6;
 }
 
-float Sensors::getWaterLevel() {
-    float raw = waterSensor.getDistance();
-    cached_water_level_cm = applyEmaFilter(raw, cached_water_level_cm, invalid_streak_water, 2.0, 400.0);
-    return cached_water_level_cm;
+void Sensors::sampleAdcChannels() {
+    cached_lux           = analogRead(PHOTORESISTOR_PIN);
+    cached_soil_moisture = analogRead(SOIL_MOISTURE_PIN);
+
+#if BATTERY_MONITORING_ENABLED
+    int rawAdc = analogRead(BATTERY_PIN);
+    float v_adc = (rawAdc / 1023.0f) * ADC_REFERENCE_VOLTAGE;
+    cached_battery_voltage = v_adc * ((VOLTAGE_DIVIDER_R1 + VOLTAGE_DIVIDER_R2) / VOLTAGE_DIVIDER_R2);
+#endif
 }
 
-float Sensors::getFrontDistance() {
-    float raw = frontSensor.getDistance();
-    cached_front_dist_cm = applyEmaFilter(raw, cached_front_dist_cm, invalid_streak_front, 2.0, 400.0);
-    return cached_front_dist_cm;
+void Sensors::sampleSensors() {
+    unsigned long now = millis();
+    if (now - last_us_sample_ms >= US_SAMPLE_INTERVAL_MS) {
+        sampleNextUltrasonic();
+        last_us_sample_ms = now;
+    }
+    // ADC veloci: ogni chiamata.
+    sampleAdcChannels();
 }
 
-float Sensors::getLeftDistance() {
-    float raw = leftSensor.getDistance();
-    cached_left_dist_cm = applyEmaFilter(raw, cached_left_dist_cm, invalid_streak_left, 2.0, 400.0);
-    return cached_left_dist_cm;
+uint32_t Sensors::getEpoch() {
+    if (!rtc_status) return 0;
+    time_t t = rtc.get();
+    return (t == 0) ? 0 : (uint32_t)t;
 }
 
-float Sensors::getRightDistance() {
-    float raw = rightSensor.getDistance();
-    cached_right_dist_cm = applyEmaFilter(raw, cached_right_dist_cm, invalid_streak_right, 2.0, 400.0);
-    return cached_right_dist_cm;
+TelemetryFast Sensors::buildFastTelemetry(CppMovementState movState, const char* deviceId) {
+    TelemetryFast tf = TelemetryFast_init_zero;
+    tf.top_dist_cm         = isnan(cached_top_dist_cm)         ? 0.0f : cached_top_dist_cm;
+    tf.front_right_dist_cm = isnan(cached_front_right_dist_cm) ? 0.0f : cached_front_right_dist_cm;
+    tf.front_left_dist_cm  = isnan(cached_front_left_dist_cm)  ? 0.0f : cached_front_left_dist_cm;
+    tf.left_dist_cm        = isnan(cached_left_dist_cm)        ? 0.0f : cached_left_dist_cm;
+    tf.right_dist_cm       = isnan(cached_right_dist_cm)       ? 0.0f : cached_right_dist_cm;
+    tf.water_level_cm      = isnan(cached_water_level_cm)      ? 0.0f : cached_water_level_cm;
+    tf.soil_moisture       = (cached_soil_moisture < 0) ? 0 : cached_soil_moisture;
+    tf.lux                 = (cached_lux < 0) ? 0 : cached_lux;
+    tf.movement_state      = cppMovementStateToProto(movState);
+    tf.epoch_s             = getEpoch();
+    if (deviceId) {
+        strncpy(tf.device_id, deviceId, sizeof(tf.device_id) - 1);
+        tf.device_id[sizeof(tf.device_id) - 1] = '\0';
+    }
+    return tf;
 }
 
-int Sensors::getLux() {
-    cached_lux = analogRead(photoresistorPin);
-    return cached_lux;
-}
+extern int freeRam(); // definito in main.cpp
 
-bool Sensors::getBMEStatus() {
-    return bme_status;
-}
-
-TelemetryDeep Sensors::getDeepTelemetry(CumulativeStats& stats) {
+TelemetryDeep Sensors::buildDeepTelemetry(CumulativeStats& stats, const char* deviceId) {
     TelemetryDeep td = TelemetryDeep_init_zero;
 
-    if (bme.performReading()) {
-        // if (systemStatus.bmeSensorError) { systemStatus.bmeSensorError = false; LOG_INFO("sensor_ok", "BME680"); }
-        td.temperature_c = bme.temperature;
-        td.humidity_percent = bme.humidity;
-        td.pressure_hpa = bme.pressure / 100.0F;
-        td.gas_resistance_ohms = bme.gas_resistance;
+    if (bme_status && bme.performReading()) {
+        td.temperature_c       = bme.temperature;
+        td.humidity_percent    = bme.humidity;
+        td.pressure_hpa        = bme.pressure / 100.0f;
+        td.gas_resistance_ohms = (uint32_t)bme.gas_resistance;
     } else {
         stats.bme_read_errors++;
-        // if (!systemStatus.bmeSensorError) { systemStatus.bmeSensorError = true; LOG_WARN("sensor_fail", "BME680"); }
     }
-    
-    td.uptime_s = millis() / 1000;
-    // td.free_ram_bytes = freeRam();
-    td.watchdog_resets = stats.watchdog_resets;
-    td.total_irrigations = stats.total_irrigations;
-    td.obstacles_avoided = stats.obstacles_avoided;
-    td.stuck_events = stats.stuck_events;
-    td.bme_read_errors = stats.bme_read_errors;
-    td.log_overflows = stats.log_overflows;
+
+    td.uptime_s       = millis() / 1000UL;
+    td.free_ram_bytes = (uint32_t)freeRam();
+    td.epoch_s        = getEpoch();
+
+    td.watchdog_resets             = stats.watchdog_resets;
+    td.total_irrigations           = stats.total_irrigations;
+    td.obstacles_avoided           = stats.obstacles_avoided;
+    td.stuck_events                = stats.stuck_events;
+    td.bme_read_errors             = stats.bme_read_errors;
+    td.log_overflows               = stats.log_overflows;
     td.total_irrigation_duration_s = stats.total_irrigation_duration_s;
-    td.total_motor_active_time_s = stats.total_motor_active_time_s;
-    td.pb_decode_failures = stats.pb_decode_failures;
-    // strncpy(td.device_id, DEVICE_ID, sizeof(td.device_id) - 1);
-    
+    td.total_motor_active_time_s   = stats.total_motor_active_time_s;
+    td.pb_decode_failures          = stats.pb_decode_failures;
+
+#if BATTERY_MONITORING_ENABLED
     if (!isnan(cached_battery_voltage)) {
         td.battery_voltage = cached_battery_voltage;
     }
+#endif
 
+    if (deviceId) {
+        strncpy(td.device_id, deviceId, sizeof(td.device_id) - 1);
+        td.device_id[sizeof(td.device_id) - 1] = '\0';
+    }
     return td;
 }

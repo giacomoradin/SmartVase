@@ -1,4 +1,4 @@
-        #ifndef PERSISTENCE_H
+#ifndef PERSISTENCE_H
 #define PERSISTENCE_H
 
 #include <Arduino.h>
@@ -9,20 +9,18 @@ class Persistence {
 public:
     Persistence();
     void loadConfig();
-    void saveConfig();
+    void saveConfig(bool force = false);
     void loadStats();
     void saveStats(bool force = false);
-    DeviceConfig& getConfig();
-    CumulativeStats& getStats();
+    DeviceConfig&    getConfig() { return config; }
+    CumulativeStats& getStats()  { return stats; }
 
 private:
-    uint16_t crc16(const uint8_t* data, size_t length);
-
-    DeviceConfig config;
+    DeviceConfig    config;
     CumulativeStats stats;
     CumulativeStats lastSavedStats;
-    unsigned long lastEepromConfigWrite;
-    unsigned long lastEepromStatsWrite;
+    unsigned long   lastEepromConfigWrite;
+    unsigned long   lastEepromStatsWrite;
 };
 
 #endif // PERSISTENCE_H
