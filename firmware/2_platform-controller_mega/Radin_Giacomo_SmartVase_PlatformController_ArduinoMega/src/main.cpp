@@ -1,54 +1,90 @@
 /*
  * =================================================================
  * SmartVase - Platform Controller (Arduino Mega)
- * Versione: 4.0 (Refactored)
+ * Versione 5.0 — 2026-05-19 (refactor totale post-PIN map)
+ * =================================================================
+ *  - 6 sensori HC-SR04 con pin del nuovo PIN map
+ *  - Forcella umidita' suolo su A0, LDR spostato su A1
+ *  - Pompa irrigazione via rele' D10 (modulo Pump dedicato)
+ *  - RTC DS3232 (I2C 0x68) per timestamp epoch nei messaggi
+ *  - WDT 4s, doppio slot EEPROM con CRC16, log queue
+ *  - Comunicazione Serial1 Protobuf+framing verso ESP32 Hub
+ *  - Scheduler non-bloccante per telemetria/heartbeat/log
  * =================================================================
  */
 
-// =================================================================
-// 1. LIBRARIES & HEADERS
-// =================================================================
+#include <Arduino.h>
+#include <avr/wdt.h>
+
 #include "Movement.h"
 #include "Sensors.h"
 #include "Communication.h"
 #include "Persistence.h"
-
-#include <avr/wdt.h>
+#include "Pump.h"
+#include "SystemStatus.h"
+#include "Cli.h"
 
 // =================================================================
-// 2. GLOBAL OBJECTS
+// Oggetti globali
 // =================================================================
-Movement movement;
-Sensors sensors;
+Movement      movement;
+Sensors       sensors;
 Communication comm;
-Persistence persistence;
+Persistence   persistence;
+Pump          pump;
+Cli           cli;
+SystemStatus  systemStatus = {false, false, false, true, false, "", "MEGA_01"};
 
 // =================================================================
-// 3. GLOBAL VARIABLES & DEFINITIONS
+// Variabili di stato
 // =================================================================
-struct SystemStatus {
-    bool bmeSensorError; bool lowMemoryDetected; bool logQueueOverflow; bool degradedModeActive; bool hubIsMissing; char degradedReason[32];
-};
-SystemStatus systemStatus = {false, false, false, false, true, ""};
-
 uint8_t mcusr_mirror __attribute__ ((section (".noinit")));
-unsigned long lastHubMessageTime = 0;
+
+// Scheduler (intervalli in ms)
+#define INTERVAL_FAST_TELEMETRY_MS    1000UL
+#define INTERVAL_DEEP_TELEMETRY_MS   30000UL
+#define INTERVAL_HEARTBEAT_MS         5000UL
+#define INTERVAL_LOG_DRAIN_MS          200UL
+#define HUB_DEADMAN_TIMEOUT_MS      120000UL
+
+// Hysteresis SRAM: si entra in degraded sotto LOW; si esce solo sopra HIGH.
+// L'isteresi evita oscillazioni rapide quando la RAM libera fluttua intorno a LOW.
+#define LOW_RAM_THRESHOLD_BYTES        800
+#define HIGH_RAM_THRESHOLD_BYTES      1200
+
+unsigned long lastFastTelemetryMs  = 0;
+unsigned long lastDeepTelemetryMs  = 0;
+unsigned long lastHeartbeatMs      = 0;
+unsigned long lastLogDrainMs       = 0;
 
 // =================================================================
-// 4. UTILITY FUNCTIONS
+// Utility
 // =================================================================
-int freeRam() { extern int __heap_start, *__brkval; int v; return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) &__brkval); }
+int freeRam() {
+    extern int __heap_start, *__brkval;
+    int v;
+    return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) &__brkval);
+}
+
+// Disabilita il WDT subito dopo il reset hardware (prima di setup()) e
+// salva il valore di MCUSR per distinguere watchdog reset da power-on.
 void wdt_init(void) __attribute__((naked)) __attribute__((section(".init3")));
-void wdt_init(void) { mcusr_mirror = MCUSR; MCUSR = 0; wdt_disable(); }
+void wdt_init(void) {
+    mcusr_mirror = MCUSR;
+    MCUSR = 0;
+    wdt_disable();
+}
 
 void enterDegradedMode(const char* reason) {
     if (systemStatus.degradedModeActive) return;
     systemStatus.degradedModeActive = true;
     strncpy(systemStatus.degradedReason, reason, sizeof(systemStatus.degradedReason) - 1);
-    systemStatus.degradedReason[sizeof(systemStatus.degradedReason)-1] = '\0';
-    movement.stopMotors();
-    movement.setTargetMode(IDLE);
-    comm.logEvent(Log_LogLevel_CRITICAL, "degraded_mode", reason);
+    systemStatus.degradedReason[sizeof(systemStatus.degradedReason) - 1] = '\0';
+    movement.setTargetMode(CPP_IDLE);
+    movement.stopMotors(persistence.getStats());
+    pump.stop(persistence.getStats());
+    comm.logEvent(Log_LogLevel_CRITICAL, "degraded_mode", reason,
+                  systemStatus.deviceId, persistence.getStats());
     persistence.saveStats(true);
 }
 
@@ -56,74 +92,147 @@ void exitDegradedMode() {
     if (!systemStatus.degradedModeActive) return;
     systemStatus.degradedModeActive = false;
     systemStatus.degradedReason[0] = '\0';
-    comm.logEvent(Log_LogLevel_INFO, "degraded_exit", "Exiting degraded mode");
+    comm.logEvent(Log_LogLevel_INFO, "degraded_exit", "recovered",
+                  systemStatus.deviceId, persistence.getStats());
 }
 
-void softReset() {
-    comm.logEvent(Log_LogLevel_WARN, "soft_reset", "Initiating software reset");
+void performSoftReset() {
+    persistence.saveStats(true);
+    comm.logEvent(Log_LogLevel_WARN, "soft_reset", "via_command",
+                  systemStatus.deviceId, persistence.getStats());
     delay(100);
     wdt_enable(WDTO_15MS);
-    while (true);
+    while (true) { /* wait for WDT */ }
 }
 
 // =================================================================
-// 5. SETUP & MAIN LOOP
+// Setup
 // =================================================================
 void setup() {
-    Serial.begin(115200);
-    Serial.println(F("\nInizializzazione Platform Controller v4.0..."));
-    
-    Serial1.begin(115200);
+    Serial.begin(115200);   // USB / CLI debug
+    Serial1.begin(115200);  // Verso ESP32 Hub (Protobuf framing)
 
-    mcusr_mirror = MCUSR;
-    MCUSR = 0;
-    wdt_disable();
+    Serial.println(F("\n[SmartVase] Platform Controller v5.0 boot"));
 
+    // Carica config + stats da EEPROM (con fallback ai default se corrotti)
     persistence.loadConfig();
     persistence.loadStats();
 
+    // Diagnosi del motivo del reset usando MCUSR catturato in init3.
     if (mcusr_mirror & (1 << WDRF)) {
         persistence.getStats().watchdog_resets++;
         persistence.saveStats(true);
-        comm.logEvent(Log_LogLevel_CRITICAL, "reboot_wdt", "Watchdog reset");
+        comm.logEvent(Log_LogLevel_CRITICAL, "reboot_wdt", "watchdog_reset",
+                      systemStatus.deviceId, persistence.getStats());
     } else {
-        comm.logEvent(Log_LogLevel_INFO, "boot", "Power-on reset");
+        comm.logEvent(Log_LogLevel_INFO, "boot", "power_on_reset",
+                      systemStatus.deviceId, persistence.getStats());
     }
+
+    // Da qui in poi il watchdog vigila (resetta dopo 4s di stallo).
     wdt_enable(WDTO_4S);
 
     sensors.init();
     movement.init();
-    
+    pump.init();
+    comm.init();
+
     if (!sensors.getBMEStatus()) {
         systemStatus.bmeSensorError = true;
-        comm.logEvent(Log_LogLevel_ERROR, "sensor_init_fail", "BME680");
+        comm.logEvent(Log_LogLevel_ERROR, "sensor_init_fail", "BME680",
+                      systemStatus.deviceId, persistence.getStats());
     }
-    
-    comm.logEvent(Log_LogLevel_INFO, "system_boot", "Platform Controller ready");
-    Serial.println(F("Setup completo."));
+    if (!sensors.getRTCStatus()) {
+        comm.logEvent(Log_LogLevel_WARN, "sensor_init_fail", "DS3232_RTC",
+                      systemStatus.deviceId, persistence.getStats());
+    }
+
+    comm.logEvent(Log_LogLevel_INFO, "system_boot", "platform_ready",
+                  systemStatus.deviceId, persistence.getStats());
+    Serial.println(F("[SmartVase] setup complete."));
 }
 
+// =================================================================
+// Main loop (non bloccante)
+// =================================================================
 void loop() {
     wdt_reset();
-    unsigned long currentMillis = millis();
+    const unsigned long now = millis();
 
-    comm.handleSerial(movement, persistence);
+    // 0) CLI debug su USB Serial (Serial != Serial1)
+    cli.tick(movement, sensors, pump, persistence, systemStatus);
+
+    // 1) RX seriale (drain + eventuale esecuzione comandi)
+    comm.handleSerial(movement, persistence, sensors, pump, systemStatus);
+
+    // 2) Campionamento sensori (round-robin HC-SR04 + ADC)
     sensors.sampleSensors();
-    movement.handleMovementSM(sensors.getFrontDistance() < 20, sensors.getLeftDistance() < 20, sensors.getRightDistance() < 20, sensors.getLux(), persistence.getConfig(), persistence.getStats(), systemStatus.degradedModeActive);
 
-    // Task scheduling
-    // ...
-    
+    // 3) Pompa: spegnimento automatico a fine timer
+    pump.tick(persistence.getStats());
+
+    // 4) State machine movimento
+    ObstacleView ov;
+    ov.top         = sensors.getTopDist();
+    ov.front_right = sensors.getFrontRightDist();
+    ov.front_left  = sensors.getFrontLeftDist();
+    ov.left        = sensors.getLeftDist();
+    ov.right       = sensors.getRightDist();
+    movement.handleMovementSM(ov, sensors.getLux(),
+                              persistence.getConfig(), persistence.getStats(),
+                              systemStatus.degradedModeActive);
+
+    // 5) Scheduler trasmissioni periodiche
+    if (now - lastFastTelemetryMs >= INTERVAL_FAST_TELEMETRY_MS) {
+        TelemetryFast tf = sensors.buildFastTelemetry(movement.getCurrentState(),
+                                                      systemStatus.deviceId);
+        comm.sendFastTelemetry(tf);
+        lastFastTelemetryMs = now;
+    }
+    if (now - lastDeepTelemetryMs >= INTERVAL_DEEP_TELEMETRY_MS) {
+        TelemetryDeep td = sensors.buildDeepTelemetry(persistence.getStats(),
+                                                      systemStatus.deviceId);
+        comm.sendDeepTelemetry(td);
+        lastDeepTelemetryMs = now;
+    }
+    if (now - lastHeartbeatMs >= INTERVAL_HEARTBEAT_MS) {
+        comm.sendHeartbeat(now / 1000UL, systemStatus.degradedModeActive,
+                           systemStatus.deviceId);
+        lastHeartbeatMs = now;
+    }
+    if (now - lastLogDrainMs >= INTERVAL_LOG_DRAIN_MS) {
+        comm.drainLogQueue(systemStatus.deviceId);
+        lastLogDrainMs = now;
+    }
+
+    // 6) EEPROM stats (throttled internamente)
     persistence.saveStats(false);
 
-    if (freeRam() < 800) {
-        enterDegradedMode("Low SRAM");
+    // 7) Health checks
+    const int freeBytes = freeRam();
+    if (freeBytes < LOW_RAM_THRESHOLD_BYTES) {
+        if (!systemStatus.lowMemoryDetected) {
+            systemStatus.lowMemoryDetected = true;
+            enterDegradedMode("low_sram");
+        }
+    } else if (systemStatus.lowMemoryDetected && freeBytes >= HIGH_RAM_THRESHOLD_BYTES) {
+        systemStatus.lowMemoryDetected = false;
+        // Recover solo se nessun altro motivo tiene attivo degraded mode.
+        if (!systemStatus.hubIsMissing) exitDegradedMode();
     }
-    
-    if (currentMillis - lastHubMessageTime > 120000) {
+
+    if (now - comm.getLastHubMessageMs() > HUB_DEADMAN_TIMEOUT_MS) {
         if (!systemStatus.hubIsMissing) {
             systemStatus.hubIsMissing = true;
-            enterDegradedMode("Hub Missing");
+            enterDegradedMode("hub_missing");
         }
+    } else if (systemStatus.hubIsMissing) {
+        systemStatus.hubIsMissing = false;
+        if (!systemStatus.lowMemoryDetected) exitDegradedMode();
+    }
+
+    // 8) Soft reset richiesto via comando
+    if (systemStatus.softResetRequested) {
+        performSoftReset();
     }
 }

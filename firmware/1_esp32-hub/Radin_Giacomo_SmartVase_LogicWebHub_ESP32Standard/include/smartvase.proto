@@ -1,7 +1,10 @@
 // Autore: Giacomo Radin
-// Versione 3.0: Aggiunto monitoraggio batteria
-// - Aggiunto il campo 'battery_voltage' al messaggio TelemetryDeep
-// - Mantiene tutte le migliorie della v2 (cmd_id, device_id, etc.)
+// Versione 4.0 (2026-05-19): Refactor totale per il nuovo prototipo
+// - TelemetryFast: 5 distanze di navigazione (US1, US2, US3, US5, US6)
+//   + livello acqua (US4) + umidita' suolo (forcella A0) + lux + stato + ts
+// - TelemetryDeep: aggiunto epoch_s da RTC DS3232
+// - CommandResponse: aggiunto campo 'value' per risposte con payload numerico
+//   (es. ReadSoilCommand restituisce il valore corrente di umidita')
 syntax = "proto3";
 
 import "nanopb.proto";
@@ -11,35 +14,63 @@ package smartvase;
 // ===================================================================
 // Messaggi Atomici
 // ===================================================================
+
+// Telemetria ad alta frequenza (sensori in tempo reale per la navigazione)
 message TelemetryFast {
-  float front_dist_cm = 1;
-  int32 lux = 2;
-  MovementState movement_state = 3;
-  float left_dist_cm = 4;
-  float right_dist_cm = 5;
-  float water_level_cm = 6;
-  string device_id = 7 [(nanopb).max_size = 16];
+  // 5 sensori HC-SR04 per navigazione e obstacle avoidance
+  float top_dist_cm           = 1;  // US1 - frontale alto
+  float front_right_dist_cm   = 2;  // US2 - frontale destro
+  float front_left_dist_cm    = 3;  // US3 - frontale sinistro
+  float left_dist_cm          = 4;  // US5 - laterale sinistro
+  float right_dist_cm         = 5;  // US6 - laterale destro
+
+  // US4 - livello acqua nella tanica
+  float water_level_cm        = 6;
+
+  // Umidita' del suolo (forcella su A0). Range ADC grezzo 0..1023.
+  int32 soil_moisture         = 7;
+
+  // Luminosita' ambientale (fotoresistore su A1). Range ADC grezzo 0..1023.
+  int32 lux                   = 8;
+
+  // Stato corrente della macchina a stati del movimento
+  MovementState movement_state = 9;
+
+  // Timestamp Unix epoch (s) dal RTC DS3232 (0 se RTC non disponibile)
+  uint32 epoch_s              = 10;
+
+  string device_id            = 11 [(nanopb).max_size = 16];
 }
 
+// Telemetria a bassa frequenza (sensori ambientali + statistiche cumulative)
 message TelemetryDeep {
-  float temperature_c = 1;
-  float humidity_percent = 2;
-  float pressure_hpa = 3;
-  uint32 gas_resistance_ohms = 4;
-  uint32 uptime_s = 5;
-  uint32 free_ram_bytes = 6;
-  uint32 watchdog_resets = 7;
-  uint32 total_irrigations = 8;
-  uint32 obstacles_avoided = 9;
-  uint32 stuck_events = 10;
-  uint32 bme_read_errors = 11;
-  uint32 log_overflows = 12;
-  uint32 total_irrigation_duration_s = 13;
-  uint32 total_motor_active_time_s = 14;
-  uint32 pb_decode_failures = 15;
-  string device_id = 16 [(nanopb).max_size = 16];
-  // NUOVO CAMPO
-  float battery_voltage = 17;
+  // BME680 (I2C 0x76)
+  float temperature_c          = 1;
+  float humidity_percent       = 2;
+  float pressure_hpa           = 3;
+  uint32 gas_resistance_ohms   = 4;
+
+  // Stato del sistema
+  uint32 uptime_s              = 5;
+  uint32 free_ram_bytes        = 6;
+  uint32 epoch_s               = 7;   // da RTC
+
+  // Contatori cumulativi (persistiti in EEPROM)
+  uint32 watchdog_resets       = 8;
+  uint32 total_irrigations     = 9;
+  uint32 obstacles_avoided     = 10;
+  uint32 stuck_events          = 11;
+  uint32 bme_read_errors       = 12;
+  uint32 log_overflows         = 13;
+  uint32 total_irrigation_duration_s = 14;
+  uint32 total_motor_active_time_s   = 15;
+  uint32 pb_decode_failures    = 16;
+
+  string device_id             = 17 [(nanopb).max_size = 16];
+
+  // Batteria (disabilitato finche' non viene cablato il partitore resistivo).
+  // Quando attivo: tensione VBATT in volt dopo divisore.
+  float battery_voltage        = 18;
 }
 
 message Log {
@@ -77,6 +108,8 @@ message CommandResponse {
   enum Status { OK = 0; ERROR = 1; }
   Status status = 1;
   string detail = 2 [(nanopb).max_size = 64];
+  // Valore numerico opzionale (es. risposta a ReadSoilCommand)
+  int32  value = 3;
   uint32 cmd_id = 99;
   uint32 exec_time_ms = 100;
 }

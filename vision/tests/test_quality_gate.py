@@ -17,16 +17,25 @@ def test_too_bright():
 
 
 def test_blurry_vs_sharp():
-    cfg = QualityGateConfig(blurry_laplacian_var=200.0)  # make test more robust
+    # Soglia blur abbassata per renderlo deterministico; luminosita' base
+    # alta a sufficienza da non finire mai in too_dark.
+    cfg = QualityGateConfig(
+        too_dark_mean_gray=30.0,
+        too_bright_mean_gray=240.0,
+        blurry_laplacian_var=200.0,
+    )
 
-    sharp = np.zeros((144, 144, 3), dtype=np.uint8)
+    # Immagine a luminosita' media controllata (sfondo grigio 128).
+    sharp = np.full((144, 144, 3), 128, dtype=np.uint8)
+    # Edge ad alto contrasto -> sharpness alta
     cv2.rectangle(sharp, (20, 20), (120, 120), (255, 255, 255), 2)
+    cv2.rectangle(sharp, (40, 40), (100, 100), (0, 0, 0), 2)
 
-    blurry = cv2.GaussianBlur(sharp, (11, 11), 0)
+    blurry = cv2.GaussianBlur(sharp, (15, 15), 0)
 
-    q_sharp, _ = quality_gate(sharp, cfg=cfg)
-    q_blur, _ = quality_gate(blurry, cfg=cfg)
+    q_sharp, m_sharp = quality_gate(sharp, cfg=cfg)
+    q_blur,  m_blur  = quality_gate(blurry, cfg=cfg)
 
-    assert q_blur == "blurry"
-    assert q_sharp in ["ok", "too_dark", "too_bright"]  # DEPENDS ON THRESHOLD
-
+    # Lo sharp deve passare il gate; il blurry deve essere flaggato blurry.
+    assert q_blur == "blurry", (q_blur, m_blur)
+    assert q_sharp == "ok", (q_sharp, m_sharp)

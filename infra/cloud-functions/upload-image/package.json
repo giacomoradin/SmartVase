@@ -1,0 +1,15 @@
+{
+  "name": "smartvase-upload-image",
+  "version": "0.1.0",
+  "description": "SmartVase Cloud Function: ricezione JPEG da ESP32-CAM e upload su Firebase Storage.",
+  "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@google-cloud/storage": "^7.9.0",
+    "busboy": "^1.6.0"
+  },
+  "private": true,
+  "license": "MIT"
+}
