@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 class PixelAnalyzer:
-    def __init__(self, green_threshold=20, brown_threshold_r=100):
+    def __init__(self, green_threshold=20, brown_threshold_r=60):
         self.width = 160
         self.height = 120
         self.total_pixels = self.width * self.height
@@ -29,6 +29,10 @@ class PixelAnalyzer:
             for x in range(self.width):
                 r, g, b = img_rgb[y, x]
                 
+                #conversion to int standard to prevent 8 bit overflow
+                r, g, b = int(r), int(g), int(b)
+                
+                
                 #downsample to 16-bit RGB565 (5 bits Red, 6 bits Green, 5 bits Blue)
                 r_5bit = (r >> 3) & 0x1F
                 g_6bit = (g >> 2) & 0x3F
@@ -40,11 +44,11 @@ class PixelAnalyzer:
                 b8 = int((b_5bit * 255) / 31)
 
                 #Color Segmentation Logic
-                #Healthy Leaf Condition (Dominant Green)
+                #healthy leaf condition (dominant green)
                 if g8 > (r8 + self.green_threshold) and g8 > (b8 + self.green_threshold):
                     green_count += 1
-                #Diseased/Dry Leaf Condition (High Red/Green, Low Blue)
-                elif r8 > self.brown_threshold_r and g8 > 80 and b8 < 60:
+                #diseased/dry leaf condition (high red/green, low blue -> Brownish colour)
+                elif r8 > self.brown_threshold_r and r8 > (b8 + 15) and r8 >= (g8 - 10):
                     brown_count += 1
 
         #calculate metrics
