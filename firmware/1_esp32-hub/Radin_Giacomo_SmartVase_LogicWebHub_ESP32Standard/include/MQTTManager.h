@@ -27,6 +27,14 @@ public:
     // Inizializza il client MQTT e configura la connessione sicura
     void init();
 
+    // --- Stato per la CLI di debug ---
+    // Lettura non sincronizzata col task MQTT: valori indicativi, solo debug.
+    bool isConfigured() {
+        const char* b = _configManager.getMqttBroker();
+        return b != nullptr && strlen(b) > 0;
+    }
+    bool isConnected() { return _mqttClient.connected(); }
+
 private:
     // Code FreeRTOS
     QueueHandle_t _txQueue; // Coda per inviare JSON a questo task

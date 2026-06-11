@@ -27,9 +27,10 @@ MqttManager::MqttManager(QueueHandle_t txQueue, QueueHandle_t rxQueue, ConfigMan
 void MqttManager::init() {
     ESP_LOGI(TAG, "Initializing MQTT Manager...");
 
-    // Genera un Client ID univoco basato sul MAC Address
-    uint8_t mac[6];
-    esp_wifi_get_mac(WIFI_IF_STA, mac);
+    // Genera un Client ID univoco basato sul MAC Address.
+    // esp_read_mac legge dalla eFuse e funziona anche a radio spenta.
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
     _mqttClientId = "SmartVase_HUB_";
     char macSuffix[13]; // 6 byte * 2 char/byte + 1 null terminator
     snprintf(macSuffix, sizeof(macSuffix), "%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
@@ -72,7 +73,8 @@ void MqttManager::init() {
 // Funzione statica entry point per il Task FreeRTOS
 void MqttManager::taskEntry(void* pvParameters) {
     MqttManager* instance = static_cast<MqttManager*>(pvParameters);
-    instance->init(); // Chiama l'inizializzazione specifica
+    // init() e' gia' chiamato dal setup() prima della creazione del task:
+    // non lo si ripete per evitare doppia inizializzazione.
     instance->taskRun(); // Entra nel loop principale del task
 }
 
@@ -80,12 +82,29 @@ void MqttManager::taskEntry(void* pvParameters) {
 void MqttManager::taskRun() {
     ESP_LOGI(TAG, "MqttManager Task Started.");
     MqttMessage msgToPublish;
+    bool warnedNotConfigured = false;
 
     while (true) {
+        // 0. Broker non configurato: nessun tentativo di connessione.
+        //    Si svuota comunque la coda TX per non far accumulare messaggi.
+        if (!isConfigured()) {
+            if (!warnedNotConfigured) {
+                warnedNotConfigured = true;
+                ESP_LOGW(TAG, "Broker MQTT non configurato: pubblicazione disattivata.");
+                Serial.println(F("[MQTT] Non configurato. Dalla CLI: set mqtt_broker <host>, set mqtt_user/mqtt_pass, save, reboot"));
+            }
+            while (xQueueReceive(_txQueue, &msgToPublish, 0) == pdPASS) { /* discard */ }
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
         // 1. Assicurati che il client MQTT sia connesso
         if (!_mqttClient.connected()) {
-            // Tenta la riconnessione (con logica di backoff interno)
+            // Tenta la riconnessione (con logica di backoff interno).
+            // Nel frattempo la coda TX viene svuotata: la telemetria e'
+            // periodica, accumularla offline non ha valore.
             reconnect();
+            while (xQueueReceive(_txQueue, &msgToPublish, 0) == pdPASS) { /* discard */ }
         } else {
             // 2. Se connesso, processa i messaggi MQTT in arrivo e mantieni la connessione attiva
             _mqttClient.loop();

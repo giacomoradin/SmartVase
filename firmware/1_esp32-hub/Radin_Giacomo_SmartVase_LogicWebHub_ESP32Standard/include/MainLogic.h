@@ -34,6 +34,14 @@ public:
     static void taskEntry(void* pvParameters);
     void init();
 
+    // --- Accessor per la CLI di debug (chiamati dal task loop()) ---
+    bool isMegaConnected() const { return _isMegaConnected; }
+    uint32_t megaLastMessageAgeMs() const { return millis() - _lastMegaHeartbeatMs; }
+    const char* deviceId() const { return _deviceId; }
+    // Copia coerente dell'ultima telemetria ricevuta dal Mega
+    // (protetta da spinlock: il task MainLogic la aggiorna in concorrenza).
+    void getTelemetrySnapshot(TelemetryFast& tf, TelemetryDeep& td);
+
 private:
     QueueHandle_t _serialRxQueue;
     QueueHandle_t _serialTxQueue;
@@ -47,6 +55,8 @@ private:
 
     TelemetryFast _lastFastTelemetry;
     TelemetryDeep _lastDeepTelemetry;
+    portMUX_TYPE  _telemetryMux = portMUX_INITIALIZER_UNLOCKED;
+    uint32_t      _lastTelemetryPublishMs;
 
     char _deviceId[16];  // "HUB_XXXXXX"
 

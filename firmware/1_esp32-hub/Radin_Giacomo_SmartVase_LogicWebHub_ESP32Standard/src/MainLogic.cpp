@@ -6,11 +6,21 @@
 
 static const char *TAG = "MainLogic";
 
+static const char* movementStateToStr(MovementState s);
+static const char* logLevelToStr(Log_LogLevel l);
+
 // Intervalli scheduling (ms)
 #define TELEMETRY_PUBLISH_INTERVAL_MS  (60 * 1000)
+// Il timer pubblica solo se la telemetria non e' gia' uscita di recente
+// (la pubblicazione principale avviene all'arrivo della TelemetryDeep,
+// ogni 30 s): evita doppioni ravvicinati sullo stesso topic.
+#define TELEMETRY_STALE_AFTER_MS       (45 * 1000)
 // Deadman switch: Mega muto per > MEGA_HEARTBEAT_TIMEOUT_MS ⇒ alarm.
 // Lasciato leggermente superiore al deadman del Mega (120s) per i ritardi.
 #define MEGA_HEARTBEAT_TIMEOUT_MS      (130 * 1000)
+// Heartbeat Hub -> Mega: il deadman del Mega (120 s) scatta se non riceve
+// NULLA dall'Hub; i soli comandi sporadici non bastano a tenerlo vivo.
+#define HUB_HEARTBEAT_INTERVAL_MS      (30 * 1000)
 
 MainLogic::MainLogic(QueueHandle_t serialRxQueue, QueueHandle_t serialTxQueue,
                      QueueHandle_t mqttTxQueue, QueueHandle_t mqttRxQueue,
@@ -22,7 +32,8 @@ MainLogic::MainLogic(QueueHandle_t serialRxQueue, QueueHandle_t serialTxQueue,
       _configManager(configManager),
       _telemetryTimer(NULL),
       _lastMegaHeartbeatMs(0),
-      _isMegaConnected(false)
+      _isMegaConnected(false),
+      _lastTelemetryPublishMs(0)
 {
     memset(&_lastFastTelemetry, 0, sizeof(TelemetryFast));
     memset(&_lastDeepTelemetry, 0, sizeof(TelemetryDeep));
@@ -35,8 +46,10 @@ void MainLogic::init() {
     _lastMegaHeartbeatMs = millis();
 
     // Genera device_id "HUB_XXXXXX" dagli ultimi 3 byte del MAC.
-    uint8_t mac[6];
-    esp_wifi_get_mac(WIFI_IF_STA, mac);
+    // esp_read_mac legge dalla eFuse: funziona anche con radio Wi-Fi spenta
+    // (esp_wifi_get_mac fallirebbe se lo stack Wi-Fi non e' avviato).
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
     snprintf(_deviceId, sizeof(_deviceId), "HUB_%02X%02X%02X", mac[3], mac[4], mac[5]);
     ESP_LOGI(TAG, "Device ID: %s", _deviceId);
 
@@ -67,6 +80,7 @@ void MainLogic::taskRun() {
     ESP_LOGI(TAG, "MainLogic Task Started.");
     SerialMessage receivedSerialMsg;
     MqttCommand   receivedMqttCmd;
+    uint32_t      lastHubHeartbeatMs = 0;
 
     while (true) {
         if (xQueueReceive(_serialRxQueue, &receivedSerialMsg, pdMS_TO_TICKS(50)) == pdPASS) {
@@ -74,6 +88,22 @@ void MainLogic::taskRun() {
         }
         if (xQueueReceive(_mqttRxQueue, &receivedMqttCmd, pdMS_TO_TICKS(50)) == pdPASS) {
             processMqttCommand(receivedMqttCmd);
+        }
+
+        // Keepalive verso il Mega: qualsiasi frame valido azzera il suo
+        // deadman, quindi basta un Heartbeat periodico.
+        if (millis() - lastHubHeartbeatMs >= HUB_HEARTBEAT_INTERVAL_MS) {
+            lastHubHeartbeatMs = millis();
+            SerialMessage hb;
+            memset(&hb, 0, sizeof(hb));
+            hb.message.which_payload = WrapperMessage_heartbeat_tag;
+            hb.message.payload.heartbeat.uptime_s = millis() / 1000UL;
+            hb.message.payload.heartbeat.is_degraded = false;
+            strncpy(hb.message.payload.heartbeat.device_id, _deviceId,
+                    sizeof(hb.message.payload.heartbeat.device_id) - 1);
+            if (xQueueSend(_serialTxQueue, &hb, 0) != pdPASS) {
+                ESP_LOGW(TAG, "TX queue piena: heartbeat verso il Mega saltato");
+            }
         }
 
         checkMegaConnection();
@@ -156,21 +186,34 @@ void MainLogic::processSerialMessage(const WrapperMessage& msg) {
 
     switch (msg.which_payload) {
         case WrapperMessage_telemetry_fast_tag:
+            portENTER_CRITICAL(&_telemetryMux);
             _lastFastTelemetry = msg.payload.telemetry_fast;
-            // Pubblicazione opportunistica: la telemetria periodica e' gestita dal timer
-            // ma il primo aggiornamento dopo un reset viene pubblicato subito.
+            portEXIT_CRITICAL(&_telemetryMux);
             break;
         case WrapperMessage_telemetry_deep_tag:
+            portENTER_CRITICAL(&_telemetryMux);
             _lastDeepTelemetry = msg.payload.telemetry_deep;
+            portEXIT_CRITICAL(&_telemetryMux);
             publishTelemetryJson(_lastFastTelemetry, _lastDeepTelemetry);
+            _lastTelemetryPublishMs = millis();
             break;
         case WrapperMessage_log_tag:
+            ESP_LOGI(TAG, "Mega log [%s] %s: %s", logLevelToStr(msg.payload.log.level),
+                     msg.payload.log.event, msg.payload.log.detail);
             publishLogJson(msg.payload.log);
             break;
         case WrapperMessage_heartbeat_tag:
             // Solo aggiornamento timestamp (gia' fatto sopra). Non si pubblica.
             break;
         case WrapperMessage_command_response_tag:
+            // Eco su seriale: in laboratorio senza MQTT e' l'unico riscontro
+            // visibile dell'esito di un comando inviato al Mega.
+            Serial.printf("[ACK Mega] cmd_id=%lu status=%s detail=%s value=%ld exec=%lu ms\n",
+                          (unsigned long)msg.payload.command_response.cmd_id,
+                          msg.payload.command_response.status == CommandResponse_Status_OK ? "OK" : "ERROR",
+                          msg.payload.command_response.detail,
+                          (long)msg.payload.command_response.value,
+                          (unsigned long)msg.payload.command_response.exec_time_ms);
             publishCommandAckJson(msg.payload.command_response);
             break;
         default:
@@ -307,9 +350,23 @@ void MainLogic::publishAlarmJson(const char* alarmType, const char* detail) {
     }
 }
 
+void MainLogic::getTelemetrySnapshot(TelemetryFast& tf, TelemetryDeep& td) {
+    portENTER_CRITICAL(&_telemetryMux);
+    tf = _lastFastTelemetry;
+    td = _lastDeepTelemetry;
+    portEXIT_CRITICAL(&_telemetryMux);
+}
+
 void MainLogic::telemetryTimerCallback(TimerHandle_t xTimer) {
     MainLogic* instance = static_cast<MainLogic*>(pvTimerGetTimerID(xTimer));
-    instance->publishTelemetryJson(instance->_lastFastTelemetry, instance->_lastDeepTelemetry);
+    // Fallback: pubblica solo se la telemetria guidata dalla TelemetryDeep
+    // non e' uscita di recente (es. Mega che manda solo fast, o disconnesso).
+    if (millis() - instance->_lastTelemetryPublishMs < TELEMETRY_STALE_AFTER_MS) return;
+    TelemetryFast tf;
+    TelemetryDeep td;
+    instance->getTelemetrySnapshot(tf, td);
+    instance->publishTelemetryJson(tf, td);
+    instance->_lastTelemetryPublishMs = millis();
 }
 
 void MainLogic::checkMegaConnection() {

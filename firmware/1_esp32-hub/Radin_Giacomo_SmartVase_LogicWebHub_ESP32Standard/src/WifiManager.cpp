@@ -27,48 +27,47 @@ WifiManager::WifiManager(ConfigManager& configMgr)
     memset(_tempPassword, 0, sizeof(_tempPassword));
 }
 
-// Tenta la connessione al WiFi o avvia il provisioning
+// Tenta la connessione al WiFi con timeout; in ogni caso il boot prosegue.
+//
+// Comportamento rivisto per il bring-up: il fallimento della connessione NON
+// cancella piu' le credenziali da NVS e NON avvia l'AP di provisioning (la
+// configurazione si fa dalla CLI seriale). L'autoreconnect dell'SDK continua
+// a riprovare in background, quindi l'Hub aggancia la rete appena disponibile.
 void WifiManager::connect() {
     const char* ssid = _configMgr.getWifiSsid();
     const char* password = _configMgr.getWifiPassword();
 
-    // Se non ci sono credenziali salvate (SSID vuoto), avvia il provisioning
+    // Radio sempre in STA: serve anche per leggere il MAC (device_id, client
+    // id MQTT) e permette un retry successivo via CLI `wifi connect`.
+    WiFi.mode(WIFI_STA);
+
     if (ssid == nullptr || strlen(ssid) == 0) {
-        ESP_LOGW(TAG, "No WiFi credentials found. Starting provisioning AP...");
-        startProvisioningAP();
-        return; // Esce e attende che il provisioning finisca (gestito da handleProvisioning)
+        ESP_LOGW(TAG, "Nessuna credenziale Wi-Fi in NVS: si continua offline.");
+        Serial.println(F("[WiFi] Non configurato. Dalla CLI: set wifi_ssid <ssid>, set wifi_pass <pwd>, save, reboot"));
+        return;
     }
 
     ESP_LOGI(TAG, "Connecting to WiFi network: %s", ssid);
-    WiFi.mode(WIFI_STA); // Imposta la modalità Station
+    WiFi.setAutoReconnect(true);
     WiFi.begin(ssid, password);
 
     unsigned long startTime = millis();
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
+    while (WiFi.status() != WL_CONNECTED &&
+           millis() - startTime <= WIFI_CONNECT_TIMEOUT_MS) {
+        delay(250);
         Serial.print("."); // Feedback visivo sulla console
-        if (millis() - startTime > WIFI_CONNECT_TIMEOUT_MS) {
-            ESP_LOGE(TAG, "Failed to connect to WiFi within timeout.");
-            ESP_LOGW(TAG, "Credentials might be wrong. Re-starting provisioning AP...");
-            // Cancella le credenziali errate prima di riavviare l'AP
-            _configMgr.setWifiCredentials("", ""); // Imposta SSID e PWD vuoti
-            _configMgr.saveConfig();               // Salva le credenziali vuote su NVS
-            WiFi.disconnect(true);                 // Disconnetti esplicitamente dalla rete fallita
-            delay(100);                            // Breve pausa per stabilizzare
-            startProvisioningAP();                 // Riavvia l'Access Point
-            return; // Esce e attende il provisioning
-        }
     }
+    Serial.println("");
 
-    Serial.println(""); // A capo dopo i puntini della connessione
-    ESP_LOGI(TAG, "WiFi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
-    _isConnected = true; // Imposta il flag di connessione riuscita
-
-    // Se il server di provisioning era attivo, fermalo ora che siamo connessi
-     _provisioningServer.end();
-
-    // Aggiungi qui eventuali handler per eventi WiFi (disconnessione, etc.) se necessario
-    // Esempio: WiFi.onEvent(gestisciDisconnessioneWiFi, SYSTEM_EVENT_STA_DISCONNECTED);
+    if (WiFi.status() == WL_CONNECTED) {
+        ESP_LOGI(TAG, "WiFi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
+        _isConnected = true;
+    } else {
+        ESP_LOGW(TAG, "Wi-Fi non connesso entro %d ms: si continua offline "
+                      "(retry automatico in background).", WIFI_CONNECT_TIMEOUT_MS);
+        Serial.println(F("[WiFi] Offline. Verifica credenziali con 'show', riprova con 'wifi connect'."));
+        _isConnected = false;
+    }
 }
 
 // Restituisce true se connesso alla rete WiFi principale, false altrimenti.
