@@ -1,18 +1,20 @@
 /*
  * =================================================================
  * SmartVase - Vision Co-Processor (ESP32-CAM)
- * Versione 2.0 — 2026-05-19 (refactor totale per Wi-Fi/MQTT/Cloud)
+ * Versione 2.1 — 2026-06-11 (hardening pre-bring-up)
  * =================================================================
- *  Architettura target:
- *   - STA Wi-Fi autonomo (credenziali in NVS via Preferences).
- *   - Cattura JPEG periodica.
- *   - Upload HTTP POST multipart a una Cloud Function configurabile;
+ *  Architettura:
+ *   - STA Wi-Fi autonomo (credenziali in NVS via Preferences),
+ *     riconnessione non bloccante con retry in background.
+ *   - CLI seriale per provisioning e test a banco (115200, 'help').
+ *   - Cattura JPEG periodica quando rete e upload_url sono configurati.
+ *   - Upload HTTP POST multipart streaming a una Cloud Function;
  *     la function restituisce JSON con 'image_url' su storage.
  *   - Pubblicazione MQTT su smartvase/{device_id}/vision/image con
  *     l'URL ottenuto + metadati (timestamp, dimensione, CRC32).
  *   - Stats cumulative persistenti in NVS.
  *
- *  Configurazione (NVS namespace "cam"):
+ *  Configurazione (NVS namespace "cam", scrivibile dalla CLI con `set`):
  *     wifi_ssid    string
  *     wifi_pass    string
  *     mqtt_broker  string  (es. "<id>.s1.eu.hivemq.cloud")
@@ -23,8 +25,7 @@
  *     interval_s   uint32  (cattura ogni N secondi, default 300)
  *
  *  Stats (namespace "cam_stats"):
- *     succ_frames, fail_frames, upload_errors,
- *     mqtt_errors, total_cap_ms
+ *     succ_frames, fail_frames, upload_err, mqtt_err, total_cap_ms
  * =================================================================
  */
 
@@ -40,6 +41,8 @@
 #include <ArduinoJson.h>
 #include <time.h>
 #include "hivemq_ca_cert.h"
+
+#define CAM_FW_VERSION "2.1.0"
 
 // -------------------- DEVICE IDENTITY --------------------
 #define DEVICE_ID_PREFIX "CAM_"
@@ -62,6 +65,11 @@ static char deviceId[16] = {0};
 #define VSYNC_GPIO_NUM    25
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
+
+// -------------------- TIMING --------------------
+#define WIFI_RETRY_INTERVAL_MS   30000UL  // nuovo tentativo STA ogni 30 s
+#define MQTT_RETRY_INTERVAL_MS   15000UL  // nuovo tentativo broker ogni 15 s
+#define NTP_VALID_EPOCH      1700000000UL // sotto questa soglia l'ora non e' sincronizzata
 
 // -------------------- NVS --------------------
 Preferences prefs;
@@ -98,7 +106,12 @@ String topicVisionCommand;
 static const char* hivemq_ca_cert = SMARTVASE_HIVEMQ_CA_CERT;
 
 // -------------------- STATE --------------------
-unsigned long lastCaptureMs = 0;
+unsigned long lastCaptureMs     = 0;
+unsigned long lastWifiAttemptMs = 0;
+unsigned long lastMqttAttemptMs = 0;
+bool wifiAttemptInProgress      = false;
+bool ntpConfigured              = false;
+bool cameraOk                   = false;
 
 // -------------------- UTILITIES --------------------
 uint32_t crc32_le(uint32_t crc, const uint8_t *buf, size_t len) {
@@ -127,6 +140,19 @@ void loadConfig() {
     cfg.mqtt_pass   = prefs.getString("mqtt_pass",   "");
     cfg.upload_url  = prefs.getString("upload_url",  "");
     cfg.interval_s  = prefs.getUInt  ("interval_s",  300);
+    prefs.end();
+}
+
+void saveConfig() {
+    prefs.begin("cam", false);
+    prefs.putString("wifi_ssid",   cfg.wifi_ssid);
+    prefs.putString("wifi_pass",   cfg.wifi_pass);
+    prefs.putString("mqtt_broker", cfg.mqtt_broker);
+    prefs.putUShort("mqtt_port",   cfg.mqtt_port);
+    prefs.putString("mqtt_user",   cfg.mqtt_user);
+    prefs.putString("mqtt_pass",   cfg.mqtt_pass);
+    prefs.putString("upload_url",  cfg.upload_url);
+    prefs.putUInt  ("interval_s",  cfg.interval_s);
     prefs.end();
 }
 
@@ -189,32 +215,36 @@ bool initCamera() {
     return err == ESP_OK;
 }
 
-// -------------------- WIFI --------------------
-bool connectWifi() {
-    if (cfg.wifi_ssid.length() == 0) {
-        Serial.println("[CAM] No Wi-Fi credentials configured.");
-        return false;
-    }
+// -------------------- WIFI (non bloccante) --------------------
+// Avvia un tentativo di connessione senza attendere l'esito: lo stato viene
+// verificato a ogni giro di loop da wifiEnsure(). La CLI resta sempre reattiva.
+void wifiStartAttempt() {
+    if (cfg.wifi_ssid.length() == 0) return;
+    Serial.printf("[CAM] Wi-Fi: tentativo di connessione a '%s'...\n", cfg.wifi_ssid.c_str());
     WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
     WiFi.begin(cfg.wifi_ssid.c_str(), cfg.wifi_pass.c_str());
-    unsigned long t0 = millis();
-    while (WiFi.status() != WL_CONNECTED) {
-        if (millis() - t0 > 30000) {
-            Serial.println("[CAM] Wi-Fi connect timeout.");
-            return false;
+    lastWifiAttemptMs    = millis();
+    wifiAttemptInProgress = true;
+}
+
+void wifiEnsure() {
+    if (WiFi.status() == WL_CONNECTED) {
+        if (wifiAttemptInProgress) {
+            wifiAttemptInProgress = false;
+            Serial.printf("[CAM] Wi-Fi OK. IP=%s\n", WiFi.localIP().toString().c_str());
         }
-        delay(250);
-        Serial.print('.');
+        if (!ntpConfigured) {
+            // NTP per il timestamp_utc nel payload vision/image (best effort).
+            configTime(0, 0, "pool.ntp.org", "time.google.com");
+            ntpConfigured = true;
+        }
+        return;
     }
-    Serial.printf("\n[CAM] Wi-Fi OK. IP=%s\n", WiFi.localIP().toString().c_str());
-    // NTP: necessario per ottenere timestamp UTC nel payload vision/image.
-    configTime(0, 0, "pool.ntp.org", "time.google.com");
-    // Attesa breve e non-bloccante della sync (max 3 s).
-    unsigned long t0 = millis();
-    while (time(nullptr) < 1700000000UL && millis() - t0 < 3000) {
-        delay(100);
+    if (cfg.wifi_ssid.length() == 0) return; // non configurato: resta offline
+    if (millis() - lastWifiAttemptMs >= WIFI_RETRY_INTERVAL_MS || lastWifiAttemptMs == 0) {
+        wifiStartAttempt();
     }
-    return true;
 }
 
 // -------------------- MQTT --------------------
@@ -225,7 +255,7 @@ void buildTopics() {
 }
 
 void onMqttMessage(char* topic, byte* payload, unsigned int len) {
-    // Comandi futuri: capture-now, reboot, set-interval, ecc.
+    // Comandi remoti: captureNow, reboot.
     StaticJsonDocument<256> doc;
     if (deserializeJson(doc, payload, len)) return;
     const char* type = doc["type"] | "";
@@ -236,9 +266,24 @@ void onMqttMessage(char* topic, byte* payload, unsigned int len) {
     }
 }
 
-bool mqttReconnect() {
-    if (mqttClient.connected()) return true;
+void mqttInit() {
+    wifiClient.setCACert(hivemq_ca_cert);
+    mqttClient.setServer(cfg.mqtt_broker.c_str(), cfg.mqtt_port);
+    mqttClient.setBufferSize(2048);
+    mqttClient.setCallback(onMqttMessage);
+    mqttClientId = String("SmartVase_") + deviceId;
+}
+
+bool mqttEnsure() {
     if (cfg.mqtt_broker.length() == 0) return false;
+    if (WiFi.status() != WL_CONNECTED) return false;
+    if (mqttClient.connected()) return true;
+    // La connect di PubSubClient e' bloccante (anche secondi se il broker non
+    // risponde): throttling per non congelare la CLI a ogni giro di loop.
+    if (millis() - lastMqttAttemptMs < MQTT_RETRY_INTERVAL_MS && lastMqttAttemptMs != 0) {
+        return false;
+    }
+    lastMqttAttemptMs = millis();
     Serial.printf("[CAM] MQTT connect %s:%d as %s...\n",
                   cfg.mqtt_broker.c_str(), cfg.mqtt_port, mqttClientId.c_str());
     bool ok = mqttClient.connect(mqttClientId.c_str(),
@@ -256,14 +301,6 @@ bool mqttReconnect() {
     return ok;
 }
 
-void mqttInit() {
-    wifiClient.setCACert(hivemq_ca_cert);
-    mqttClient.setServer(cfg.mqtt_broker.c_str(), cfg.mqtt_port);
-    mqttClient.setBufferSize(2048);
-    mqttClient.setCallback(onMqttMessage);
-    mqttClientId = String("SmartVase_") + deviceId;
-}
-
 // -------------------- UPLOAD --------------------
 // POST multipart/form-data del JPEG verso cfg.upload_url, **streaming**
 // (no allocazione del body intero in heap). La Cloud Function risponde con
@@ -274,12 +311,6 @@ void mqttInit() {
 //   - setInsecure(): per ora non si valida il cert TLS dell'endpoint;
 //     TODO Fia: pin del cert/CA della Cloud Function in cfg/NVS.
 String uploadJpeg(const uint8_t* buf, size_t len, const char* contentType) {
-    if (cfg.upload_url.length() == 0) {
-        Serial.println("[CAM] upload_url not configured.");
-        stats.upload_errors++;
-        return String();
-    }
-
     HTTPClient http;
     WiFiClientSecure client;
     client.setInsecure(); // TODO: pin certificato dell'endpoint Cloud Function
@@ -306,9 +337,9 @@ String uploadJpeg(const uint8_t* buf, size_t len, const char* contentType) {
     http.addHeader("Content-Type", String("multipart/form-data; boundary=") + boundary);
     http.addHeader("Content-Length", String(totalLen));
 
-    // sendRequest("POST", Stream*, size) accetta uno Stream che HTTPClient legge
-    // a chunk. Per evitare la malloc del body, usiamo una piccola classe Stream
-    // che concatena head + jpeg buffer + tail al volo.
+    // sendRequest("POST", Stream*, size) accetta uno Stream che HTTPClient
+    // legge a chunk. Per evitare la malloc del body, una piccola classe
+    // Stream concatena head + jpeg buffer + tail al volo.
     struct MultipartStream : public Stream {
         const String& head;
         const uint8_t* body;
@@ -370,10 +401,12 @@ String uploadJpeg(const uint8_t* buf, size_t len, const char* contentType) {
 }
 
 void publishVisionImage(const String& imageUrl, size_t bytes, uint32_t crc, uint32_t capMs) {
-    if (!mqttReconnect()) return;
+    if (!mqttEnsure()) return;
+    time_t nowEpoch = time(nullptr);
     StaticJsonDocument<512> doc;
-    doc["timestamp_utc"]   = (uint32_t)(time(nullptr));  // se NTP attivo
+    doc["timestamp_utc"]   = (nowEpoch >= (time_t)NTP_VALID_EPOCH) ? (uint32_t)nowEpoch : 0;
     doc["device_id"]       = deviceId;
+    doc["fw_version"]      = CAM_FW_VERSION;
     doc["image_url"]       = imageUrl;
     doc["size_bytes"]      = bytes;
     doc["crc32"]           = crc;
@@ -387,27 +420,195 @@ void publishVisionImage(const String& imageUrl, size_t bytes, uint32_t crc, uint
     }
 }
 
-// -------------------- CAPTURE LOOP --------------------
-void doCaptureAndPublish() {
+// -------------------- CAPTURE --------------------
+// Cattura un frame e (se richiesto) lo uploada e pubblica su MQTT.
+// I metadati del frame vengono copiati PRIMA di restituire il buffer
+// al driver: fb non e' piu' valido dopo esp_camera_fb_return.
+bool doCapture(bool uploadAndPublish) {
+    if (!cameraOk) {
+        Serial.println("[CAM] camera non inizializzata.");
+        return false;
+    }
     unsigned long t0 = millis();
     camera_fb_t* fb = esp_camera_fb_get();
     unsigned long capMs = millis() - t0;
     if (!fb) {
         stats.failed_frames++;
         saveStats();
-        return;
+        Serial.println("[CAM] cattura FALLITA (fb nullo).");
+        return false;
     }
+    size_t   frameLen = fb->len;
+    uint32_t crc      = crc32_le(0, fb->buf, fb->len);
+
     stats.successful_frames++;
     stats.total_capture_time_ms += capMs;
 
-    uint32_t crc = crc32_le(0, fb->buf, fb->len);
-    String url = uploadJpeg(fb->buf, fb->len, "image/jpeg");
+    Serial.printf("[CAM] frame ok: %u byte, crc32=0x%08lX, %lu ms\n",
+                  (unsigned)frameLen, (unsigned long)crc, capMs);
+
+    String url;
+    if (uploadAndPublish && cfg.upload_url.length() > 0 &&
+        WiFi.status() == WL_CONNECTED) {
+        url = uploadJpeg(fb->buf, frameLen, "image/jpeg");
+    }
     esp_camera_fb_return(fb);
 
     if (url.length() > 0) {
-        publishVisionImage(url, fb->len, crc, (uint32_t)capMs);
+        publishVisionImage(url, frameLen, crc, (uint32_t)capMs);
+        Serial.printf("[CAM] upload ok: %s\n", url.c_str());
+    } else if (uploadAndPublish && cfg.upload_url.length() > 0) {
+        Serial.println("[CAM] upload non riuscito (vedi stats).");
     }
     saveStats();
+    return true;
+}
+
+// -------------------- CLI SERIALE --------------------
+static char cliBuf[192];
+static size_t cliPos = 0;
+
+void cliPrintHelp() {
+    Serial.println("--- SmartVase CAM CLI v" CAM_FW_VERSION " ---");
+    Serial.println("help                  questo menu");
+    Serial.println("version               versione firmware");
+    Serial.println("status                Wi-Fi, MQTT, camera, heap");
+    Serial.println("show                  configurazione NVS");
+    Serial.println("set <chiave> <val>    wifi_ssid|wifi_pass|mqtt_broker|mqtt_port|");
+    Serial.println("                      mqtt_user|mqtt_pass|upload_url|interval_s");
+    Serial.println("save                  salva config su NVS");
+    Serial.println("wifi connect          ritenta subito la connessione");
+    Serial.println("capture               cattura di test (senza upload)");
+    Serial.println("upload                cattura + upload + publish completo");
+    Serial.println("stats                 statistiche cumulative");
+    Serial.println("reboot                riavvia la CAM");
+}
+
+void cliPrintStatus() {
+    Serial.println("--- status ---");
+    Serial.printf("fw_version = %s\n", CAM_FW_VERSION);
+    Serial.printf("device_id  = %s\n", deviceId);
+    Serial.printf("camera     = %s\n", cameraOk ? "OK" : "FAILED");
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("wifi       = CONNESSO ip=%s rssi=%d\n",
+                      WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    } else {
+        Serial.printf("wifi       = OFFLINE%s\n",
+                      cfg.wifi_ssid.length() == 0 ? " (non configurato)" : "");
+    }
+    if (cfg.mqtt_broker.length() == 0) Serial.println("mqtt       = NON CONFIGURATO");
+    else Serial.printf("mqtt       = %s\n", mqttClient.connected() ? "CONNESSO" : "DISCONNESSO");
+    time_t nowEpoch = time(nullptr);
+    Serial.printf("ntp_epoch  = %lu%s\n", (unsigned long)nowEpoch,
+                  nowEpoch < (time_t)NTP_VALID_EPOCH ? " (non sincronizzato)" : "");
+    Serial.printf("free_heap  = %u B\n", (unsigned)ESP.getFreeHeap());
+    Serial.printf("uptime_s   = %lu\n", millis() / 1000UL);
+}
+
+void cliPrintShow() {
+    Serial.println("--- config NVS ---");
+    Serial.printf("wifi_ssid   = %s\n", cfg.wifi_ssid.c_str());
+    Serial.printf("wifi_pass   = %s\n", cfg.wifi_pass.length() ? "***" : "(vuoto)");
+    Serial.printf("mqtt_broker = %s\n", cfg.mqtt_broker.c_str());
+    Serial.printf("mqtt_port   = %u\n", cfg.mqtt_port);
+    Serial.printf("mqtt_user   = %s\n", cfg.mqtt_user.c_str());
+    Serial.printf("mqtt_pass   = %s\n", cfg.mqtt_pass.length() ? "***" : "(vuoto)");
+    Serial.printf("upload_url  = %s\n", cfg.upload_url.c_str());
+    Serial.printf("interval_s  = %lu\n", (unsigned long)cfg.interval_s);
+}
+
+void cliPrintStats() {
+    Serial.println("--- stats ---");
+    Serial.printf("successful_frames     = %lu\n", (unsigned long)stats.successful_frames);
+    Serial.printf("failed_frames         = %lu\n", (unsigned long)stats.failed_frames);
+    Serial.printf("upload_errors         = %lu\n", (unsigned long)stats.upload_errors);
+    Serial.printf("mqtt_errors           = %lu\n", (unsigned long)stats.mqtt_errors);
+    Serial.printf("total_capture_time_ms = %llu\n", stats.total_capture_time_ms);
+}
+
+bool cliHandleSet(char* args) {
+    char* space = strchr(args, ' ');
+    if (space == nullptr) return false;
+    *space = '\0';
+    const char* key   = args;
+    const char* value = space + 1;
+    if (strlen(value) == 0) return false;
+
+    if      (strcmp(key, "wifi_ssid")   == 0) cfg.wifi_ssid   = value;
+    else if (strcmp(key, "wifi_pass")   == 0) cfg.wifi_pass   = value;
+    else if (strcmp(key, "mqtt_broker") == 0) cfg.mqtt_broker = value;
+    else if (strcmp(key, "mqtt_port")   == 0) {
+        int p = atoi(value);
+        if (p <= 0 || p > 65535) { Serial.println("[CLI] porta non valida"); return true; }
+        cfg.mqtt_port = (uint16_t)p;
+    }
+    else if (strcmp(key, "mqtt_user")   == 0) cfg.mqtt_user   = value;
+    else if (strcmp(key, "mqtt_pass")   == 0) cfg.mqtt_pass   = value;
+    else if (strcmp(key, "upload_url")  == 0) cfg.upload_url  = value;
+    else if (strcmp(key, "interval_s")  == 0) {
+        long s = atol(value);
+        if (s < 10) { Serial.println("[CLI] minimo 10 s"); return true; }
+        cfg.interval_s = (uint32_t)s;
+    }
+    else return false;
+
+    Serial.printf("[CLI] %s impostato (ricorda 'save' + 'reboot')\n", key);
+    return true;
+}
+
+void cliExecute(char* line) {
+    if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) { cliPrintHelp();   return; }
+    if (strcmp(line, "version") == 0) {
+        Serial.println("SmartVase CAM v" CAM_FW_VERSION " (" __DATE__ " " __TIME__ ")");
+        return;
+    }
+    if (strcmp(line, "status")  == 0) { cliPrintStatus(); return; }
+    if (strcmp(line, "show")    == 0) { cliPrintShow();   return; }
+    if (strcmp(line, "stats")   == 0) { cliPrintStats();  return; }
+    if (strcmp(line, "capture") == 0) { doCapture(false); return; }
+    if (strcmp(line, "upload")  == 0) {
+        if (cfg.upload_url.length() == 0)      Serial.println("[CLI] upload_url non configurato");
+        else if (WiFi.status() != WL_CONNECTED) Serial.println("[CLI] Wi-Fi offline");
+        else doCapture(true);
+        return;
+    }
+    if (strcmp(line, "save") == 0) {
+        saveConfig();
+        Serial.println("[CLI] config salvata su NVS (riavvia con 'reboot')");
+        return;
+    }
+    if (strcmp(line, "wifi connect") == 0) {
+        if (cfg.wifi_ssid.length() == 0) Serial.println("[CLI] wifi_ssid non configurato");
+        else wifiStartAttempt();
+        return;
+    }
+    if (strcmp(line, "reboot") == 0) {
+        Serial.println("[CLI] riavvio...");
+        delay(200);
+        ESP.restart();
+        return;
+    }
+    Serial.printf("[CLI] comando sconosciuto: '%s' (prova 'help')\n", line);
+}
+
+void cliTick() {
+    while (Serial.available()) {
+        char c = (char)Serial.read();
+        if (c == '\r') continue;
+        if (c == '\n') {
+            cliBuf[cliPos] = '\0';
+            if (cliPos > 0) cliExecute(cliBuf);
+            cliPos = 0;
+            cliBuf[0] = '\0';
+            Serial.print("> ");
+        } else if (cliPos < sizeof(cliBuf) - 1) {
+            cliBuf[cliPos++] = c;
+        } else {
+            cliPos = 0;
+            cliBuf[0] = '\0';
+            Serial.println("[CLI] riga troppo lunga, scartata");
+        }
+    }
 }
 
 // -------------------- SETUP / LOOP --------------------
@@ -415,7 +616,7 @@ void setup() {
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // disabilita brown-out (noto issue ESP32-CAM)
     Serial.begin(115200);
     delay(200);
-    Serial.println("\n[CAM] SmartVase Vision Co-Processor v2.0");
+    Serial.println("\n[CAM] SmartVase Vision Co-Processor v" CAM_FW_VERSION);
 
     loadConfig();
     loadStats();
@@ -423,38 +624,43 @@ void setup() {
     buildTopics();
     Serial.printf("[CAM] device_id=%s\n", deviceId);
 
-    if (!initCamera()) {
-        Serial.println("[CAM] Camera init FAILED. Looping.");
-        while (true) { delay(1000); }
+    cameraOk = initCamera();
+    if (!cameraOk) {
+        // La CLI resta disponibile per diagnosi anche con camera guasta.
+        Serial.println("[CAM] Camera init FAILED. CLI attiva per debug.");
     }
 
-    if (!connectWifi()) {
-        Serial.println("[CAM] Operating without network. Will retry in loop().");
+    if (cfg.wifi_ssid.length() > 0) {
+        wifiStartAttempt();
     } else {
-        mqttInit();
-        mqttReconnect();
+        Serial.println("[CAM] Wi-Fi non configurato. Dalla CLI: set wifi_ssid <...>, set wifi_pass <...>, save, reboot");
     }
+    if (cfg.mqtt_broker.length() > 0) {
+        mqttInit();
+    }
+
+    Serial.println("[CAM] CLI pronta: digita 'help'");
+    Serial.print("> ");
 }
 
 void loop() {
-    // Mantieni Wi-Fi + MQTT
-    if (WiFi.status() != WL_CONNECTED) {
-        connectWifi();
-    }
-    if (cfg.mqtt_broker.length() > 0) {
-        if (!mqttClient.connected()) mqttReconnect();
-        mqttClient.loop();
+    cliTick();
+
+    // Rete in background, mai bloccante per la CLI.
+    wifiEnsure();
+    if (cfg.mqtt_broker.length() > 0 && WiFi.status() == WL_CONNECTED) {
+        mqttEnsure();
+        if (mqttClient.connected()) mqttClient.loop();
     }
 
-    // Cattura periodica
-    if (millis() - lastCaptureMs >= (cfg.interval_s * 1000UL)) {
-        if (WiFi.status() == WL_CONNECTED) {
-            doCaptureAndPublish();
-        } else {
-            stats.failed_frames++;
-        }
+    // Cattura periodica automatica: solo a catena completa configurata
+    // (Wi-Fi connesso + upload_url presente). I test manuali a banco si
+    // fanno dalla CLI con 'capture' / 'upload'.
+    if (cfg.upload_url.length() > 0 && WiFi.status() == WL_CONNECTED &&
+        millis() - lastCaptureMs >= (cfg.interval_s * 1000UL)) {
+        doCapture(true);
         lastCaptureMs = millis();
     }
 
-    delay(50);
+    delay(20);
 }
