@@ -1,15 +1,16 @@
 /*
  * =================================================================
  * SmartVase - Platform Controller (Arduino Mega)
- * Versione 5.0 — 2026-05-19 (refactor totale post-PIN map)
+ * Versione 5.1 — 2026-06-11 (hardening pre-bring-up)
  * =================================================================
- *  - 6 sensori HC-SR04 con pin del nuovo PIN map
+ *  - 6 sensori HC-SR04 con pin del nuovo PIN map (driver locale Ultrasonic)
  *  - Forcella umidita' suolo su A0, LDR spostato su A1
- *  - Pompa irrigazione via rele' D10 (modulo Pump dedicato)
+ *  - Pompa irrigazione via rele' D10 con protezione tanica vuota (US4)
  *  - RTC DS3232 (I2C 0x68) per timestamp epoch nei messaggi
  *  - WDT 4s, doppio slot EEPROM con CRC16, log queue
  *  - Comunicazione Serial1 Protobuf+framing verso ESP32 Hub
  *  - Scheduler non-bloccante per telemetria/heartbeat/log
+ *  - Modalita' standalone (CLI) per test a banco senza Hub
  * =================================================================
  */
 
@@ -33,7 +34,7 @@ Communication comm;
 Persistence   persistence;
 Pump          pump;
 Cli           cli;
-SystemStatus  systemStatus = {false, false, false, true, false, "", "MEGA_01"};
+SystemStatus  systemStatus = {false, false, false, true, false, false, "", "MEGA_01"};
 
 // =================================================================
 // Variabili di stato
@@ -112,7 +113,8 @@ void setup() {
     Serial.begin(115200);   // USB / CLI debug
     Serial1.begin(115200);  // Verso ESP32 Hub (Protobuf framing)
 
-    Serial.println(F("\n[SmartVase] Platform Controller v5.0 boot"));
+    Serial.println(F("\n[SmartVase] Platform Controller v" SMARTVASE_FW_VERSION " boot"));
+    Serial.println(F("[SmartVase] CLI pronta: digita 'help'. Per test senza Hub: 'standalone on'"));
 
     // Carica config + stats da EEPROM (con fallback ai default se corrotti)
     persistence.loadConfig();
@@ -137,14 +139,22 @@ void setup() {
     pump.init();
     comm.init();
 
+#if BME680_ENABLED
     if (!sensors.getBMEStatus()) {
         systemStatus.bmeSensorError = true;
         comm.logEvent(Log_LogLevel_ERROR, "sensor_init_fail", "BME680",
                       systemStatus.deviceId, persistence.getStats());
     }
+#endif
     if (!sensors.getRTCStatus()) {
         comm.logEvent(Log_LogLevel_WARN, "sensor_init_fail", "DS3232_RTC",
                       systemStatus.deviceId, persistence.getStats());
+        Serial.println(F("[SmartVase] RTC non rilevato su I2C 0x68"));
+    } else if (sensors.rtcOscStopped()) {
+        // Oscillatore fermo = ora non valida (modulo nuovo o batteria scarica).
+        comm.logEvent(Log_LogLevel_WARN, "rtc_osf", "time_not_set",
+                      systemStatus.deviceId, persistence.getStats());
+        Serial.println(F("[SmartVase] RTC presente ma ora NON valida: usa 'rtc set <epoch>'"));
     }
 
     comm.logEvent(Log_LogLevel_INFO, "system_boot", "platform_ready",
@@ -168,8 +178,17 @@ void loop() {
     // 2) Campionamento sensori (round-robin HC-SR04 + ADC)
     sensors.sampleSensors();
 
-    // 3) Pompa: spegnimento automatico a fine timer
+    // 3) Pompa: spegnimento automatico a fine timer + protezione tanica.
+    //    Se durante l'irrigazione il livello (filtrato EMA) scende oltre la
+    //    soglia, o US4 smette di dare letture valide, si ferma subito:
+    //    mai far girare la pompa a secco.
     pump.tick(persistence.getStats());
+    if (pump.isActive() &&
+        sensors.tankLooksEmpty(persistence.getConfig().tank_empty_cm)) {
+        pump.stop(persistence.getStats());
+        comm.logEvent(Log_LogLevel_WARN, "pump_stop", "tank_empty_or_fault",
+                      systemStatus.deviceId, persistence.getStats());
+    }
 
     // 4) State machine movimento
     ObstacleView ov;
@@ -221,7 +240,13 @@ void loop() {
         if (!systemStatus.hubIsMissing) exitDegradedMode();
     }
 
-    if (now - comm.getLastHubMessageMs() > HUB_DEADMAN_TIMEOUT_MS) {
+    // Deadman Hub: sospeso in modalita' standalone (test a banco senza Hub).
+    if (systemStatus.standaloneMode) {
+        if (systemStatus.hubIsMissing) {
+            systemStatus.hubIsMissing = false;
+            if (!systemStatus.lowMemoryDetected) exitDegradedMode();
+        }
+    } else if (now - comm.getLastHubMessageMs() > HUB_DEADMAN_TIMEOUT_MS) {
         if (!systemStatus.hubIsMissing) {
             systemStatus.hubIsMissing = true;
             enterDegradedMode("hub_missing");

@@ -19,6 +19,12 @@
 #define US6_RIGHT_TRIG        28
 #define US6_RIGHT_ECHO        29
 
+// Portata massima per sonda: limita il timeout del pulseIn e quindi il tempo
+// di blocco del main loop per ogni campionamento (~14 ms a 200 cm).
+// La tanica e' profonda al massimo qualche decina di cm: timeout piu' corto.
+#define US_NAV_MAX_CM        200
+#define US_WATER_MAX_CM      120
+
 // ADC analogici
 #define SOIL_MOISTURE_PIN     A0   // Forcella umidita' suolo
 #define PHOTORESISTOR_PIN     A1   // Spostato da A0 per liberare la forcella
@@ -31,20 +37,22 @@
 #define VOLTAGE_DIVIDER_R2     7500.0f
 #endif
 
+#if BME680_ENABLED
 // Indirizzi I2C
 #define BME680_I2C_ADDRESS    0x76
+#endif
 
 // Throttling lettura ultrasuoni: una sonda ogni N ms (round-robin sui 6).
 // 6 sonde × 30 ms => refresh completo ~180 ms.
 #define US_SAMPLE_INTERVAL_MS 30
 
 Sensors::Sensors() :
-    us1_top         (US1_TOP_TRIG,         US1_TOP_ECHO),
-    us2_front_right (US2_FRONT_RIGHT_TRIG, US2_FRONT_RIGHT_ECHO),
-    us3_front_left  (US3_FRONT_LEFT_TRIG,  US3_FRONT_LEFT_ECHO),
-    us4_water       (US4_WATER_TRIG,       US4_WATER_ECHO),
-    us5_left        (US5_LEFT_TRIG,        US5_LEFT_ECHO),
-    us6_right       (US6_RIGHT_TRIG,       US6_RIGHT_ECHO),
+    us1_top         (US1_TOP_TRIG,         US1_TOP_ECHO,         US_NAV_MAX_CM),
+    us2_front_right (US2_FRONT_RIGHT_TRIG, US2_FRONT_RIGHT_ECHO, US_NAV_MAX_CM),
+    us3_front_left  (US3_FRONT_LEFT_TRIG,  US3_FRONT_LEFT_ECHO,  US_NAV_MAX_CM),
+    us4_water       (US4_WATER_TRIG,       US4_WATER_ECHO,       US_WATER_MAX_CM),
+    us5_left        (US5_LEFT_TRIG,        US5_LEFT_ECHO,        US_NAV_MAX_CM),
+    us6_right       (US6_RIGHT_TRIG,       US6_RIGHT_ECHO,       US_NAV_MAX_CM),
     us_cycle_idx(0),
     last_us_sample_ms(0),
     cached_top_dist_cm(NAN),
@@ -74,8 +82,16 @@ void Sensors::init() {
     pinMode(BATTERY_PIN, INPUT);
 #endif
 
+    us1_top.begin();
+    us2_front_right.begin();
+    us3_front_left.begin();
+    us4_water.begin();
+    us5_left.begin();
+    us6_right.begin();
+
     Wire.begin();
 
+#if BME680_ENABLED
     // BME680 (T / RH / pressione / VOC)
     if (bme.begin(BME680_I2C_ADDRESS)) {
         bme.setTemperatureOversampling(BME680_OS_8X);
@@ -85,12 +101,10 @@ void Sensors::init() {
         bme.setGasHeater(320, 150); // 320 C per 150 ms
         bme_status = true;
     }
+#endif
 
     // RTC DS3232 (I2C 0x68)
-    rtc.begin();
-    // begin() non ritorna stato — probiamo a leggere per verificare presenza.
-    time_t t = rtc.get();
-    rtc_status = (t != 0);
+    rtc_status = rtc.begin();
 }
 
 float Sensors::applyEmaFilter(float raw_value, float last_value,
@@ -108,41 +122,42 @@ float Sensors::applyEmaFilter(float raw_value, float last_value,
 }
 
 void Sensors::sampleNextUltrasonic() {
-    // Range valido HC-SR04: 2..400 cm. La tanica accetta range piu' ampio.
-    const float MIN_DIST = 2.0f;
-    const float MAX_DIST = 400.0f;
+    // Range valido HC-SR04: sotto i 2 cm le letture non sono affidabili.
+    const float MIN_DIST  = 2.0f;
+    const float MAX_NAV   = (float)US_NAV_MAX_CM;
+    const float MAX_WATER = (float)US_WATER_MAX_CM;
 
     float raw = NAN;
     switch (us_cycle_idx) {
         case 0:
-            raw = us1_top.getDistance();
+            raw = us1_top.readCm();
             cached_top_dist_cm = applyEmaFilter(raw, cached_top_dist_cm,
-                                                invalid_streak_top, MIN_DIST, MAX_DIST);
+                                                invalid_streak_top, MIN_DIST, MAX_NAV);
             break;
         case 1:
-            raw = us2_front_right.getDistance();
+            raw = us2_front_right.readCm();
             cached_front_right_dist_cm = applyEmaFilter(raw, cached_front_right_dist_cm,
-                                                        invalid_streak_fr, MIN_DIST, MAX_DIST);
+                                                        invalid_streak_fr, MIN_DIST, MAX_NAV);
             break;
         case 2:
-            raw = us3_front_left.getDistance();
+            raw = us3_front_left.readCm();
             cached_front_left_dist_cm = applyEmaFilter(raw, cached_front_left_dist_cm,
-                                                       invalid_streak_fl, MIN_DIST, MAX_DIST);
+                                                       invalid_streak_fl, MIN_DIST, MAX_NAV);
             break;
         case 3:
-            raw = us4_water.getDistance();
+            raw = us4_water.readCm();
             cached_water_level_cm = applyEmaFilter(raw, cached_water_level_cm,
-                                                   invalid_streak_water, MIN_DIST, MAX_DIST);
+                                                   invalid_streak_water, MIN_DIST, MAX_WATER);
             break;
         case 4:
-            raw = us5_left.getDistance();
+            raw = us5_left.readCm();
             cached_left_dist_cm = applyEmaFilter(raw, cached_left_dist_cm,
-                                                 invalid_streak_left, MIN_DIST, MAX_DIST);
+                                                 invalid_streak_left, MIN_DIST, MAX_NAV);
             break;
         case 5:
-            raw = us6_right.getDistance();
+            raw = us6_right.readCm();
             cached_right_dist_cm = applyEmaFilter(raw, cached_right_dist_cm,
-                                                  invalid_streak_right, MIN_DIST, MAX_DIST);
+                                                  invalid_streak_right, MIN_DIST, MAX_NAV);
             break;
     }
     us_cycle_idx = (us_cycle_idx + 1) % 6;
@@ -175,6 +190,11 @@ uint32_t Sensors::getEpoch() {
     return (t == 0) ? 0 : (uint32_t)t;
 }
 
+bool Sensors::setEpoch(uint32_t epoch_s) {
+    if (!rtc_status) return false;
+    return rtc.set((time_t)epoch_s);
+}
+
 TelemetryFast Sensors::buildFastTelemetry(CppMovementState movState, const char* deviceId) {
     TelemetryFast tf = TelemetryFast_init_zero;
     tf.top_dist_cm         = isnan(cached_top_dist_cm)         ? 0.0f : cached_top_dist_cm;
@@ -199,14 +219,18 @@ extern int freeRam(); // definito in main.cpp
 TelemetryDeep Sensors::buildDeepTelemetry(CumulativeStats& stats, const char* deviceId) {
     TelemetryDeep td = TelemetryDeep_init_zero;
 
-    if (bme_status && bme.performReading()) {
-        td.temperature_c       = bme.temperature;
-        td.humidity_percent    = bme.humidity;
-        td.pressure_hpa        = bme.pressure / 100.0f;
-        td.gas_resistance_ohms = (uint32_t)bme.gas_resistance;
-    } else {
-        stats.bme_read_errors++;
+#if BME680_ENABLED
+    if (bme_status) {
+        if (bme.performReading()) {
+            td.temperature_c       = bme.temperature;
+            td.humidity_percent    = bme.humidity;
+            td.pressure_hpa        = bme.pressure / 100.0f;
+            td.gas_resistance_ohms = (uint32_t)bme.gas_resistance;
+        } else {
+            stats.bme_read_errors++;
+        }
     }
+#endif
 
     td.uptime_s       = millis() / 1000UL;
     td.free_ram_bytes = (uint32_t)freeRam();

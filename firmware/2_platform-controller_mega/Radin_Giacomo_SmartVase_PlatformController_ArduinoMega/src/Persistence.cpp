@@ -50,6 +50,9 @@ void Persistence::loadConfig() {
         config.avoid_turn_ms     = 1200;
         config.soil_dry_threshold = 450;
         config.light_threshold    = 600;
+        // Default prudente da tarare a banco con `tank <cm>` (CLI):
+        // distanza US4->acqua oltre la quale la pompa viene bloccata.
+        config.tank_empty_cm      = 20;
         saveConfig(true);
     }
 }

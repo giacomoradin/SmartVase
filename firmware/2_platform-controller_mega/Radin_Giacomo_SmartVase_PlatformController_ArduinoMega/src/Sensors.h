@@ -2,16 +2,24 @@
 #define SENSORS_H
 
 #include <Arduino.h>
-#include <Adafruit_BME680.h>
-#include <HCSR04.h>
-#include <DS3232RTC.h>
+#include "Ultrasonic.h"
+#include "RtcDs3232.h"
 #include "smartvase_aliases.h"
 
 // --- Feature flags ---
+// Il BME680 non e' montato sul prototipo attuale (PIN map 2026-05-19, conferma
+// 2026-06-11): tenere a 0 finche' non viene cablato. A 1 riattiva probe I2C,
+// letture ambientali in TelemetryDeep e log di errore in caso di guasto.
+#define BME680_ENABLED 0
+
 // La batteria non e' ancora cablata sul nuovo prototipo (PIN map 2026-05-19).
 // Quando si aggiunge il partitore resistivo, settare a 1 e definire i pin
 // e i valori R1/R2 in Sensors.cpp.
 #define BATTERY_MONITORING_ENABLED 0
+
+#if BME680_ENABLED
+#include <Adafruit_BME680.h>
+#endif
 
 class Sensors {
 public:
@@ -29,6 +37,13 @@ public:
     float getLeftDist()       const { return cached_left_dist_cm; }       // US5
     float getRightDist()      const { return cached_right_dist_cm; }      // US6
 
+    // Protezione pompa: true se la tanica risulta vuota O la lettura di US4
+    // non e' valida (fail-safe: senza una misura affidabile non si pompa).
+    // US4 guarda l'acqua dall'alto: distanza > soglia = livello troppo basso.
+    bool tankLooksEmpty(uint16_t thresholdCm) const {
+        return isnan(cached_water_level_cm) || cached_water_level_cm > (float)thresholdCm;
+    }
+
     // --- ADC ---
     int getLux()           const { return cached_lux; }
     int getSoilMoisture()  const { return cached_soil_moisture; }
@@ -36,7 +51,9 @@ public:
 
     // --- RTC ---
     uint32_t getEpoch();
+    bool setEpoch(uint32_t epoch_s);     // per CLI `rtc set <epoch>`
     bool getRTCStatus() const { return rtc_status; }
+    bool rtcOscStopped() { return rtc_status ? rtc.oscillatorStopped() : true; }
 
     // --- BME680 ---
     bool getBMEStatus() const { return bme_status; }
@@ -53,16 +70,18 @@ private:
     void  sampleNextUltrasonic();
     void  sampleAdcChannels();
 
+#if BME680_ENABLED
     Adafruit_BME680 bme;
-    DS3232RTC       rtc;
+#endif
+    RtcDs3232 rtc;
 
     // 6 HC-SR04 — pin dal PIN map autoritativo (docs/PINS - Sheet1.csv)
-    HCSR04 us1_top;          // trig 33, echo 35
-    HCSR04 us2_front_right;  // trig 26, echo 27
-    HCSR04 us3_front_left;   // trig 36, echo 37
-    HCSR04 us4_water;        // trig 50, echo 51
-    HCSR04 us5_left;         // trig  4, echo  5
-    HCSR04 us6_right;        // trig 28, echo 29
+    Ultrasonic us1_top;          // trig 33, echo 35
+    Ultrasonic us2_front_right;  // trig 26, echo 27
+    Ultrasonic us3_front_left;   // trig 36, echo 37
+    Ultrasonic us4_water;        // trig 50, echo 51
+    Ultrasonic us5_left;         // trig  4, echo  5
+    Ultrasonic us6_right;        // trig 28, echo 29
 
     // Round-robin index 0..5 sulle 6 sonde
     uint8_t us_cycle_idx;

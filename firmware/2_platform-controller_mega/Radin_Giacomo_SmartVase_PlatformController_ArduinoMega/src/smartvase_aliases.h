@@ -89,6 +89,8 @@ typedef struct {
     uint16_t avoid_turn_ms;      // durata rotazione in avoidance
     uint16_t soil_dry_threshold; // soglia ADC sotto la quale 'dry'
     uint16_t light_threshold;    // soglia lux per inversione light/shadow
+    uint16_t tank_empty_cm;      // distanza US4->acqua oltre la quale la
+                                 // tanica e' considerata vuota (pompa bloccata)
 } DeviceConfig;
 
 // Statistiche cumulative persistite in EEPROM

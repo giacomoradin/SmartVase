@@ -31,15 +31,18 @@ static inline void pumpOff() {
 Pump::Pump() : active(false), start_ms(0), duration_ms_target(0) {}
 
 void Pump::init() {
-    pinMode(PUMP_RELAY_PIN, OUTPUT);
-    pinMode(PUMP_RELAY_BACKUP_PIN, OUTPUT);
+    // Prima il livello di riposo, poi pinMode: su AVR scrivere il PORT con il
+    // pin ancora INPUT pre-carica il latch, evitando il glitch LOW (= pompa
+    // accesa per qualche microsecondo con rele' attivo-basso) al passaggio
+    // a OUTPUT.
     pumpOff();
-    // Tieni il secondo canale rele' in stato di riposo (idle high se active-low).
 #if PUMP_RELAY_ACTIVE_LOW
     digitalWrite(PUMP_RELAY_BACKUP_PIN, HIGH);
 #else
     digitalWrite(PUMP_RELAY_BACKUP_PIN, LOW);
 #endif
+    pinMode(PUMP_RELAY_PIN, OUTPUT);
+    pinMode(PUMP_RELAY_BACKUP_PIN, OUTPUT);
 }
 
 bool Pump::start(uint32_t duration_ms, CumulativeStats& stats) {

@@ -1,7 +1,10 @@
 # SmartVase - Firmware Platform Controller (Arduino Mega)
 
-Firmware del **Platform Controller** SmartVase. Versione **5.0** (2026-05-19),
-refactor totale per allinearsi al nuovo PIN map (`docs/PINS - Sheet1.csv`).
+Firmware del **Platform Controller** SmartVase. Versione **5.1** (2026-06-11):
+hardening pre-bring-up con protezione tanica per la pompa, CLI estesa,
+modalità standalone e driver locali per HC-SR04 e DS3232.
+La v5.0 (2026-05-19) era il refactor totale sul nuovo PIN map
+(`docs/PINS - Sheet1.csv`).
 
 ## Architettura
 
@@ -14,12 +17,15 @@ Moduli (`src/`):
 | File              | Responsabilità                                                                           |
 |-------------------|------------------------------------------------------------------------------------------|
 | `main.cpp`        | Setup + loop non bloccante, scheduler telemetria/heartbeat/log, WDT, degraded mode       |
-| `Sensors.{h,cpp}` | 6 HC-SR04 (round-robin), BME680, RTC DS3232, forcella umidità, fotoresistore             |
+| `Sensors.{h,cpp}` | 6 HC-SR04 (round-robin), RTC DS3232, forcella umidità, fotoresistore, BME680 (flag)      |
 | `Movement.{h,cpp}`| State machine motori (IDLE/MOVING/AVOID*/STUCK), light-seek / shadow-seek                |
 | `Pump.{h,cpp}`    | Pompa irrigazione non-bloccante (relè D10, max 60s safety)                               |
 | `Persistence.{h,cpp}` | EEPROM dual-slot con magic+CRC16, wear leveling                                       |
 | `Communication.{h,cpp}` | Framing seriale SOF/len/payload/CRC16, parser stato, log queue, dispatcher comandi |
-| `SystemStatus.h`  | Struct condivisa di stato (degraded mode, deviceId, ecc.)                                |
+| `Cli.{h,cpp}`     | CLI di debug su Serial USB (provisioning soglie, test motori/pompa, standalone)          |
+| `Ultrasonic.{h,cpp}` | Driver HC-SR04 minimale locale (pulseIn con timeout, nessun delay fisso)              |
+| `RtcDs3232.{h,cpp}`  | Driver DS3232 minimale locale (get/set epoch + flag OSF via Wire)                     |
+| `SystemStatus.h`  | Struct condivisa di stato (degraded mode, standalone, deviceId, versione fw)             |
 | `smartvase_aliases.h` | Typedef/define per i simboli nanopb + tipi C++ interni                               |
 
 ## PIN map autoritativo
@@ -50,11 +56,11 @@ Le costanti pin sono centralizzate in `Sensors.cpp` e `Movement.cpp`.
 ```ini
 lib_deps =
     adafruit/Adafruit BME680 Library @ ^2.0.1
-    enjoyneering/HCSR04 @ ^1.1.0
     paulstoffregen/Time @ ^1.6.1
-    jchristensen/DS3232RTC @ ^2.0.1
 ```
 
+HC-SR04 e DS3232 sono gestiti da driver locali in `src/` (`Ultrasonic`,
+`RtcDs3232`): nessun download dal registry, le build funzionano offline.
 I file Nanopb (`pb_*.c/h`, `smartvase.pb.{c,h}`) sono già in `src/` e
 vengono compilati con lo sketch.
 
@@ -78,18 +84,32 @@ Equivalente a `pio run -d firmware/2_platform-controller_mega/...`.
 - **Framing seriale**: `SOF=0xAA | len(2) | payload | crc16(2)`, CRC-CCITT
   (poly `0x1021`).
 - **Log queue**: circolare a 20 slot, drenata a 200 ms dal main loop.
+- **Protezione tanica (v5.1)**: la pompa non parte (e si ferma da sola) se
+  US4 misura una distanza oltre `tank_empty_cm` (default 20, tarabile con
+  `tank <cm>` da CLI) **o** se la lettura non è valida — fail-safe contro
+  la marcia a secco. Vale per comando remoto `water` e CLI `pump`.
+- **Modalità standalone (v5.1)**: `standalone on` da CLI sospende il deadman
+  dell'Hub per i test a banco senza ESP32 collegato.
 - **Comandi supportati** (da Hub):
   `WaterCommand`, `SetModeCommand`, `StopCommand`,
   `RequestDiagnosticsCommand`, `SetMotionParamsCommand`,
   `ReadSoilCommand`, `SoftResetCommand`. Ogni comando produce un
   `CommandResponse` (status OK/ERROR, detail, value, cmd_id, exec_time_ms).
 
+## CLI di debug (Serial USB, 115200, newline)
+
+`help` mostra il menu completo: `status`, `stats`, `config`, `sensors`,
+`tank [cm]`, `rtc [set <epoch>]`, `mode <idle|light|shadow>`,
+`motor <f|b|l|r> <ms>`, `calib <l> <r>`, `pump <ms>`,
+`standalone <on|off>`, `version`, `reboot`.
+La procedura completa di collaudo è in `docs/Lab_Bringup_Checklist.md`.
+
 ## TODO aperti
 
 - [ ] Confermare partitore batteria a banco → settare
       `BATTERY_MONITORING_ENABLED 1` in `Sensors.h`.
-- [ ] CLI di debug su Serial USB (oggi non implementata: tutto via comando
-      Protobuf dall'Hub).
+- [ ] Montare il BME680 (oggi assente dal prototipo) → settare
+      `BME680_ENABLED 1` in `Sensors.h`.
 - [ ] Integrazione corrente motori (INA219) per stallo.
 - [ ] OTA via Hub.
 

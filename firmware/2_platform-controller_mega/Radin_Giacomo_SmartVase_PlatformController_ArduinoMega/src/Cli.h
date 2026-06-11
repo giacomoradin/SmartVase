@@ -12,15 +12,22 @@ struct SystemStatus;
 // CLI seriale di debug sulla porta USB (Serial, 115200, terminatore '\n').
 // Non interferisce con la seriale Hub<->Mega (Serial1).
 //
-//   help / ?               lista comandi
-//   status                 modalita' operativa + stato motori + degraded
-//   stats                  statistiche cumulative dalla EEPROM
-//   config                 configurazione corrente
-//   sensors                ultime letture sensori
+//   help / ?                  lista comandi
+//   version                   versione firmware
+//   status                    modalita' operativa + stato runtime + RAM
+//   stats                     statistiche cumulative dalla EEPROM
+//   config                    configurazione corrente
+//   sensors                   ultime letture sensori
+//   tank                      stato tanica (livello, soglia, verdetto)
+//   tank <cm>                 imposta soglia tanica-vuota (persistita)
+//   rtc                       epoch corrente + validita' oscillatore
+//   rtc set <epoch>           imposta l'ora del DS3232 (epoch Unix in s)
 //   mode <idle|light|shadow>  cambio modalita' operativa
-//   motor <f|b|l|r> <ms>   test motori (max 5000 ms)
-//   pump <ms>              test pompa (max 60000 ms)
-//   reboot                 soft reset via WDT
+//   motor <f|b|l|r> <ms>      test motori (max 5000 ms)
+//   calib <left> <right>      calibrazione PWM motori 0..255 (persistita)
+//   pump <ms>                 test pompa (max 60000 ms, blocco se tanica vuota)
+//   standalone <on|off>       sospende il deadman Hub per test a banco
+//   reboot                    soft reset via WDT
 class Cli {
 public:
     Cli();
@@ -32,10 +39,11 @@ private:
     void execute(const char* line, Movement& mv, Sensors& sn, Pump& pp,
                  Persistence& ps, SystemStatus& sys);
     void printHelp();
-    void printStatus(Movement& mv, SystemStatus& sys);
+    void printStatus(Movement& mv, Pump& pp, SystemStatus& sys);
     void printStats(Persistence& ps);
     void printConfig(Persistence& ps);
     void printSensors(Sensors& sn);
+    void printTank(Sensors& sn, Pump& pp, Persistence& ps);
 
     static const size_t BUF_SIZE = 64;
     char  buf[BUF_SIZE];

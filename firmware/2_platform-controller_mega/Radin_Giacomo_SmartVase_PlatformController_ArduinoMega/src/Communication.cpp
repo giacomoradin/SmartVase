@@ -222,6 +222,16 @@ void Communication::executeCommand(const WrapperMessage& message,
                 sendCommandResponse(CommandResponse_Status_ERROR, "degraded_mode", 0, cmd_id, millis() - t0);
                 break;
             }
+            // Protezione tanica: niente irrigazione se US4 dice vuota o se
+            // la lettura non e' affidabile (fail-safe contro pompa a secco).
+            if (sensors.tankLooksEmpty(cfg.tank_empty_cm)) {
+                float wl = sensors.getWaterLevel();
+                const char* why = isnan(wl) ? "tank_sensor_fault" : "tank_empty";
+                logEvent(Log_LogLevel_WARN, "water_blocked", why, sys.deviceId, stats);
+                sendCommandResponse(CommandResponse_Status_ERROR, why,
+                                    isnan(wl) ? -1 : (int32_t)wl, cmd_id, millis() - t0);
+                break;
+            }
             if (pump.start(dur, stats)) {
                 sendCommandResponse(CommandResponse_Status_OK, "water_started", (int32_t)dur, cmd_id, millis() - t0);
             } else {

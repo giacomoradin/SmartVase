@@ -133,6 +133,7 @@ void Movement::handleMovementSM(const ObstacleView& v, int cached_lux,
             if (targetMode != CPP_IDLE) {
                 currentMovementState      = CPP_M_MOVING;
                 motorActiveStartTime      = millis();
+                stateStartTime            = millis();
                 avoidance_attempts        = 0;
                 current_stuck_backoff     = 30000UL;
                 if (targetMode == CPP_LIGHT)  stats.light_seeking_sessions++;
@@ -141,6 +142,14 @@ void Movement::handleMovementSM(const ObstacleView& v, int cached_lux,
             break;
 
         case CPP_M_MOVING:
+            // Dopo 60 s di marcia senza ostacoli il backoff anti-stuck torna
+            // al valore base: gli stuck passati non devono penalizzare per
+            // sempre i recovery futuri.
+            if (millis() - stateStartTime > 60000UL) {
+                stateStartTime        = millis();
+                avoidance_attempts    = 0;
+                current_stuck_backoff = 30000UL;
+            }
             if (front_obs) {
                 stats.obstacles_avoided++;
                 currentMovementState = CPP_M_AVOID_START;
@@ -184,6 +193,7 @@ void Movement::handleMovementSM(const ObstacleView& v, int cached_lux,
                     }
                 } else {
                     currentMovementState = CPP_M_MOVING;
+                    stateStartTime       = millis(); // riparte la finestra dei 60 s
                 }
                 break;
             }
