@@ -69,6 +69,29 @@ verificare a banco, profondità tanica ignota (soglia configurabile),
 laboratorio **senza rete** (debug solo via CLI seriali), provisioning
 credenziali via CLI seriale.
 
+### Secondo giro di verifica (stessa sera) — 3 bug critici in più
+
+1. **CRC seriale Hub↔Mega incompatibile**: il `SerialManager` dell'Hub usava
+   CRC-16-IBM (poly 0xA001, LSB-first), il Mega usa CRC16-CCITT (0x1021,
+   MSB-first). Ogni frame veniva scartato per CRC error **in entrambe le
+   direzioni**: il link seriale non avrebbe mai funzionato. Allineato l'Hub
+   al CCITT del Mega.
+2. **Persistenza EEPROM/NVS rotta da sempre**: sia `Persistence` (Mega) sia
+   `ConfigManager` (Hub) calcolavano il CRC *includendo il campo CRC stesso*
+   (col valore vecchio) ed escludendo gli ultimi 2 byte di dati → la
+   validazione al boot falliva sempre e config/stats/credenziali tornavano
+   ai default a ogni accensione. Ora il CRC è calcolato sull'intera struct
+   con il campo azzerato: `tank`, `calib` e le credenziali Wi-Fi
+   sopravvivono al power-cycle.
+3. **CAM `captureNow` inefficace**: azzerava il timer ma non forzava la
+   cattura se l'uptime era sotto l'intervallo; ora usa un flag dedicato.
+   In più il timer di fallback telemetria dell'Hub non pubblica più dati
+   stantii quando il Mega è disconnesso.
+
+Tutte e tre le build riverificate SUCCESS dopo i fix. Sweep finale su
+pattern pericolosi: nessun print di debug su Serial1 (framing salvo),
+nessuna `String` su AVR, delay solo nei punti voluti.
+
 ---
 
 ## 1. Stato delle tre versioni firmware

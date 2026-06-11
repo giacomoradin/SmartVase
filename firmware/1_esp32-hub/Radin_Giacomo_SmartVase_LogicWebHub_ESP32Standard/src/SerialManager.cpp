@@ -196,17 +196,21 @@ bool SerialManager::sendProtobufMessage(const WrapperMessage& message) {
 }
 
 // --- Funzioni Helper CRC16 ---
+// DEVE essere identico a crc16_ccitt del Mega (Crc16.cpp): poly 0x1021,
+// MSB-first, init 0x0000, no reflection, no xor-out. La versione precedente
+// usava 0xA001 LSB-first (CRC-16-IBM): ogni frame veniva scartato per
+// "CRC Error" da entrambi i lati e il link Hub<->Mega era di fatto morto.
 uint16_t SerialManager::crc16_update(uint16_t crc, uint8_t a) {
-    crc ^= a;
+    crc ^= (uint16_t)a << 8;
     for (int i = 0; i < 8; ++i) {
-        if (crc & 1) crc = (crc >> 1) ^ 0xA001;
-        else crc = (crc >> 1);
+        if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
+        else              crc <<= 1;
     }
     return crc;
 }
 
 uint16_t SerialManager::crc16(const uint8_t* data, size_t length) {
-    uint16_t crc = 0x0;
+    uint16_t crc = 0x0000;
     for (size_t i = 0; i < length; i++) {
         crc = crc16_update(crc, data[i]);
     }

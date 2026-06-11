@@ -112,6 +112,7 @@ unsigned long lastMqttAttemptMs = 0;
 bool wifiAttemptInProgress      = false;
 bool ntpConfigured              = false;
 bool cameraOk                   = false;
+bool captureRequested           = false; // captureNow via MQTT
 
 // -------------------- UTILITIES --------------------
 uint32_t crc32_le(uint32_t crc, const uint8_t *buf, size_t len) {
@@ -260,7 +261,7 @@ void onMqttMessage(char* topic, byte* payload, unsigned int len) {
     if (deserializeJson(doc, payload, len)) return;
     const char* type = doc["type"] | "";
     if (strcmp(type, "captureNow") == 0) {
-        lastCaptureMs = 0; // forza cattura al prossimo loop
+        captureRequested = true; // gestita al prossimo giro di loop
     } else if (strcmp(type, "reboot") == 0) {
         ESP.restart();
     }
@@ -655,9 +656,13 @@ void loop() {
 
     // Cattura periodica automatica: solo a catena completa configurata
     // (Wi-Fi connesso + upload_url presente). I test manuali a banco si
-    // fanno dalla CLI con 'capture' / 'upload'.
-    if (cfg.upload_url.length() > 0 && WiFi.status() == WL_CONNECTED &&
-        millis() - lastCaptureMs >= (cfg.interval_s * 1000UL)) {
+    // fanno dalla CLI con 'capture' / 'upload'. captureRequested (MQTT)
+    // forza una cattura immediata indipendentemente dal timer.
+    bool periodicDue = cfg.upload_url.length() > 0 &&
+                       WiFi.status() == WL_CONNECTED &&
+                       millis() - lastCaptureMs >= (cfg.interval_s * 1000UL);
+    if (captureRequested || periodicDue) {
+        captureRequested = false;
         doCapture(true);
         lastCaptureMs = millis();
     }

@@ -360,7 +360,10 @@ void MainLogic::getTelemetrySnapshot(TelemetryFast& tf, TelemetryDeep& td) {
 void MainLogic::telemetryTimerCallback(TimerHandle_t xTimer) {
     MainLogic* instance = static_cast<MainLogic*>(pvTimerGetTimerID(xTimer));
     // Fallback: pubblica solo se la telemetria guidata dalla TelemetryDeep
-    // non e' uscita di recente (es. Mega che manda solo fast, o disconnesso).
+    // non e' uscita di recente (es. Mega che manda solo fast). A Mega
+    // disconnesso non si pubblica nulla: dati vecchi farebbero solo danno
+    // a valle (l'assenza e' gia' segnalata dall'alarm mega_offline).
+    if (!instance->_isMegaConnected) return;
     if (millis() - instance->_lastTelemetryPublishMs < TELEMETRY_STALE_AFTER_MS) return;
     TelemetryFast tf;
     TelemetryDeep td;

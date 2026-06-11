@@ -28,11 +28,22 @@ namespace {
         return crc;
     }
     uint16_t calculate_crc16(const uint8_t* data, size_t length) {
-        uint16_t crc = 0x0; // Inizializzazione standard per CRC16-CCITT
+        uint16_t crc = 0x0;
         for (size_t i = 0; i < length; i++) {
             crc = crc16_update(crc, data[i]);
         }
         return crc;
+    }
+
+    // CRC dell'intera struct con il campo crc16 azzerato. Il campo crc16
+    // sta in mezzo alla struct: calcolare il CRC con dentro il valore
+    // vecchio (come faceva la versione precedente) rendeva impossibile la
+    // verifica al load — la config NVS risultava sempre corrotta e le
+    // credenziali venivano azzerate a ogni boot.
+    uint16_t config_crc(const DeviceConfig& cfg) {
+        DeviceConfig tmp = cfg;
+        tmp.crc16 = 0;
+        return calculate_crc16(reinterpret_cast<const uint8_t*>(&tmp), sizeof(DeviceConfig));
     }
 }
 
@@ -87,8 +98,8 @@ bool ConfigManager::loadConfig() {
     if (err == ESP_OK) {
         // Verifica Magic Number e Dimensione PRIMA di calcolare il CRC
         if (required_size == sizeof(DeviceConfig) && loaded_config.magic_number == CONFIG_MAGIC_NUMBER) {
-            // Calcola il CRC sui dati caricati (escluso il campo crc stesso)
-            uint16_t calculated_crc = calculate_crc16(reinterpret_cast<const uint8_t*>(&loaded_config), sizeof(DeviceConfig) - sizeof(loaded_config.crc16));
+            // CRC su una copia con il campo crc16 azzerato (vedi config_crc)
+            uint16_t calculated_crc = config_crc(loaded_config);
 
             if (calculated_crc == loaded_config.crc16) {
                 // CRC e Magic Number corrispondono, configurazione valida!
@@ -137,8 +148,8 @@ bool ConfigManager::saveConfig() {
      // Assicura che il magic number sia corretto prima di salvare (anche se dovrebbe già esserlo)
     _config.magic_number = CONFIG_MAGIC_NUMBER;
 
-    // Calcola il CRC sulla configurazione corrente (escluso il campo crc)
-    _config.crc16 = calculate_crc16(reinterpret_cast<const uint8_t*>(&_config), sizeof(DeviceConfig) - sizeof(_config.crc16));
+    // CRC su una copia con il campo crc16 azzerato (vedi config_crc)
+    _config.crc16 = config_crc(_config);
 
     // Scrive l'intera struttura come blob
     err = nvs_set_blob(nvs_handle, NVS_CONFIG_KEY, &_config, sizeof(DeviceConfig));
