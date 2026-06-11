@@ -7,44 +7,82 @@
 > architettura completo (cloud, vision, app inclusi). Qui non si parla di
 > cloud / vision Python / app Android se non strettamente necessario.
 >
-> Allineato a `origin/main` al 2026-05-27.
+> Aggiornato al **2026-06-11** (sera pre-bring-up).
 
 ---
 
-## 0. Nota di sincronizzazione del repo
+## 0. Aggiornamento 2026-06-11 — hardening pre-laboratorio
 
-Al momento della scrittura, il branch locale `main` è **2 commit dietro**
-`origin/main`. I commit mancanti localmente sono:
+Repo riallineato a `origin/main` (i rename in staging sono stati risolti,
+`docs/PINS - Sheet1.csv` e questo documento sono committati). Le tre
+build PlatformIO **compilano tutte** in locale, offline:
 
-```
-83e8f4c Stop tracking *.swp *.swn *swo files
-7ba5d86 Set up server. Created hivemq-firestore bridge
-```
+| Target | Esito | RAM | Flash |
+|--------|-------|-----|-------|
+| Mega v5.1   | SUCCESS | 50.1% | 16.4% |
+| Hub v1.2    | SUCCESS | 14.3% | 74.2% |
+| CAM v2.1    | SUCCESS | 15.9% | 32.9% |
 
-Tutto il firmware descritto qui sotto vive su `origin/main` (post merge
-delle PR #4 e #5 di `refactor/firmware-v5`). Prima di lavorare sul codice
-serve un `git pull` (oppure rebase, vedi §10) per riallineare il working
-tree.
+Interventi principali (dettaglio nelle sezioni e nei commit):
 
-C'è anche un set di **rename già staged** in working tree (LICENSE / README /
-SmartVase_data_structure.md spostati in `docs/`, + aggiunta `docs/PINS - Sheet1.csv`).
-Già parte di `origin/main`, quindi al pull dovrebbero collassare senza
-conflitti — ma da verificare.
+- **Mega v5.1** — protezione pompa su tanica vuota/US4 guasto (richiesta
+  esplicita: soglia `tank_empty_cm` in EEPROM, default 20 cm, taratura da
+  CLI `tank <cm>`; blocco su `water`/`pump` e auto-stop durante
+  l'irrigazione); modalità `standalone` per i test a banco senza Hub
+  (sospende il deadman); driver locali `Ultrasonic` (al posto della lib
+  enjoyneering che bloccava 50 ms a lettura — la `begin()` peraltro non
+  veniva mai chiamata: nessuna sonda avrebbe letto) e `RtcDs3232` (la lib
+  DS3232RTC non è installabile: macchina offline verso il registry);
+  `rtc set <epoch>` da CLI; BME680 dietro flag `BME680_ENABLED 0` (non
+  montato, confermato 2026-06-11); fix `bme_read_errors` che cresceva a
+  ogni TelemetryDeep anche senza sensore; reset del backoff anti-stuck
+  dopo 60 s di marcia pulita; init relè senza glitch.
+- **Hub v1.2** — **fix crash latente**: i manager globali copiavano gli
+  handle delle code FreeRTOS quando erano ancora NULL (static init); ora
+  sono creati in `setup()` dopo `xQueueCreate`. **Heartbeat periodico
+  Hub→Mega ogni 30 s** (senza, il deadman del Mega scattava anche con
+  l'Hub collegato). CLI seriale completa (`HubCli`): provisioning Wi-Fi/MQTT
+  su NVS + comandi passthrough verso il Mega (`water`, `mode`, `soil`,
+  `diag`, `telemetry`, ...) per testare la catena seriale senza rete.
+  `WifiManager` non cancella più le credenziali su timeout e non avvia
+  più l'AP automaticamente: boot deterministico offline. MQTT silente se
+  non configurato. Telemetria de-duplicata (publish su TelemetryDeep,
+  timer solo come fallback). Echo `[ACK Mega]` su seriale.
+- **CAM v2.1** — fix **errore di compilazione** (doppia dichiarazione di
+  `t0` in `connectWifi`: la v2.0 non aveva mai compilato) e **use-after-free**
+  (`fb->len` letto dopo `esp_camera_fb_return`). Wi-Fi non bloccante con
+  retry ogni 30 s (prima il loop si bloccava 30 s a tentativo). CLI
+  seriale (provisioning NVS + `capture` di test senza upload + `stats`).
+  Cattura automatica solo a catena completa configurata; metriche di
+  upload contate solo su tentativi reali.
+- **Build system** — `build_*.bat` puntavano a un profilo utente
+  inesistente (`C:\Users\Giacomo Radin\...`): ora usano `%USERPROFILE%`
+  e accettano argomenti extra (`build_mega.bat -t upload`). Seedata
+  PubSubClient nella cache libdeps della CAM (registry irraggiungibile).
+- **Docs** — nuova [`docs/Lab_Bringup_Checklist.md`](Lab_Bringup_Checklist.md):
+  procedura passo-passo per il collaudo di domani (ordine sicuro, tabella
+  troubleshooting, taratura tanica). README del Mega allineato alla v5.1.
+
+Decisioni hardware confermate da Giacomo il 2026-06-11: **solo RTC DS3232
+montato** (niente BME680, niente partitore batteria), polarità relè da
+verificare a banco, profondità tanica ignota (soglia configurabile),
+laboratorio **senza rete** (debug solo via CLI seriali), provisioning
+credenziali via CLI seriale.
 
 ---
 
 ## 1. Stato delle tre versioni firmware
 
-| Modulo                   | Versione | Sorgenti                                                | Buildato su HW reale dopo refactor? |
-|--------------------------|----------|---------------------------------------------------------|-------------------------------------|
-| Platform Controller Mega | **v5.0** | `firmware/2_platform-controller_mega/.../src/`          | **No** (refactor in sandbox)        |
-| ESP32 Hub                | **v1.0** | `firmware/1_esp32-hub/.../src/` + `include/`            | **No**                              |
-| ESP32-CAM                | **v2.0** | `firmware/3_esp32-cam/.../src/main.cpp`                 | **No**                              |
-| Protocollo nanopb        | **v4.0** | `firmware/.../src/smartvase.proto` + `infra/smartvase-proto/` | n/a                            |
+| Modulo                   | Versione | Sorgenti                                                | Build |
+|--------------------------|----------|---------------------------------------------------------|-------|
+| Platform Controller Mega | **v5.1** | `firmware/2_platform-controller_mega/.../src/`          | ✅ SUCCESS (offline) |
+| ESP32 Hub                | **v1.2** | `firmware/1_esp32-hub/.../src/` + `include/`            | ✅ SUCCESS (offline) |
+| ESP32-CAM                | **v2.1** | `firmware/3_esp32-cam/.../src/main.cpp`                 | ✅ SUCCESS (offline) |
+| Protocollo nanopb        | **v4.0** | `firmware/.../src/smartvase.proto` + `infra/smartvase-proto/` | invariato |
 
-Tutto coerente all'interno della v5 (proto, struct, alias, pinout). Non c'è
-mai stato un giro di build/flash dopo il refactor: aspettati piccoli fix di
-lib_deps / include path al primo `build_*.bat`.
+Nessun firmware è ancora stato **flashato** sull'hardware reale: il
+collaudo è pianificato per il 2026-06-12 seguendo
+[`docs/Lab_Bringup_Checklist.md`](Lab_Bringup_Checklist.md).
 
 ---
 
@@ -355,6 +393,17 @@ estesa). Da riallineare alla v5 oppure cancellare in favore di ARCHITECTURE.md.
 ---
 
 ## 7. Cosa manca o da sistemare — TODO firmware
+
+> **Nota 2026-06-11**: molti item di questa sezione sono stati chiusi con
+> l'hardening pre-bring-up (vedi §0): build dei 3 target ✅, BME680
+> chiarito (assente, dietro flag) ✅, batteria flag-off confermato ✅,
+> provisioning CLI Hub+CAM ✅, bug `t0` CAM ✅, use-after-free fb ✅,
+> Wi-Fi CAM non bloccante ✅, metriche upload ✅, doppia pubblicazione
+> telemetria Hub ✅, backoff anti-stuck con reset ✅, protezione pompa
+> tanica-vuota ✅, deadman a banco (standalone) ✅, heartbeat Hub→Mega ✅.
+> Restano aperti: flash/validazione su HW (domani), TLS pinning upload CAM,
+> vision/result nel Hub, automazione autonoma, OTA, rate-limit comandi,
+> consolidamento copie proto e cert.
 
 Tag: **[BLK]** = bloccante per portare il robot online · **[FUNC]** = feature
 da completare · **[POL]** = polish / qualità / sicurezza.
