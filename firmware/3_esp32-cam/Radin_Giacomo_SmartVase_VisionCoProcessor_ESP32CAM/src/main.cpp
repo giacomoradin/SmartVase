@@ -210,7 +210,7 @@ bool connectWifi() {
     // NTP: necessario per ottenere timestamp UTC nel payload vision/image.
     configTime(0, 0, "pool.ntp.org", "time.google.com");
     // Attesa breve e non-bloccante della sync (max 3 s).
-    unsigned long t0 = millis();
+    t0 = millis();
     while (time(nullptr) < 1700000000UL && millis() - t0 < 3000) {
         delay(100);
     }
