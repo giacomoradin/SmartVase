@@ -240,26 +240,22 @@ void wifiStartAttempt() {
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
     WiFi.begin(cfg.wifi_ssid.c_str(), cfg.wifi_pass.c_str());
-    lastWifiAttemptMs    = millis();
-    wifiAttemptInProgress = true;
-}
-
-void wifiEnsure() {
-    if (WiFi.status() == WL_CONNECTED) {
-        if (wifiAttemptInProgress) {
-            wifiAttemptInProgress = false;
-            Serial.printf("[CAM] Wi-Fi OK. IP=%s\n", WiFi.localIP().toString().c_str());
+    unsigned long t0 = millis();
+    while (WiFi.status() != WL_CONNECTED) {
+        if (millis() - t0 > 30000) {
+            Serial.println("[CAM] Wi-Fi connect timeout.");
+            return false;
         }
-        if (!ntpConfigured) {
-            // NTP per il timestamp_utc nel payload vision/image (best effort).
-            configTime(0, 0, "pool.ntp.org", "time.google.com");
-            ntpConfigured = true;
-        }
-        return;
+        delay(250);
+        Serial.print('.');
     }
-    if (cfg.wifi_ssid.length() == 0) return; // non configurato: resta offline
-    if (millis() - lastWifiAttemptMs >= WIFI_RETRY_INTERVAL_MS || lastWifiAttemptMs == 0) {
-        wifiStartAttempt();
+    Serial.printf("\n[CAM] Wi-Fi OK. IP=%s\n", WiFi.localIP().toString().c_str());
+    // NTP: necessario per ottenere timestamp UTC nel payload vision/image.
+    configTime(0, 0, "pool.ntp.org", "time.google.com");
+    // Attesa breve e non-bloccante della sync (max 3 s).
+    unsigned long t0 = millis();
+    while (time(nullptr) < 1700000000UL && millis() - t0 < 3000) {
+        delay(100);
     }
 }
 

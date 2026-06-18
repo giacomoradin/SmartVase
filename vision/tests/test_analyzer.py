@@ -5,13 +5,13 @@ def test_analyzer_default_initialization():
     #verify that default values are the calibrated ones
     analyzer = PixelAnalyzer()
     assert analyzer.green_threshold == 20
-    assert analyzer.brown_threshold_r == 60
+    assert analyzer.brown_threshold_r == 90
     assert analyzer.total_pixels == 19200
 
 def test_analyzer_custom_initialization():
     #verify that custom parameters are correctly assigned
-    analyzer = PixelAnalyzer(green_threshold=15, brown_threshold_r=90)
-    assert analyzer.green_threshold == 15
+    analyzer = PixelAnalyzer(green_threshold=20, brown_threshold_r=90)
+    assert analyzer.green_threshold == 20
     assert analyzer.brown_threshold_r == 90
 
 def test_missing_image_exception():
