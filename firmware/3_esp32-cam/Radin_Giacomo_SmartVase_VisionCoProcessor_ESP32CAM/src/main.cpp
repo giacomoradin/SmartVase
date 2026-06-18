@@ -142,6 +142,21 @@ void loadConfig() {
     cfg.upload_url  = prefs.getString("upload_url",  "");
     cfg.interval_s  = prefs.getUInt  ("interval_s",  300);
     prefs.end();
+
+    // ============================================================
+    // ⚠️  BENCH ONLY — credenziali hard-coded per il collaudo.
+    //     RIMUOVERE QUESTO BLOCCO prima di qualsiasi commit/push
+    //     (repo accademico: niente password reali nel versionato).
+    //     Sovrascrive la NVS a ogni boot. upload_url lasciato vuoto
+    //     finche' la Cloud Function non e' pronta.
+    // ============================================================
+    cfg.wifi_ssid   = "GiacomoPhone";
+    cfg.wifi_pass   = "giacomonoretaaleinternet";
+    cfg.mqtt_broker = "fec435c1f9c5410e8105bc0a677662ab.s1.eu.hivemq.cloud";
+    cfg.mqtt_port   = 8883;
+    cfg.mqtt_user   = "SmartVase";
+    cfg.mqtt_pass   = "7w#po8N&Hr6R6Z";
+    // ============ fine blocco bench ============
 }
 
 void saveConfig() {

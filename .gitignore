@@ -1,6 +1,9 @@
 node_modules/
 *.log
 
+# Contesto di lavoro locale (non committare: repo accademico, niente tracce AI)
+CLAUDE.md
+
 # PlatformIO
 .pio/
 

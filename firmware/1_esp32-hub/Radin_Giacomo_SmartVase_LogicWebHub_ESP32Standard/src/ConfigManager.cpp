@@ -81,6 +81,21 @@ bool ConfigManager::init() {
 }
 
 bool ConfigManager::loadConfig() {
+    // ============================================================
+    // ⚠️  BENCH ONLY — credenziali hard-coded per il collaudo.
+    //     RIMUOVERE QUESTO BLOCCO prima di qualsiasi commit/push
+    //     (repo accademico: niente password reali nel versionato).
+    //     Forza la config in RAM a ogni boot, bypassando la NVS.
+    // ============================================================
+    memset(&_config, 0, sizeof(DeviceConfig));
+    _config.magic_number = CONFIG_MAGIC_NUMBER;
+    setWifiCredentials("GiacomoPhone", "giacomonoretaaleinternet");
+    setMqttConfig("fec435c1f9c5410e8105bc0a677662ab.s1.eu.hivemq.cloud",
+                  8883, "SmartVase", "7w#po8N&Hr6R6Z");
+    ESP_LOGW(TAG, "BENCH: credenziali hard-coded attive (RIMUOVERE prima del commit)");
+    return true;
+    // ============ fine blocco bench — sotto la logica NVS normale ============
+
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
     if (err != ESP_OK) {
