@@ -244,7 +244,7 @@ void wifiStartAttempt() {
     while (WiFi.status() != WL_CONNECTED) {
         if (millis() - t0 > 30000) {
             Serial.println("[CAM] Wi-Fi connect timeout.");
-            return false;
+            return;
         }
         delay(250);
         Serial.print('.');
@@ -253,13 +253,26 @@ void wifiStartAttempt() {
     // NTP: necessario per ottenere timestamp UTC nel payload vision/image.
     configTime(0, 0, "pool.ntp.org", "time.google.com");
     // Attesa breve e non-bloccante della sync (max 3 s).
-    unsigned long t0 = millis();
+    t0 = millis();
     while (time(nullptr) < 1700000000UL && millis() - t0 < 3000) {
         delay(100);
     }
 }
 
 // -------------------- MQTT --------------------
+
+void wifiEnsure() {
+    if (cfg.wifi_ssid.length() == 0) return;
+    if (WiFi.status() == WL_CONNECTED) return;
+
+    // Se siamo offline, tenta la riconnessione basandosi sul timer
+    if (millis() - lastWifiAttemptMs > WIFI_RETRY_INTERVAL_MS || lastWifiAttemptMs == 0) {
+        lastWifiAttemptMs = millis();
+        Serial.println("[CAM] Wi-Fi disconnesso, tento la riconnessione...");
+        WiFi.reconnect();
+    }
+}
+
 void buildTopics() {
     topicVisionImage   = String("smartvase/") + deviceId + "/vision/image";
     topicVisionStatus  = String("smartvase/") + deviceId + "/vision/status";
