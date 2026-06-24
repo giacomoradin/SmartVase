@@ -38,9 +38,9 @@ void MqttManager::init() {
     ESP_LOGI(TAG, "MQTT Client ID: %s", _mqttClientId.c_str());
 
     // Costruisci i topic specifici per questo device
-    // Assumiamo che il device ID per MQTT sia HUB_ + ultime 3 coppie del MAC
-    char deviceIdSuffix[7];
-    snprintf(deviceIdSuffix, sizeof(deviceIdSuffix), "%02X%02X%02X", mac[3], mac[4], mac[5]);
+    // For now we hardcode the device ID; when we will have more than 1 user, we will derive it from the MAC address.
+    char deviceIdSuffix[7] = "123456"; // Hardcoded for now
+    // snprintf(deviceIdSuffix, sizeof(deviceIdSuffix), "%02X%02X%02X", mac[3], mac[4], mac[5]);
     _topicCommand = "smartvase/HUB_" + String(deviceIdSuffix) + "/command/#"; // Sottoscrive a tutti i sottotopic
     _topicStatus = "smartvase/HUB_" + String(deviceIdSuffix) + "/status";
     ESP_LOGI(TAG, "Command Topic: %s", _topicCommand.c_str());
