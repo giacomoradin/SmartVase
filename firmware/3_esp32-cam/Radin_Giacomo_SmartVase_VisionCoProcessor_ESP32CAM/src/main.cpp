@@ -13,6 +13,8 @@
  *   - Pubblicazione MQTT su smartvase/{device_id}/vision/image con
  *     l'URL ottenuto + metadati (timestamp, dimensione, CRC32).
  *   - Stats cumulative persistenti in NVS.
+ *   - Web server locale (porta 80) con live feed MJPEG (/, /stream, /jpg).
+ *   - Telemetria di debug periodica sul monitor seriale (ogni 5 s).
  *
  *  Configurazione (NVS namespace "cam", scrivibile dalla CLI con `set`):
  *     wifi_ssid    string
@@ -40,6 +42,7 @@
 #include <Preferences.h>
 #include <ArduinoJson.h>
 #include <time.h>
+#include "esp_http_server.h"
 #include "hivemq_ca_cert.h"
 
 #define CAM_FW_VERSION "2.1.0"
@@ -113,6 +116,9 @@ bool wifiAttemptInProgress      = false;
 bool ntpConfigured              = false;
 bool cameraOk                   = false;
 bool captureRequested           = false; // captureNow via MQTT
+bool webServerStarted           = false; // feed MJPEG locale avviato
+unsigned long lastDebugMs       = 0;     // throttle telemetria debug seriale
+httpd_handle_t cameraHttpd      = NULL;  // server web feed (porta 80)
 
 // -------------------- UTILITIES --------------------
 uint32_t crc32_le(uint32_t crc, const uint8_t *buf, size_t len) {
@@ -506,6 +512,7 @@ void cliPrintHelp() {
     Serial.println("capture               cattura di test (senza upload)");
     Serial.println("upload                cattura + upload + publish completo");
     Serial.println("stats                 statistiche cumulative");
+    Serial.println("feed                  URL del live feed web (porta 80)");
     Serial.println("reboot                riavvia la CAM");
 }
 
@@ -521,6 +528,10 @@ void cliPrintStatus() {
         Serial.printf("wifi       = OFFLINE%s\n",
                       cfg.wifi_ssid.length() == 0 ? " (non configurato)" : "");
     }
+    if (webServerStarted && WiFi.status() == WL_CONNECTED)
+        Serial.printf("feed       = http://%s/\n", WiFi.localIP().toString().c_str());
+    else
+        Serial.println("feed       = (in attesa di Wi-Fi)");
     if (cfg.mqtt_broker.length() == 0) Serial.println("mqtt       = NON CONFIGURATO");
     else Serial.printf("mqtt       = %s\n", mqttClient.connected() ? "CONNESSO" : "DISCONNESSO");
     time_t nowEpoch = time(nullptr);
@@ -590,6 +601,13 @@ void cliExecute(char* line) {
     if (strcmp(line, "status")  == 0) { cliPrintStatus(); return; }
     if (strcmp(line, "show")    == 0) { cliPrintShow();   return; }
     if (strcmp(line, "stats")   == 0) { cliPrintStats();  return; }
+    if (strcmp(line, "feed")    == 0) {
+        if (webServerStarted && WiFi.status() == WL_CONNECTED)
+            Serial.printf("[CAM] live feed: http://%s/\n", WiFi.localIP().toString().c_str());
+        else
+            Serial.println("[CAM] feed non attivo (Wi-Fi non connesso o camera KO)");
+        return;
+    }
     if (strcmp(line, "capture") == 0) { doCapture(false); return; }
     if (strcmp(line, "upload")  == 0) {
         if (cfg.upload_url.length() == 0)      Serial.println("[CLI] upload_url non configurato");
@@ -636,6 +654,100 @@ void cliTick() {
     }
 }
 
+// -------------------- WEB SERVER (feed MJPEG locale) --------------------
+// Server HTTP su porta 80 raggiungibile dalla rete locale (stesso hotspot):
+//   GET /        pagina HTML con il live feed
+//   GET /stream  MJPEG (multipart/x-mixed-replace)
+//   GET /jpg     singolo frame JPEG
+// Pensato per il debug "compartimento stagno": guardare la pianta dal browser
+// (telefono/PC collegati allo stesso hotspot, all'IP stampato dal seriale).
+#define PART_BOUNDARY "smartvaseframe"
+static const char* STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
+static const char* STREAM_BOUNDARY     = "\r\n--" PART_BOUNDARY "\r\n";
+static const char* STREAM_PART         = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
+
+static esp_err_t handleIndex(httpd_req_t* req) {
+    static const char html[] =
+        "<!doctype html><html><head><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<title>SmartVase CAM</title>"
+        "<style>body{font-family:sans-serif;background:#0d130d;color:#bdf0bd;text-align:center;margin:0;padding:14px}"
+        "img{max-width:100%;height:auto;border:2px solid #2e7d32;border-radius:6px}a{color:#9ccc65}</style>"
+        "</head><body><h2>SmartVase Vision &mdash; live feed</h2>"
+        "<img src='/stream' alt='stream'>"
+        "<p><a href='/jpg'>scarica singolo frame</a></p></body></html>";
+    httpd_resp_set_type(req, "text/html");
+    return httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t handleJpg(httpd_req_t* req) {
+    camera_fb_t* fb = esp_camera_fb_get();
+    if (!fb) { httpd_resp_send_500(req); return ESP_FAIL; }
+    httpd_resp_set_type(req, "image/jpeg");
+    httpd_resp_set_hdr(req, "Content-Disposition", "inline; filename=capture.jpg");
+    esp_err_t res = httpd_resp_send(req, (const char*)fb->buf, fb->len);
+    esp_camera_fb_return(fb);
+    return res;
+}
+
+static esp_err_t handleStream(httpd_req_t* req) {
+    esp_err_t res = httpd_resp_set_type(req, STREAM_CONTENT_TYPE);
+    if (res != ESP_OK) return res;
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    char partBuf[64];
+    while (true) {
+        camera_fb_t* fb = esp_camera_fb_get();
+        if (!fb) { res = ESP_FAIL; break; }
+        size_t hlen = snprintf(partBuf, sizeof(partBuf), STREAM_PART, (unsigned)fb->len);
+        res = httpd_resp_send_chunk(req, STREAM_BOUNDARY, strlen(STREAM_BOUNDARY));
+        if (res == ESP_OK) res = httpd_resp_send_chunk(req, partBuf, hlen);
+        if (res == ESP_OK) res = httpd_resp_send_chunk(req, (const char*)fb->buf, fb->len);
+        esp_camera_fb_return(fb);
+        if (res != ESP_OK) break;   // client disconnesso → esci dal loop
+        delay(1);                   // cede la CPU agli altri task
+    }
+    return res;
+}
+
+void startWebServer() {
+    if (cameraHttpd != NULL) return;     // gia' avviato
+    httpd_config_t config   = HTTPD_DEFAULT_CONFIG();
+    config.server_port      = 80;
+    config.ctrl_port        = 32768;
+    config.max_uri_handlers = 8;
+    config.lru_purge_enable = true;
+    if (httpd_start(&cameraHttpd, &config) != ESP_OK) {
+        Serial.println("[CAM] ERRORE: avvio web server fallito");
+        cameraHttpd = NULL;
+        return;
+    }
+    httpd_uri_t u = {};
+    u.method = HTTP_GET; u.user_ctx = NULL;
+    u.uri = "/";       u.handler = handleIndex;  httpd_register_uri_handler(cameraHttpd, &u);
+    u.uri = "/stream"; u.handler = handleStream; httpd_register_uri_handler(cameraHttpd, &u);
+    u.uri = "/jpg";    u.handler = handleJpg;    httpd_register_uri_handler(cameraHttpd, &u);
+    Serial.printf("[CAM] >>> Live feed: http://%s/   (stream: http://%s/stream)\n",
+                  WiFi.localIP().toString().c_str(), WiFi.localIP().toString().c_str());
+}
+
+// -------------------- DEBUG TELEMETRY (monitor seriale) --------------------
+#define DEBUG_TELEMETRY_INTERVAL_MS 5000UL
+
+void printDebugTelemetry() {
+    bool wifiUp = (WiFi.status() == WL_CONNECTED);
+    Serial.printf("[DBG] up=%lus | wifi=%s", millis() / 1000UL, wifiUp ? "ON" : "OFF");
+    if (wifiUp) Serial.printf(" ip=%s rssi=%ddBm", WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    Serial.printf(" | mqtt=%s | heap=%uB | cam=%s | frames ok/fail=%lu/%lu",
+                  mqttClient.connected() ? "ON" : "OFF",
+                  (unsigned)ESP.getFreeHeap(),
+                  cameraOk ? "OK" : "FAIL",
+                  (unsigned long)stats.successful_frames,
+                  (unsigned long)stats.failed_frames);
+    if (webServerStarted && wifiUp)
+        Serial.printf(" | feed=http://%s/", WiFi.localIP().toString().c_str());
+    Serial.println();
+}
+
 // -------------------- SETUP / LOOP --------------------
 void setup() {
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // disabilita brown-out (noto issue ESP32-CAM)
@@ -676,6 +788,18 @@ void loop() {
     if (cfg.mqtt_broker.length() > 0 && WiFi.status() == WL_CONNECTED) {
         mqttEnsure();
         if (mqttClient.connected()) mqttClient.loop();
+    }
+
+    // Avvia il feed web locale appena il Wi-Fi e' su e la camera e' ok.
+    if (!webServerStarted && cameraOk && WiFi.status() == WL_CONNECTED) {
+        startWebServer();
+        webServerStarted = true;
+    }
+
+    // Telemetria di debug periodica sul monitor seriale.
+    if (millis() - lastDebugMs >= DEBUG_TELEMETRY_INTERVAL_MS) {
+        lastDebugMs = millis();
+        printDebugTelemetry();
     }
 
     // Cattura periodica automatica: solo a catena completa configurata
