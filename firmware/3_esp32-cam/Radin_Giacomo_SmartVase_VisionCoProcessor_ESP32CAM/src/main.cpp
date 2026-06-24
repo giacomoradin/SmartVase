@@ -199,10 +199,13 @@ void saveStats() {
 }
 
 void makeDeviceId() {
-    uint8_t mac[6];
-    WiFi.macAddress(mac);
-    snprintf(deviceId, sizeof(deviceId), "%s%02X%02X%02X",
-             DEVICE_ID_PREFIX, mac[3], mac[4], mac[5]);
+    // uint8_t mac[6];
+    // WiFi.macAddress(mac);
+    // snprintf(deviceId, sizeof(deviceId), "%s%02X%02X%02X",
+    //          DEVICE_ID_PREFIX, mac[3], mac[4], mac[5]);
+
+    // For now, let deviceId be hardcoded; when we will have more than 1 user, we will derive it from the MAC address.
+    snprintf(deviceId, sizeof(deviceId), "CAM_123456");
 }
 
 // -------------------- CAMERA --------------------
