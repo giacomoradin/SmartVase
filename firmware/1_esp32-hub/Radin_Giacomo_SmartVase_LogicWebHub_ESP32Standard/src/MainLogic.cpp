@@ -45,12 +45,16 @@ void MainLogic::init() {
     ESP_LOGI(TAG, "Initializing Main Logic...");
     _lastMegaHeartbeatMs = millis();
 
-    // Genera device_id "HUB_XXXXXX" dagli ultimi 3 byte del MAC.
-    // esp_read_mac legge dalla eFuse: funziona anche con radio Wi-Fi spenta
-    // (esp_wifi_get_mac fallirebbe se lo stack Wi-Fi non e' avviato).
-    uint8_t mac[6] = {0};
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    snprintf(_deviceId, sizeof(_deviceId), "HUB_%02X%02X%02X", mac[3], mac[4], mac[5]);
+    // For now, let _deviceId be hardcoded; when we will have more than 1 user, we will derive it from the MAC address.
+    snprintf(_deviceId, sizeof(_deviceId), "HUB_123456");
+
+    // // Genera device_id "HUB_XXXXXX" dagli ultimi 3 byte del MAC.
+    // // esp_read_mac legge dalla eFuse: funziona anche con radio Wi-Fi spenta
+    // // (esp_wifi_get_mac fallirebbe se lo stack Wi-Fi non e' avviato).
+    // uint8_t mac[6] = {0};
+    // esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    // snprintf(_deviceId, sizeof(_deviceId), "HUB_%02X%02X%02X", mac[3], mac[4], mac[5]);
+
     ESP_LOGI(TAG, "Device ID: %s", _deviceId);
 
     _telemetryTimer = xTimerCreate(
