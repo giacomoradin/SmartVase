@@ -1,4 +1,5 @@
 #include "Movement.h"
+#include "SensorPolicy.h"
 #include <avr/wdt.h>
 
 // =================================================================
@@ -26,7 +27,9 @@ Movement::Movement() :
     stateStartTime(0),
     avoidance_attempts(0),
     stuck_cooldown_start_time(0),
-    current_stuck_backoff(30000UL)
+    current_stuck_backoff(30000UL),
+    seekTurnStartMs(0),
+    seekRelocateUntilMs(0)
 {
 }
 
@@ -152,13 +155,37 @@ void Movement::handleMovementSM(const ObstacleView& v, int cached_lux,
             }
             if (front_obs) {
                 stats.obstacles_avoided++;
+                seekTurnStartMs     = 0;   // reset anti-circling prima dell'avoidance
+                seekRelocateUntilMs = 0;
                 currentMovementState = CPP_M_AVOID_START;
             } else {
-                if (targetMode == CPP_LIGHT && cached_lux >= 0 && cached_lux < lightThr) {
-                    turnRight(config);
-                } else if (targetMode == CPP_SHADOW && cached_lux >= 0 && cached_lux > lightThr) {
-                    turnLeft(config);
+                // Seeking luce/ombra con ANTI-CIRCLING: se la rotazione verso la
+                // sorgente dura troppo senza raggiungere la soglia (es. luce
+                // uniforme), invece di girare in tondo all'infinito il robot si
+                // "rilocalizza" avanzando un istante e poi riprova. Mai piu'
+                // rischioso di moveForward (che parte solo a fronte libero).
+                // Tempi tarabili a banco.
+                const unsigned long SEEK_TURN_MAX_MS = 8000UL;  // ~1 giro lento
+                const unsigned long SEEK_RELOCATE_MS = 2000UL;
+                const bool wantTurn = seekWantsTurn(targetMode == CPP_LIGHT,
+                                                    targetMode == CPP_SHADOW,
+                                                    cached_lux, lightThr);
+
+                if (millis() < seekRelocateUntilMs) {
+                    moveForward(config);                  // fase di rilocazione
+                } else if (wantTurn) {
+                    if (seekTurnStartMs == 0) seekTurnStartMs = millis();
+                    if (millis() - seekTurnStartMs > SEEK_TURN_MAX_MS) {
+                        seekTurnStartMs     = 0;
+                        seekRelocateUntilMs = millis() + SEEK_RELOCATE_MS;
+                        moveForward(config);
+                    } else if (targetMode == CPP_LIGHT) {
+                        turnRight(config);                // troppo buio -> cerca luce
+                    } else {
+                        turnLeft(config);                 // troppa luce -> cerca ombra
+                    }
                 } else {
+                    seekTurnStartMs = 0;                  // soglia raggiunta / IDLE
                     moveForward(config);
                 }
             }

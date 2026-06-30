@@ -21,6 +21,8 @@ private:
     CumulativeStats lastSavedStats;
     unsigned long   lastEepromConfigWrite;
     unsigned long   lastEepromStatsWrite;
+    uint8_t         current_config_slot;
+    uint8_t         current_stats_slot;
 };
 
 #endif // PERSISTENCE_H

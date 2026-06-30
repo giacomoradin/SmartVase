@@ -14,12 +14,15 @@
  */
 
 #include <Arduino.h>
+#include <WiFi.h>
+#include <ArduinoOTA.h>
 #include "ConfigManager.h"
 #include "WifiManager.h"
 #include "SerialManager.h"
 #include "MQTTManager.h"
 #include "MainLogic.h"
 #include "HubCli.h"
+#include "secrets.h"     // SV_OTA_PASS (gitignorato)
 
 // --- Code FreeRTOS ---
 // Comunicazione seriale (Mega <-> Hub)
@@ -46,8 +49,9 @@ MainLogic*     mainLogic     = nullptr;
 // =================================================================
 void setup() {
     // 1. Seriale di Debug/CLI (USB)
+    pinMode(3, INPUT_PULLUP); // Evita che RXD0 fluttui quando l'USB non e' connesso
     Serial.begin(115200);
-    Serial.println("\n[SmartVase Hub] Avvio... v1.2");
+    Serial.println("\n[SmartVase Hub] Avvio... v1.3");
 
     // 2. Configurazione NVS
     if (!configManager.init()) {
@@ -112,7 +116,7 @@ void setup() {
         mainLogic,                  // Parametri: puntatore all'istanza
         1,                          // Priorità (bassa)
         NULL,                       // Handle
-        0);                         // Core 0
+        1);                         // Core 1 (isolato dai picchi TLS su Core 0)
 
     Serial.println("[SETUP] Setup completato. Avvio dei Task.");
 }
@@ -126,6 +130,19 @@ void loop() {
 
     // No-op se l'AP di provisioning non è attivo.
     wifiManager.handleProvisioning();
+
+    // OTA: avvio una volta quando il Wi-Fi e' su; poi handle() ad ogni giro.
+    // Additivo e passivo (non interferisce col funzionamento normale). La
+    // validazione dell'update vero va fatta a banco (richiede rete + tool).
+    static bool otaStarted = false;
+    if (!otaStarted && WiFi.status() == WL_CONNECTED) {
+        ArduinoOTA.setHostname("smartvase-hub");
+        ArduinoOTA.setPassword(SV_OTA_PASS);
+        ArduinoOTA.begin();
+        otaStarted = true;
+        Serial.println("[OTA] pronto: hostname 'smartvase-hub'");
+    }
+    if (otaStarted) ArduinoOTA.handle();
 
     vTaskDelay(pdMS_TO_TICKS(20));
 }

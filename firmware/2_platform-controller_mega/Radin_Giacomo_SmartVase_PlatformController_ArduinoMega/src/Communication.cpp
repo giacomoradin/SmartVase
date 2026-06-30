@@ -5,6 +5,7 @@
 #include "Pump.h"
 #include "SystemStatus.h"
 #include "Crc16.h"
+#include "CommandPolicy.h"
 
 // =================================================================
 // Framing: SOF | len_hi | len_lo | payload | crc16_hi | crc16_lo
@@ -24,7 +25,16 @@ static int logQueueHead  = 0;
 static int logQueueTail  = 0;
 static int logQueueCount = 0;
 
-Communication::Communication() : last_hub_message_ms(0) {
+// Intervallo minimo fra due irrigazioni accettate: protegge la pianta dall'
+// over-watering e il sistema da flood di WaterCommand (oltre al cap 60 s della
+// pompa e al rifiuto-se-gia'-attiva). Tarabile in base alla pianta reale.
+#define WATER_MIN_INTERVAL_MS 5000UL
+// Limiti di sicurezza validati anche lato Mega (defense-in-depth, non solo Hub).
+#define WATER_MAX_DURATION_MS 30000UL  // cap durata pompa (coerente con l'Hub)
+#define MOTION_PARAM_MIN_MS   100      // range avoidance reverse/turn
+#define MOTION_PARAM_MAX_MS   5000
+
+Communication::Communication() : last_hub_message_ms(0), last_water_ms(0), _lastExecutedCmdId(0) {
     memset(protobuf_tx_buffer, 0, sizeof(protobuf_tx_buffer));
     memset(protobuf_rx_buffer, 0, sizeof(protobuf_rx_buffer));
 }
@@ -99,6 +109,12 @@ void Communication::logEvent(Log_LogLevel level, const char* event, const char* 
                              const char* /*deviceId*/, CumulativeStats& stats) {
     // ISR-safe enqueue: noInterrupts limita lo scope al solo aggiornamento dei contatori.
     noInterrupts();
+    // Backpressure: oltre l'80% della coda scarta gli INFO per lasciare spazio
+    // agli eventi importanti (WARN/ERROR/CRITICAL). Non conta come overflow.
+    if (logQueueCount >= (LOG_QUEUE_SIZE * 4 / 5) && level == Log_LogLevel_INFO) {
+        interrupts();
+        return;
+    }
     if (logQueueCount >= LOG_QUEUE_SIZE) {
         stats.log_overflows++;
         interrupts();
@@ -215,11 +231,34 @@ void Communication::executeCommand(const WrapperMessage& message,
     CumulativeStats& stats = persistence.getStats();
     DeviceConfig&    cfg   = persistence.getConfig();
 
+    // Idempotenza: un cmd_id gia' eseguito (probabile retry dell'app) viene
+    // ri-ACKato SENZA rieseguire l'effetto (es. niente doppia irrigazione).
+    // cmd_id == 0 = "senza id": non deduplicato.
+    if (cmd_id != 0 && cmd_id == _lastExecutedCmdId) {
+        sendCommandResponse(CommandResponse_Status_OK, "duplicate_ignored", 0, cmd_id, 0);
+        return;
+    }
+    if (cmd_id != 0) _lastExecutedCmdId = cmd_id;
+
     switch (cmd.which_command_type) {
         case Command_water_tag: {
             uint32_t dur = cmd.command_type.water.duration_ms;
+            // Defense-in-depth: clamp a max sicuro anche qui (l'Hub gia' limita,
+            // ma il Mega non si fida di parametri seriali fuori range).
+            uint32_t safeDur = clampWaterDurationMs(dur, WATER_MAX_DURATION_MS);
+            if (safeDur != dur) {
+                logEvent(Log_LogLevel_WARN, "water_clamped", "over_max", sys.deviceId, stats);
+                dur = safeDur;
+            }
             if (sys.degradedModeActive) {
                 sendCommandResponse(CommandResponse_Status_ERROR, "degraded_mode", 0, cmd_id, millis() - t0);
+                break;
+            }
+            // Anti over-watering / flood: minimo WATER_MIN_INTERVAL_MS fra due
+            // irrigazioni accettate (in aggiunta al cap 60 s e al rifiuto se
+            // la pompa e' gia' attiva).
+            if (!waterAllowed(millis(), last_water_ms, WATER_MIN_INTERVAL_MS)) {
+                sendCommandResponse(CommandResponse_Status_ERROR, "water_rate_limited", 0, cmd_id, millis() - t0);
                 break;
             }
             // Protezione tanica: niente irrigazione se US4 dice vuota o se
@@ -233,6 +272,7 @@ void Communication::executeCommand(const WrapperMessage& message,
                 break;
             }
             if (pump.start(dur, stats)) {
+                last_water_ms = millis();
                 sendCommandResponse(CommandResponse_Status_OK, "water_started", (int32_t)dur, cmd_id, millis() - t0);
             } else {
                 sendCommandResponse(CommandResponse_Status_ERROR, "pump_busy_or_invalid", 0, cmd_id, millis() - t0);
@@ -262,9 +302,26 @@ void Communication::executeCommand(const WrapperMessage& message,
             break;
         }
         case Command_set_motion_params_tag: {
-            cfg.avoid_reverse_ms = cmd.command_type.set_motion_params.reverse_ms;
-            cfg.avoid_turn_ms    = cmd.command_type.set_motion_params.turn_ms;
-            persistence.saveConfig(true);
+            // Defense-in-depth: clamp dei parametri al range sicuro prima di usarli.
+            uint32_t reqRev  = cmd.command_type.set_motion_params.reverse_ms;
+            uint32_t reqTurn = cmd.command_type.set_motion_params.turn_ms;
+            uint16_t newRev  = clampMotionParamMs(reqRev,  MOTION_PARAM_MIN_MS, MOTION_PARAM_MAX_MS);
+            uint16_t newTurn = clampMotionParamMs(reqTurn, MOTION_PARAM_MIN_MS, MOTION_PARAM_MAX_MS);
+            if (newRev != reqRev || newTurn != reqTurn) {
+                logEvent(Log_LogLevel_WARN, "motion_clamped", "out_of_range", sys.deviceId, stats);
+            }
+            // No-op se invariato: evita una scrittura EEPROM inutile (anti-usura)
+            // a ogni comando identico ripetuto.
+            if (!motionParamsChanged(cfg.avoid_reverse_ms, cfg.avoid_turn_ms, newRev, newTurn)) {
+                sendCommandResponse(CommandResponse_Status_OK, "motion_params_unchanged", 0, cmd_id, millis() - t0);
+                break;
+            }
+            cfg.avoid_reverse_ms = newRev;
+            cfg.avoid_turn_ms    = newTurn;
+            // Salvataggio EEPROM DEFERITO: lo esegue il main loop quando la
+            // seriale e' a riposo, per non bloccare il loop ~60 ms (rischio
+            // overflow RX) durante la ricezione di un frame.
+            sys.configSavePending = true;
             sendCommandResponse(CommandResponse_Status_OK, "motion_params_set", 0, cmd_id, millis() - t0);
             break;
         }

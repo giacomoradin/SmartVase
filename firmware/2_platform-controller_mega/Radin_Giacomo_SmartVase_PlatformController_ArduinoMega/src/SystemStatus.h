@@ -4,7 +4,7 @@
 #include <Arduino.h>
 
 // Versione firmware: loggata al boot e mostrata dalla CLI (`version`).
-#define SMARTVASE_FW_VERSION "5.1.0"
+#define SMARTVASE_FW_VERSION "5.2.0"
 
 #define DEVICE_ID_MAX_LEN 16
 #define DEGRADED_REASON_MAX_LEN 32
@@ -21,6 +21,10 @@ struct SystemStatus {
     // dell'Hub cosi' il Mega non entra in degraded mode quando si testa
     // da solo via USB. Non persistita: torna off a ogni reset.
     bool standaloneMode;
+    // Salvataggio config in EEPROM deferito: settato da Communication su un
+    // comando che modifica la config, eseguito dal main loop quando la seriale
+    // e' a riposo (evita di bloccare il loop ~60 ms durante la ricezione).
+    bool configSavePending;
     char degradedReason[DEGRADED_REASON_MAX_LEN];
     char deviceId[DEVICE_ID_MAX_LEN];
 };

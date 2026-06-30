@@ -18,12 +18,15 @@ struct SystemStatus;
 //   stats                     statistiche cumulative dalla EEPROM
 //   config                    configurazione corrente
 //   sensors                   ultime letture sensori
+//   diag                      diagnostica guidata: per ogni sensore/motore
+//                             stato + cosa controllare se non funziona
 //   tank                      stato tanica (livello, soglia, verdetto)
 //   tank <cm>                 imposta soglia tanica-vuota (persistita)
 //   rtc                       epoch corrente + validita' oscillatore
 //   rtc set <epoch>           imposta l'ora del DS3232 (epoch Unix in s)
 //   mode <idle|light|shadow>  cambio modalita' operativa
 //   motor <f|b|l|r> <ms>      test motori (max 5000 ms)
+//   motortest                 sequenza guidata f/b/l/r per verificare versi/mapping
 //   calib <left> <right>      calibrazione PWM motori 0..255 (persistita)
 //   pump <ms>                 test pompa (max 60000 ms, blocco se tanica vuota)
 //   standalone <on|off>       sospende il deadman Hub per test a banco
@@ -43,6 +46,7 @@ private:
     void printStats(Persistence& ps);
     void printConfig(Persistence& ps);
     void printSensors(Sensors& sn);
+    void printDiag(Sensors& sn, Movement& mv, Pump& pp, Persistence& ps, SystemStatus& sys);
     void printTank(Sensors& sn, Pump& pp, Persistence& ps);
 
     static const size_t BUF_SIZE = 64;

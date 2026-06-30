@@ -5,6 +5,7 @@
 #include "Ultrasonic.h"
 #include "RtcDs3232.h"
 #include "smartvase_aliases.h"
+#include "SensorPolicy.h"
 
 // --- Feature flags ---
 // Il BME680 non e' montato sul prototipo attuale (PIN map 2026-05-19, conferma
@@ -41,7 +42,7 @@ public:
     // non e' valida (fail-safe: senza una misura affidabile non si pompa).
     // US4 guarda l'acqua dall'alto: distanza > soglia = livello troppo basso.
     bool tankLooksEmpty(uint16_t thresholdCm) const {
-        return isnan(cached_water_level_cm) || cached_water_level_cm > (float)thresholdCm;
+        return tankConsideredEmpty(cached_water_level_cm, thresholdCm);
     }
 
     // --- ADC ---

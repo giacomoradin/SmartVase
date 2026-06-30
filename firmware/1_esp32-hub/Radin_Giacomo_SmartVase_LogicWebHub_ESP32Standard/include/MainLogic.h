@@ -11,7 +11,7 @@
 #include "ConfigManager.h"
 
 #define MQTT_TX_QUEUE_SIZE       15
-#define MAX_JSON_MESSAGE_LENGTH  512
+#define MAX_JSON_MESSAGE_LENGTH  1024
 
 typedef struct {
     char topic[64];
@@ -49,7 +49,6 @@ private:
     QueueHandle_t _mqttRxQueue;
     ConfigManager& _configManager;
 
-    TimerHandle_t _telemetryTimer;
     uint32_t      _lastMegaHeartbeatMs;
     bool          _isMegaConnected;
 
@@ -69,7 +68,6 @@ private:
     void publishCommandAckJson(const CommandResponse& r);
     void sendCommandToMega(const Command& cmd);
 
-    static void telemetryTimerCallback(TimerHandle_t xTimer);
     void checkMegaConnection();
 };
 

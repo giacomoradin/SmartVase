@@ -12,6 +12,10 @@
 #define MQTT_PASSWORD_MAX_LENGTH 32
 #define WEBHOOK_URL_MAX_LENGTH   128
 
+// Device ID STATICO del prodotto, fonte unica (usato da MainLogic e MQTTManager).
+// Scelta del team per identificare il dispositivo su Firebase. NON derivare dal MAC.
+#define HUB_DEVICE_ID "HUB_123456"
+
 // Struttura che contiene TUTTI i dati di configurazione salvati su NVS
 struct DeviceConfig {
     uint32_t magic_number;            // Per verificare se i dati sono validi

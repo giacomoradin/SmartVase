@@ -1,6 +1,7 @@
 #include "SerialManager.h"
 #include "esp_log.h"
 #include <HardwareSerial.h> // Per accedere a Serial2
+#include "crc_utils.h"      // crc16_ccitt (condiviso)
 
 // Tag per i log specifici di questo modulo
 static const char *TAG = "SerialManager";
@@ -38,31 +39,26 @@ void SerialManager::taskRun() {
         // 1. Gestisci la ricezione di dati dal Mega
         handleSerialReception();
 
-        // 2. Controlla se ci sono messaggi da inviare al Mega
+        // 2. Attendi (max 10 ms) un messaggio da inviare al Mega: se arriva, il
+        //    task si sveglia subito (latenza TX ~0); altrimenti il timeout fa da
+        //    tick per ripassare a drenare la ricezione seriale.
         SerialMessage msgToSend;
-        // Controlla la coda _txQueue senza bloccare (timeout 0)
-        if (xQueueReceive(_txQueue, &msgToSend, 0) == pdPASS) {
-            ESP_LOGD(TAG, "Sending message from TX queue...");
+        if (xQueueReceive(_txQueue, &msgToSend, pdMS_TO_TICKS(10)) == pdPASS) {
             if (!sendProtobufMessage(msgToSend.message)) {
                 ESP_LOGE(TAG, "Failed to send protobuf message!");
-                // Qui potresti implementare una logica di retry o notifica errore
             }
         }
-
-        // 3. Breve pausa per non sovraccaricare la CPU e permettere ad altri task di girare
-        vTaskDelay(pdMS_TO_TICKS(10)); // Controlla ogni 10ms
     }
 }
 
 // Gestisce la ricezione dei dati seriali con il protocollo di framing (SOF, Len, Payload, CRC)
 void SerialManager::handleSerialReception() {
-    // Macchina a stati per la decodifica del frame
-    static enum {
-        WAIT_SOF, WAIT_LEN_H, WAIT_LEN_L, WAIT_PAYLOAD, WAIT_CRC_H, WAIT_CRC_L
-    } state = WAIT_SOF;
-    static uint16_t messageLength = 0;
-    static uint16_t payloadIndex = 0;
-    static uint16_t receivedCRC = 0;
+    // Stato FSM in MEMBRI (classe rientrante). Alias locali per non riscrivere
+    // tutto il corpo della funzione.
+    RxState&  state         = _rxState;
+    uint16_t& messageLength = _rxMessageLength;
+    uint16_t& payloadIndex  = _rxPayloadIndex;
+    uint16_t& receivedCRC   = _rxReceivedCRC;
 
     // Leggi tutti i byte disponibili dalla porta seriale
     while (Serial2.available() > 0) {
@@ -120,7 +116,7 @@ void SerialManager::handleSerialReception() {
                 ESP_LOGV(TAG, "CRC received: 0x%04X", receivedCRC);
 
                 // Calcola il CRC sul payload ricevuto
-                uint16_t calculatedCRC = crc16(_rxBuffer, messageLength);
+                uint16_t calculatedCRC = crc16_ccitt(_rxBuffer, messageLength);
 
                 if (receivedCRC == calculatedCRC) {
                     // CRC Corretto! Decodifica il messaggio Protobuf
@@ -181,7 +177,7 @@ bool SerialManager::sendProtobufMessage(const WrapperMessage& message) {
      }
 
     ESP_LOGD(TAG, "Encoding successful (%d bytes). Sending framed message...", payloadLen);
-    uint16_t crc = crc16(_txBuffer, payloadLen);
+    uint16_t crc = crc16_ccitt(_txBuffer, payloadLen);
 
     Serial2.write(SOF_BYTE);
     Serial2.write((uint8_t)(payloadLen >> 8));
@@ -195,25 +191,7 @@ bool SerialManager::sendProtobufMessage(const WrapperMessage& message) {
     return true;
 }
 
-// --- Funzioni Helper CRC16 ---
-// DEVE essere identico a crc16_ccitt del Mega (Crc16.cpp): poly 0x1021,
-// MSB-first, init 0x0000, no reflection, no xor-out. La versione precedente
-// usava 0xA001 LSB-first (CRC-16-IBM): ogni frame veniva scartato per
-// "CRC Error" da entrambi i lati e il link Hub<->Mega era di fatto morto.
-uint16_t SerialManager::crc16_update(uint16_t crc, uint8_t a) {
-    crc ^= (uint16_t)a << 8;
-    for (int i = 0; i < 8; ++i) {
-        if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
-        else              crc <<= 1;
-    }
-    return crc;
-}
-
-uint16_t SerialManager::crc16(const uint8_t* data, size_t length) {
-    uint16_t crc = 0x0000;
-    for (size_t i = 0; i < length; i++) {
-        crc = crc16_update(crc, data[i]);
-    }
-    return crc;
-}
+// CRC16-CCITT spostato in crc_utils.{h,cpp} (condiviso con ConfigManager).
+// Resta poly 0x1021 MSB-first, identico a crc16_ccitt del Mega: il test host
+// `test_crc_utils` pinna il valore (XMODEM 0x31C3) contro regressioni.
 

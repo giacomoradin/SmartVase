@@ -754,6 +754,7 @@ void printDebugTelemetry() {
 // -------------------- SETUP / LOOP --------------------
 void setup() {
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // disabilita brown-out (noto issue ESP32-CAM)
+    pinMode(3, INPUT_PULLUP); // Evita che RXD0 fluttui quando l'USB/FTDI non e' connesso
     Serial.begin(115200);
     delay(200);
     Serial.println("\n[CAM] SmartVase Vision Co-Processor v" CAM_FW_VERSION);

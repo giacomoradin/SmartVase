@@ -7,6 +7,33 @@
 
 extern int freeRam(); // definito in main.cpp
 
+// Nome leggibile dello stato di movimento (usato dalla diagnostica).
+static const __FlashStringHelper* movStateName(CppMovementState s) {
+    switch (s) {
+        case CPP_M_MOVING:          return F("MOVING");
+        case CPP_M_AVOID_START:     return F("AVOID_START");
+        case CPP_M_AVOID_REVERSING: return F("AVOID_REVERSING");
+        case CPP_M_AVOID_TURNING:   return F("AVOID_TURNING");
+        case CPP_M_STUCK:           return F("STUCK");
+        case CPP_M_IDLE:
+        default:                    return F("IDLE");
+    }
+}
+
+// Stampa una riga di diagnostica per una sonda US: valore + verdetto + hint.
+static void diagUs(const __FlashStringHelper* label, uint8_t trig, uint8_t echo, float cm) {
+    Serial.print(F("  "));
+    Serial.print(label);
+    Serial.print(F(" (TRIG ")); Serial.print(trig);
+    Serial.print(F("/ECHO "));  Serial.print(echo);
+    Serial.print(F(") = "));
+    if (isnan(cm)) {
+        Serial.println(F("nan  [!! NESSUNA LETTURA: trig/echo invertiti, sonda non alimentata o GND comune mancante -> verifica col PINS CSV]"));
+    } else {
+        Serial.print(cm); Serial.println(F(" cm  [ok]"));
+    }
+}
+
 Cli::Cli() : pos(0) { buf[0] = '\0'; }
 
 void Cli::tick(Movement& mv, Sensors& sn, Pump& pp,
@@ -43,6 +70,22 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp,
     if (strcmp(line, "stats")   == 0) { printStats(ps);            return; }
     if (strcmp(line, "config")  == 0) { printConfig(ps);           return; }
     if (strcmp(line, "sensors") == 0) { printSensors(sn);          return; }
+    if (strcmp(line, "diag")    == 0) { printDiag(sn, mv, pp, ps, sys); return; }
+    if (strcmp(line, "motortest") == 0) {
+        if (sys.degradedModeActive) {
+            Serial.println(F("[CLI] impossibile: degraded mode attivo (motori bloccati)"));
+            return;
+        }
+        DeviceConfig& c = ps.getConfig();
+        Serial.println(F("[motortest] RUOTE SOLLEVATE da terra! Sequenza f/b/l/r ~800 ms ciascuna:"));
+        Serial.println(F("  AVANTI   (entrambe le ruote in avanti)"));   mv.testMove('f', 800, c);
+        Serial.println(F("  INDIETRO (entrambe indietro)"));            mv.testMove('b', 800, c);
+        Serial.println(F("  SINISTRA (rotazione verso sinistra)"));     mv.testMove('l', 800, c);
+        Serial.println(F("  DESTRA   (rotazione verso destra)"));       mv.testMove('r', 800, c);
+        Serial.println(F("[motortest] fine. Una ruota gira al contrario -> inverti i suoi 2 fili."));
+        Serial.println(F("  L/R scambiate -> scambia i gruppi pin in Movement.cpp; marcia storta -> 'calib'."));
+        return;
+    }
     if (strcmp(line, "tank")    == 0) { printTank(sn, pp, ps);     return; }
     if (strcmp(line, "reboot")  == 0) {
         Serial.println(F("[CLI] reboot requested"));
@@ -196,12 +239,14 @@ void Cli::printHelp() {
     Serial.println(F("stats                     statistiche cumulative EEPROM"));
     Serial.println(F("config                    configurazione corrente"));
     Serial.println(F("sensors                   ultime letture sensori"));
+    Serial.println(F("diag                      diagnostica guidata sensori/motori"));
     Serial.println(F("tank                      stato tanica acqua"));
     Serial.println(F("tank <cm>                 soglia tanica-vuota (3..120)"));
     Serial.println(F("rtc                       stato orologio DS3232"));
     Serial.println(F("rtc set <epoch>           imposta ora (epoch Unix)"));
     Serial.println(F("mode <idle|light|shadow>  cambia modalita'"));
     Serial.println(F("motor <f|b|l|r> <ms>      test motori (max 5000 ms)"));
+    Serial.println(F("motortest                 sequenza guidata f/b/l/r"));
     Serial.println(F("calib <left> <right>      PWM motori 0..255"));
     Serial.println(F("pump <ms>                 test pompa (max 60000 ms)"));
     Serial.println(F("standalone <on|off>       test a banco senza Hub"));
@@ -284,6 +329,74 @@ void Cli::printSensors(Sensors& sn) {
     Serial.print(F("rtc_epoch_s    = "));  Serial.println(sn.getEpoch());
     Serial.print(F("bme_ok         = "));  Serial.println(sn.getBMEStatus() ? F("YES") : F("NO"));
     Serial.print(F("rtc_ok         = "));  Serial.println(sn.getRTCStatus() ? F("YES") : F("NO"));
+}
+
+void Cli::printDiag(Sensors& sn, Movement& mv, Pump& pp, Persistence& ps, SystemStatus& sys) {
+    DeviceConfig& c = ps.getConfig();
+    Serial.println(F("============== DIAGNOSTICA SmartVase =============="));
+
+    // --- Ultrasuoni (pin = PINS - Sheet1.csv) ---
+    Serial.println(F("[ULTRASUONI] nan = nessun eco -> cablaggio/alimentazione"));
+    diagUs(F("US1 top        "), 33, 35, sn.getTopDist());
+    diagUs(F("US2 front_right"), 26, 27, sn.getFrontRightDist());
+    diagUs(F("US3 front_left "), 36, 37, sn.getFrontLeftDist());
+    diagUs(F("US4 tanica     "), 50, 51, sn.getWaterLevel());
+    diagUs(F("US5 left       "),  4,  5, sn.getLeftDist());
+    diagUs(F("US6 right      "), 28, 29, sn.getRightDist());
+
+    // --- Forcella umidita' suolo (A0) ---
+    int soil = sn.getSoilMoisture();
+    Serial.print(F("[FORCELLA SUOLO] A0 = ")); Serial.print(soil);
+    Serial.print(F("  (soglia dry=")); Serial.print(c.soil_dry_threshold); Serial.println(F(")"));
+    if (soil < 0)               Serial.println(F("  [!! lettura non valida]"));
+    else if (soil <= 1 || soil >= 1022)
+                                Serial.println(F("  [!! a fondo scala: forcella scollegata/in corto o non alimentata]"));
+    else                        Serial.println(F("  [ok] immergi/asciuga la forcella e rilancia 'diag': il valore DEVE cambiare"));
+
+    // --- Fotoresistore (A1) ---
+    int lux = sn.getLux();
+    Serial.print(F("[FOTORESISTORE] A1 = ")); Serial.print(lux);
+    Serial.print(F("  (soglia light=")); Serial.print(c.light_threshold); Serial.println(F(")"));
+    if (lux < 0)                Serial.println(F("  [!! lettura non valida]"));
+    else if (lux <= 1 || lux >= 1022)
+                                Serial.println(F("  [!! a fondo scala: LDR scollegato o partitore errato]"));
+    else                        Serial.println(F("  [ok] copri/illumina l'LDR e rilancia: in LIGHT gira a dx se lux<soglia, in SHADOW a sx se lux>soglia"));
+
+    // --- Motori (nessun feedback: si osservano) ---
+    Serial.println(F("[MOTORI] nessun encoder -> vanno osservati a ruote sollevate"));
+    Serial.print(F("  calib L/R = ")); Serial.print(c.motorCalibLeft);
+    Serial.print('/'); Serial.println(c.motorCalibRight);
+    Serial.println(F("  pin: L(ENA 6,IN1 43,IN2 45)  R(ENB 7,IN3 47,IN4 49)"));
+    Serial.print(F("  movementState = ")); Serial.println(movStateName(mv.getCurrentState()));
+    if (sys.degradedModeActive)
+        Serial.println(F("  [!! DEGRADED: motori bloccati - vedi causa in [SISTEMA], usa 'standalone on' a banco]"));
+    else
+        Serial.println(F("  [ok] test: 'motor f 1000' poi b/l/r. Se una ruota gira al contrario: inverti i suoi 2 fili"));
+
+    // --- Tanica / pompa ---
+    float wl = sn.getWaterLevel();
+    Serial.print(F("[POMPA/TANICA] US4 = "));
+    if (isnan(wl)) Serial.print(F("nan")); else Serial.print(wl);
+    Serial.print(F(" cm  soglia=")); Serial.print(c.tank_empty_cm);
+    Serial.print(F("  pompa="));
+    if (isnan(wl) || wl > (float)c.tank_empty_cm) Serial.println(F("BLOCCATA (tanica vuota/fault) [fail-safe]"));
+    else                                          Serial.println(F("abilitata"));
+
+    // --- RTC ---
+    Serial.print(F("[RTC] ok=")); Serial.print(sn.getRTCStatus() ? F("YES") : F("NO"));
+    Serial.print(F(" time_valid=")); Serial.print(sn.rtcOscStopped() ? F("NO") : F("YES"));
+    Serial.print(F(" epoch=")); Serial.println(sn.getEpoch());
+    if (sn.getRTCStatus() && sn.rtcOscStopped())
+        Serial.println(F("  [!! ora non valida: 'rtc set <epoch>' (batteria CR2032?)]"));
+
+    // --- Sistema ---
+    Serial.print(F("[SISTEMA] freeRam=")); Serial.print(freeRam());
+    Serial.print(F(" B  degraded=")); Serial.print(sys.degradedModeActive ? F("YES") : F("NO"));
+    if (sys.degradedModeActive) { Serial.print(F(" (")); Serial.print(sys.degradedReason); Serial.print(F(")")); }
+    Serial.println();
+    Serial.print(F("  standalone=")); Serial.print(sys.standaloneMode ? F("ON") : F("OFF"));
+    Serial.print(F("  hubMissing=")); Serial.println(sys.hubIsMissing ? F("YES") : F("NO"));
+    Serial.println(F("=================================================="));
 }
 
 void Cli::printTank(Sensors& sn, Pump& pp, Persistence& ps) {

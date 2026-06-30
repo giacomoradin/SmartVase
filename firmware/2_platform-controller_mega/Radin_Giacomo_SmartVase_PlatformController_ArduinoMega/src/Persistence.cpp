@@ -1,6 +1,11 @@
 #include "Persistence.h"
 #include "Crc16.h"
 
+// Guardie: se aggiungendo campi una struct supera lo spazio del proprio slot,
+// si sovrapporrebbe a quello successivo (bug silente). Falliscono in compilazione.
+static_assert(sizeof(DeviceConfig)    <= 64,  "DeviceConfig supera lo slot EEPROM (64 B)");
+static_assert(sizeof(CumulativeStats) <= 128, "CumulativeStats supera lo slot EEPROM (128 B)");
+
 // =================================================================
 // Persistenza EEPROM dual-slot (wear leveling) con magic+CRC16.
 // =================================================================
@@ -36,7 +41,8 @@ static uint16_t statsCrc(CumulativeStats s) {
 }
 
 Persistence::Persistence()
-    : lastEepromConfigWrite(0), lastEepromStatsWrite(0)
+    : lastEepromConfigWrite(0), lastEepromStatsWrite(0),
+      current_config_slot(0), current_stats_slot(0)
 {
     memset(&config, 0, sizeof(config));
     memset(&stats, 0, sizeof(stats));
@@ -49,14 +55,28 @@ void Persistence::loadConfig() {
     EEPROM.get(EEPROM_CONFIG_SLOT_0_ADDR, c0);
     EEPROM.get(EEPROM_CONFIG_SLOT_1_ADDR, c1);
 
-    if (c0.magic_number == EEPROM_MAGIC_NUMBER_CONFIG && c0.crc16 == configCrc(c0)) {
+    bool c0_valid = (c0.magic_number == EEPROM_MAGIC_NUMBER_CONFIG && c0.crc16 == configCrc(c0));
+    bool c1_valid = (c1.magic_number == EEPROM_MAGIC_NUMBER_CONFIG && c1.crc16 == configCrc(c1));
+
+    if (c0_valid && c1_valid) {
+        if (c0.write_counter >= c1.write_counter) {
+            config = c0;
+            current_config_slot = 0;
+        } else {
+            config = c1;
+            current_config_slot = 1;
+        }
+    } else if (c0_valid) {
         config = c0;
-    } else if (c1.magic_number == EEPROM_MAGIC_NUMBER_CONFIG && c1.crc16 == configCrc(c1)) {
+        current_config_slot = 0;
+    } else if (c1_valid) {
         config = c1;
+        current_config_slot = 1;
     } else {
         // Default factory.
         config.magic_number      = EEPROM_MAGIC_NUMBER_CONFIG;
         config.crc16             = 0;
+        config.write_counter     = 0;
         config.motorCalibLeft    = 255;
         config.motorCalibRight   = 240;
         config.avoid_reverse_ms  = 1000;
@@ -66,16 +86,21 @@ void Persistence::loadConfig() {
         // Default prudente da tarare a banco con `tank <cm>` (CLI):
         // distanza US4->acqua oltre la quale la pompa viene bloccata.
         config.tank_empty_cm      = 20;
-        saveConfig(true);
+        current_config_slot      = 0;
+
+        config.crc16 = configCrc(config);
+        EEPROM.put(EEPROM_CONFIG_SLOT_0_ADDR, config);
+        lastEepromConfigWrite = millis();
     }
 }
 
 void Persistence::saveConfig(bool force) {
     if (!force && (millis() - lastEepromConfigWrite < EEPROM_CONFIG_WRITE_INTERVAL)) return;
+    config.write_counter++;
     config.crc16 = configCrc(config);
-    static uint8_t slot = 0;
-    slot = (slot + 1) % 2;
-    EEPROM.put(slot == 0 ? EEPROM_CONFIG_SLOT_0_ADDR : EEPROM_CONFIG_SLOT_1_ADDR, config);
+    uint8_t next_slot = (current_config_slot == 0) ? 1 : 0;
+    EEPROM.put(next_slot == 0 ? EEPROM_CONFIG_SLOT_0_ADDR : EEPROM_CONFIG_SLOT_1_ADDR, config);
+    current_config_slot = next_slot;
     lastEepromConfigWrite = millis();
 }
 
@@ -84,13 +109,28 @@ void Persistence::loadStats() {
     EEPROM.get(EEPROM_STATS_SLOT_0_ADDR, s0);
     EEPROM.get(EEPROM_STATS_SLOT_1_ADDR, s1);
 
-    if (s0.magic_number == EEPROM_MAGIC_NUMBER_STATS && s0.crc16 == statsCrc(s0)) {
+    bool s0_valid = (s0.magic_number == EEPROM_MAGIC_NUMBER_STATS && s0.crc16 == statsCrc(s0));
+    bool s1_valid = (s1.magic_number == EEPROM_MAGIC_NUMBER_STATS && s1.crc16 == statsCrc(s1));
+
+    if (s0_valid && s1_valid) {
+        if (s0.write_counter >= s1.write_counter) {
+            stats = s0;
+            current_stats_slot = 0;
+        } else {
+            stats = s1;
+            current_stats_slot = 1;
+        }
+    } else if (s0_valid) {
         stats = s0;
-    } else if (s1.magic_number == EEPROM_MAGIC_NUMBER_STATS && s1.crc16 == statsCrc(s1)) {
+        current_stats_slot = 0;
+    } else if (s1_valid) {
         stats = s1;
+        current_stats_slot = 1;
     } else {
         memset(&stats, 0, sizeof(stats));
         stats.magic_number = EEPROM_MAGIC_NUMBER_STATS;
+        stats.write_counter = 0;
+        current_stats_slot = 0;
     }
     lastSavedStats = stats;
 }
@@ -99,10 +139,11 @@ void Persistence::saveStats(bool force) {
     if (!force && (millis() - lastEepromStatsWrite < EEPROM_STATS_WRITE_INTERVAL)) return;
     if (!force && memcmp(&stats, &lastSavedStats, sizeof(stats)) == 0) return;
 
+    stats.write_counter++;
     stats.crc16 = statsCrc(stats);
-    static uint8_t slot = 0;
-    slot = (slot + 1) % 2;
-    EEPROM.put(slot == 0 ? EEPROM_STATS_SLOT_0_ADDR : EEPROM_STATS_SLOT_1_ADDR, stats);
+    uint8_t next_slot = (current_stats_slot == 0) ? 1 : 0;
+    EEPROM.put(next_slot == 0 ? EEPROM_STATS_SLOT_0_ADDR : EEPROM_STATS_SLOT_1_ADDR, stats);
+    current_stats_slot = next_slot;
     lastSavedStats = stats;
     lastEepromStatsWrite = millis();
 }

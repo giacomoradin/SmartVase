@@ -4,6 +4,12 @@ node_modules/
 # Contesto di lavoro locale (non committare: repo accademico, niente tracce AI)
 CLAUDE.md
 
+# Credenziali reali (Wi-Fi/MQTT): mai nel versionato. Vedi secrets.h.example
+secrets.h
+
+# Host unit-test build artifacts (g++)
+tests/host/build_*
+
 # PlatformIO
 .pio/
 

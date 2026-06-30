@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include <WiFi.h>             // WiFiClient (plaintext)
 #include <WiFiClientSecure.h> // Per connessione TLS
 #include <PubSubClient.h>     // Libreria MQTT
 
@@ -43,9 +44,10 @@ private:
     // Riferimento al ConfigManager
     ConfigManager& _configManager;
 
-    // Client WiFi sicuro (per TLS) e client MQTT
+    // Transport WiFi: plaintext per broker su porta 1883, TLS per 8883/8884.
+    WiFiClient       _wifiClient;
     WiFiClientSecure _wifiClientSecure;
-    PubSubClient _mqttClient;
+    PubSubClient     _mqttClient;
 
     // Buffer per messaggi MQTT
     char _mqttBuffer[MQTT_BUFFER_SIZE];

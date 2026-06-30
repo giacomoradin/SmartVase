@@ -51,6 +51,8 @@ private:
     uint8_t          avoidance_attempts;
     unsigned long    stuck_cooldown_start_time;
     uint32_t         current_stuck_backoff;
+    unsigned long    seekTurnStartMs;      // inizio rotazione di seeking (anti-circling)
+    unsigned long    seekRelocateUntilMs;  // fine fase di rilocazione (avanza)
 };
 
 #endif // MOVEMENT_H

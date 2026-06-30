@@ -2,9 +2,16 @@
 #include "esp_log.h"
 #include <esp_wifi.h>
 #include <ArduinoJson.h>
+#include <time.h>
+#include "esp_random.h"
+#include "esp_sntp.h"
 #include "hivemq_ca_cert.h"
 
 static const char *TAG = "MqttManager";
+
+// Sotto questo epoch l'ora di sistema NON e' valida (orologio non sincronizzato
+// via NTP): la verifica di validita' del certificato TLS fallirebbe.
+#define NTP_VALID_EPOCH 1700000000UL
 
 // Cert HiveMQ Cloud (ISRG Root X1). Definito in include/hivemq_ca_cert.h
 // (shared con la CAM via infra/hivemq_ca_cert.h).
@@ -37,30 +44,32 @@ void MqttManager::init() {
     _mqttClientId += macSuffix;
     ESP_LOGI(TAG, "MQTT Client ID: %s", _mqttClientId.c_str());
 
-    // Costruisci i topic specifici per questo device
-    // For now we hardcode the device ID; when we will have more than 1 user, we will derive it from the MAC address.
-    char deviceIdSuffix[7] = "123456"; // Hardcoded for now
-    // snprintf(deviceIdSuffix, sizeof(deviceIdSuffix), "%02X%02X%02X", mac[3], mac[4], mac[5]);
-    _topicCommand = "smartvase/HUB_" + String(deviceIdSuffix) + "/command/#"; // Sottoscrive a tutti i sottotopic
-    _topicStatus = "smartvase/HUB_" + String(deviceIdSuffix) + "/status";
+    // Device ID STATICO da fonte unica HUB_DEVICE_ID (ConfigManager.h), coerente
+    // con MainLogic. Il MAC resta usato solo per il Client ID MQTT qui sopra.
+    _topicCommand = String("smartvase/") + HUB_DEVICE_ID + "/command/#"; // Sottoscrive a tutti i sottotopic
+    _topicStatus  = String("smartvase/") + HUB_DEVICE_ID + "/status";
     ESP_LOGI(TAG, "Command Topic: %s", _topicCommand.c_str());
     ESP_LOGI(TAG, "Status Topic (LWT): %s", _topicStatus.c_str());
 
 
-    // Configura il client WiFi sicuro con il certificato CA
-    _wifiClientSecure.setCACert(hivemq_ca_cert);
-    // Potrebbe essere necessario configurare anche l'ora (NTP) per la validazione del certificato
-    // configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-
-    // Imposta il server MQTT (broker e porta) dal ConfigManager
+    // Transport in base alla porta: TLS (8883/8884, con CA cert + NTP) oppure
+    // in chiaro (1883, broker locale: nessuna TLS, nessun NTP richiesto).
     const char* broker = _configManager.getMqttBroker();
     uint16_t port = _configManager.getMqttPort();
+    if (port == 8883 || port == 8884) {
+        _wifiClientSecure.setCACert(hivemq_ca_cert);
+        _mqttClient.setClient(_wifiClientSecure);
+        ESP_LOGI(TAG, "MQTT transport: TLS (porta %u)", port);
+    } else {
+        _mqttClient.setClient(_wifiClient);
+        ESP_LOGW(TAG, "MQTT transport: IN CHIARO (porta %u) - nessuna TLS/NTP", port);
+    }
+
     if (broker && strlen(broker) > 0 && port > 0) {
         _mqttClient.setServer(broker, port);
         ESP_LOGI(TAG, "MQTT Broker set to: %s:%d", broker, port);
     } else {
         ESP_LOGE(TAG, "MQTT Broker configuration missing or invalid!");
-        // Gestire questo errore? Riprovare a caricare config? Per ora procediamo...
     }
 
     // Imposta la funzione di callback per i messaggi in arrivo
@@ -68,6 +77,10 @@ void MqttManager::init() {
 
     // Imposta la dimensione del buffer interno di PubSubClient (se necessario)
     _mqttClient.setBufferSize(MQTT_BUFFER_SIZE);
+
+    // Bound al wait del CONNACK/letture: evita che un broker morto tenga il
+    // task appeso a lungo (resilienza; default PubSubClient = 15 s).
+    _mqttClient.setSocketTimeout(10);
 }
 
 // Funzione statica entry point per il Task FreeRTOS
@@ -104,7 +117,15 @@ void MqttManager::taskRun() {
             // Nel frattempo la coda TX viene svuotata: la telemetria e'
             // periodica, accumularla offline non ha valore.
             reconnect();
-            while (xQueueReceive(_txQueue, &msgToPublish, 0) == pdPASS) { /* discard */ }
+            // Offline: scarta SOLO la telemetria (perde valore se vecchia) ma
+            // mantieni in coda alarm/ack/log per inviarli alla riconnessione.
+            // Bounded: un solo giro sui messaggi presenti ora.
+            UBaseType_t pending = uxQueueMessagesWaiting(_txQueue);
+            for (UBaseType_t i = 0; i < pending; ++i) {
+                if (xQueueReceive(_txQueue, &msgToPublish, 0) != pdPASS) break;
+                if (strstr(msgToPublish.topic, "/telemetry") != nullptr) continue; // scarta
+                if (xQueueSend(_txQueue, &msgToPublish, 0) != pdPASS) break;        // rimetti in coda
+            }
         } else {
             // 2. Se connesso, processa i messaggi MQTT in arrivo e mantieni la connessione attiva
             _mqttClient.loop();
@@ -133,48 +154,71 @@ void MqttManager::taskRun() {
     }
 }
 
-// Tenta la riconnessione al broker MQTT (logica presa da Fia)
+// Tenta la riconnessione al broker MQTT. NON bloccante: ritorna subito se il
+// backoff non e' ancora scaduto (la cadenza la da' il vTaskDelay del taskRun),
+// cosi' il task resta reattivo invece di dormire 5 s a tentativo.
 bool MqttManager::reconnect() {
-    // Non tentare se il WiFi non è connesso
-    if (!WiFi.isConnected()) {
-        // ESP_LOGV(TAG, "WiFi not connected, skipping MQTT reconnect attempt."); // Log troppo frequente?
-        // Aggiungi un delay più lungo qui per non sprecare CPU se il WiFi è giù
-        vTaskDelay(pdMS_TO_TICKS(5000)); // Attendi 5 secondi prima di riprovare
+    // Niente WiFi: nessun tentativo, nessun delay bloccante.
+    if (!WiFi.isConnected()) return false;
+
+    // NTP serve SOLO per la TLS (validazione data del cert): con broker in
+    // chiaro (1883) si salta del tutto, cosi' una rete locale offline puo'
+    // connettersi lo stesso. Con l'ora a 1970 il cert HiveMQ risulta "not yet
+    // valid": SNTP di default ritenta ~ogni ora, quindi se resta invalida forzo
+    // un nuovo tentativo ogni 30 s riavviando SNTP.
+    uint16_t mqttPort = _configManager.getMqttPort();
+    bool needsTLS = (mqttPort == 8883 || mqttPort == 8884);
+    if (needsTLS && time(nullptr) < NTP_VALID_EPOCH) {
+        static uint32_t lastNtpKickMs = 0;
+        uint32_t nowMs = millis();
+        if (lastNtpKickMs == 0) {
+            configTime(0, 0, "pool.ntp.org", "time.google.com"); // avvia SNTP
+            lastNtpKickMs = nowMs;
+            ESP_LOGW(TAG, "Ora non valida: NTP avviato, rimando il connect MQTT.");
+        } else if (nowMs - lastNtpKickMs > 30000UL) {
+            sntp_stop();
+            configTime(0, 0, "pool.ntp.org", "time.google.com"); // forza nuovo tentativo
+            lastNtpKickMs = nowMs;
+            ESP_LOGW(TAG, "NTP ancora non sincronizzato: nuovo tentativo.");
+        }
         return false;
     }
 
+    // Backoff con tetto 30 s + jitter, gestito a timer (no delay bloccante).
+    static uint32_t lastAttemptMs = 0;
+    static uint32_t backoffMs     = 0;
+    uint32_t now = millis();
+    if (lastAttemptMs != 0 && (now - lastAttemptMs) < backoffMs) return false;
+    lastAttemptMs = now;
+
     ESP_LOGI(TAG, "Attempting MQTT connection...");
-    const char* user = _configManager.getMqttUser();
+    const char* user     = _configManager.getMqttUser();
     const char* password = _configManager.getMqttPassword();
 
-    // Costruisci il messaggio Last Will and Testament (LWT)
-    // Se l'Hub si disconnette in modo anomalo, il broker pubblicherà "offline" sul topic di stato
-    String lwtPayload = "offline";
-
-    // Tenta la connessione con ClientID, utente, password e LWT
-    if (_mqttClient.connect(_mqttClientId.c_str(), user, password, _topicStatus.c_str(), 1, true, lwtPayload.c_str())) {
+    // LWT: alla disconnessione anomala il broker pubblica "offline" su /status.
+    if (_mqttClient.connect(_mqttClientId.c_str(), user, password,
+                            _topicStatus.c_str(), 1, true, "offline")) {
         ESP_LOGI(TAG, "MQTT Connected!");
+        backoffMs = 0; // reset backoff a connessione riuscita
 
-        // Pubblica lo stato "online" sul topic di stato (usando retain=true)
-        // Così chi si connette dopo saprà subito che siamo online
         String onlinePayload = "online";
-        _mqttClient.publish(_topicStatus.c_str(), (uint8_t*)onlinePayload.c_str(), onlinePayload.length(), true); // retain = true
+        _mqttClient.publish(_topicStatus.c_str(), (uint8_t*)onlinePayload.c_str(),
+                            onlinePayload.length(), true); // retain
 
-        // Sottoscrivi al topic dei comandi
         if (_mqttClient.subscribe(_topicCommand.c_str())) {
             ESP_LOGI(TAG, "Subscribed to command topic: %s", _topicCommand.c_str());
         } else {
             ESP_LOGE(TAG, "Failed to subscribe to command topic!");
-            // Disconnetti? O procedi comunque?
         }
-        return true; // Connessione riuscita
-    } else {
-        // Stampa l'errore specifico di PubSubClient
-        ESP_LOGW(TAG, "MQTT Connection Failed, rc=%d. Retrying in 5 seconds...", _mqttClient.state());
-        // Attendi 5 secondi prima del prossimo tentativo
-        vTaskDelay(pdMS_TO_TICKS(5000));
-        return false; // Connessione fallita
+        return true;
     }
+
+    // Backoff esponenziale (5→10→20→30 s) + jitter per evitare polling sincrono.
+    backoffMs = (backoffMs == 0) ? 5000 : (backoffMs < 30000 ? backoffMs * 2 : 30000);
+    backoffMs += (esp_random() % 1000);
+    ESP_LOGW(TAG, "MQTT connect failed rc=%d, retry tra ~%lu ms",
+             _mqttClient.state(), (unsigned long)backoffMs);
+    return false;
 }
 
 // Callback per i messaggi MQTT in arrivo (DEVE essere statica)

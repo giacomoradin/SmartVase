@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h> // Libreria per il server web di provisioning
+#include <DNSServer.h>          // Libreria per il Captive Portal DNS
 #include "ConfigManager.h"     // Includi ConfigManager per accedere ai dati
 
 // Definisci qui le costanti usate dalla classe
@@ -36,6 +37,9 @@ private:
 
     // Server web usato *solo* durante la modalità Access Point per il provisioning
     AsyncWebServer _provisioningServer;
+
+    // Server DNS per il Captive Portal
+    DNSServer _dnsServer;
 
     // Buffer temporanei per memorizzare le credenziali ricevute via AP
     // prima di salvarle definitivamente su NVS e riavviare.

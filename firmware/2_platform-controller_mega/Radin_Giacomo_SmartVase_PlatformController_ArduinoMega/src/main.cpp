@@ -34,7 +34,7 @@ Communication comm;
 Persistence   persistence;
 Pump          pump;
 Cli           cli;
-SystemStatus  systemStatus = {false, false, false, true, false, false, "", "MEGA_01"};
+SystemStatus  systemStatus = {false, false, false, true, false, false, false, "", "MEGA_01"};
 
 // =================================================================
 // Variabili di stato
@@ -227,6 +227,14 @@ void loop() {
     // 6) EEPROM stats (throttled internamente)
     persistence.saveStats(false);
 
+    // 6b) Salvataggio config DEFERITO: scrive in EEPROM solo quando la seriale
+    //     verso l'Hub e' a riposo, cosi' i ~60 ms di scrittura non cadono in
+    //     mezzo alla ricezione di un frame (rischio overflow RX / CRC falliti).
+    if (systemStatus.configSavePending && Serial1.available() == 0) {
+        persistence.saveConfig(true);
+        systemStatus.configSavePending = false;
+    }
+
     // 7) Health checks
     const int freeBytes = freeRam();
     if (freeBytes < LOW_RAM_THRESHOLD_BYTES) {
@@ -246,7 +254,7 @@ void loop() {
             systemStatus.hubIsMissing = false;
             if (!systemStatus.lowMemoryDetected) exitDegradedMode();
         }
-    } else if (now - comm.getLastHubMessageMs() > HUB_DEADMAN_TIMEOUT_MS) {
+    } else if (millis() - comm.getLastHubMessageMs() > HUB_DEADMAN_TIMEOUT_MS) {
         if (!systemStatus.hubIsMissing) {
             systemStatus.hubIsMissing = true;
             enterDegradedMode("hub_missing");

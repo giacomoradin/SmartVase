@@ -53,6 +53,14 @@ private:
     uint8_t _rxBuffer[SERIAL_BUFFER_SIZE];
     uint8_t _txBuffer[SERIAL_BUFFER_SIZE];
 
+    // Stato della FSM di ricezione tenuto in MEMBRI (classe rientrante: niente
+    // piu' variabili static locali in handleSerialReception()).
+    enum RxState { WAIT_SOF, WAIT_LEN_H, WAIT_LEN_L, WAIT_PAYLOAD, WAIT_CRC_H, WAIT_CRC_L };
+    RxState  _rxState         = WAIT_SOF;
+    uint16_t _rxMessageLength = 0;
+    uint16_t _rxPayloadIndex  = 0;
+    uint16_t _rxReceivedCRC   = 0;
+
     // Funzione principale del Task (il loop infinito)
     void taskRun();
 
@@ -61,10 +69,7 @@ private:
 
     // Invia un messaggio Protobuf al Mega usando il protocollo di framing
     bool sendProtobufMessage(const WrapperMessage& message);
-
-    // Funzioni helper per CRC16 (potrebbero essere in un file utility separato)
-    uint16_t crc16(const uint8_t* data, size_t length);
-    uint16_t crc16_update(uint16_t crc, uint8_t a);
+    // CRC16-CCITT in crc_utils (condiviso con ConfigManager).
 };
 
 #endif // SERIALMANAGER_H

@@ -164,8 +164,17 @@ void Sensors::sampleNextUltrasonic() {
 }
 
 void Sensors::sampleAdcChannels() {
-    cached_lux           = analogRead(PHOTORESISTOR_PIN);
-    cached_soil_moisture = analogRead(SOIL_MOISTURE_PIN);
+    // EMA leggera (alpha=0.3) su lux e soil: gli ADC di LDR e forcella sono
+    // rumorosi; il filtro stabilizza i valori usati da seeking, telemetria e
+    // dal comando readSoil senza ritardi percepibili. Seed sulla prima lettura.
+    const int rawLux  = analogRead(PHOTORESISTOR_PIN);
+    const int rawSoil = analogRead(SOIL_MOISTURE_PIN);
+    cached_lux           = (cached_lux < 0)
+                           ? rawLux
+                           : (int)(0.3f * rawLux  + 0.7f * cached_lux);
+    cached_soil_moisture = (cached_soil_moisture < 0)
+                           ? rawSoil
+                           : (int)(0.3f * rawSoil + 0.7f * cached_soil_moisture);
 
 #if BATTERY_MONITORING_ENABLED
     int rawAdc = analogRead(BATTERY_PIN);
@@ -219,6 +228,15 @@ extern int freeRam(); // definito in main.cpp
 TelemetryDeep Sensors::buildDeepTelemetry(CumulativeStats& stats, const char* deviceId) {
     TelemetryDeep td = TelemetryDeep_init_zero;
 
+    // BME680 assente sul prototipo: marca i campi ambientali come "non misurati"
+    // (NaN) cosi' l'Hub puo' ometterli dal JSON invece di pubblicare 0 come se
+    // fossero letture reali. Se il sensore c'e', vengono sovrascritti sotto.
+    td.temperature_c    = NAN;
+    td.humidity_percent = NAN;
+    td.pressure_hpa     = NAN;
+    td.gas_resistance_ohms = 0;
+    td.battery_voltage  = NAN;
+
 #if BME680_ENABLED
     if (bme_status) {
         if (bme.performReading()) {
@@ -245,6 +263,9 @@ TelemetryDeep Sensors::buildDeepTelemetry(CumulativeStats& stats, const char* de
     td.total_irrigation_duration_s = stats.total_irrigation_duration_s;
     td.total_motor_active_time_s   = stats.total_motor_active_time_s;
     td.pb_decode_failures          = stats.pb_decode_failures;
+    td.light_seeking_sessions      = stats.light_seeking_sessions;
+    td.shadow_seeking_sessions     = stats.shadow_seeking_sessions;
+    td.escape_attempts             = stats.escape_attempts;
 
 #if BATTERY_MONITORING_ENABLED
     if (!isnan(cached_battery_voltage)) {

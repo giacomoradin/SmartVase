@@ -39,7 +39,13 @@ except Exception as e:
 
 # --- Setup MQTT Client (Initialized early for global access) ---
 client_id = f"firestore-bridge-{int(time.time())}"
-client = mqtt.Client(client_id=client_id)
+# Compatibility wrapper for paho-mqtt v1.x and v2.x
+try:
+    # paho-mqtt v2.x requires callback_api_version
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id=client_id)
+except AttributeError:
+    # fallback for paho-mqtt v1.x
+    client = mqtt.Client(client_id=client_id)
 
 # --- MQTT Client Callbacks (MQTT -> Firestore) ---
 
@@ -74,9 +80,13 @@ def on_message(client, userdata, msg):
 
     try:
         payload_json = json.loads(payload_str)
-        if 'vase_id' not in payload_json and 'device_id' not in payload_json:
-            payload_json['vase_id'] = vase_id
-        payload_json['cloud_received_ts'] = firestore.SERVER_TIMESTAMP
+        if isinstance(payload_json, dict):
+            if 'vase_id' not in payload_json and 'device_id' not in payload_json:
+                payload_json['vase_id'] = vase_id
+            payload_json['cloud_received_ts'] = firestore.SERVER_TIMESTAMP
+        else:
+            print(f"WARN: JSON payload is not a dictionary: {payload_str}")
+            return
     except json.JSONDecodeError as e:
         print(f"ERROR: Failed to parse JSON payload on topic {topic}: {e}")
         return 
@@ -102,26 +112,29 @@ def on_message(client, userdata, msg):
 
 def on_config_snapshot(col_snapshot, changes, read_time):
     """Callback triggered whenever a configuration document changes in Firestore."""
-    for change in changes:
-        # We only care if the Flutter app added or modified the document
-        if change.type.name in ['ADDED', 'MODIFIED']:
-            doc = change.document
-            
-            # Ensure we are only reacting to documents actually named 'config'
-            if doc.id == 'config':
-                path_parts = doc.reference.path.split('/')
-                # Expected path: smartvase/{vase_id}/command/config
-                if len(path_parts) >= 4:
-                    vase_id = path_parts[1]
-                    payload_dict = doc.to_dict()
-                    
-                    # Convert Firestore dict back to JSON string for MQTT
-                    payload_json = json.dumps(payload_dict)
-                    mqtt_topic = f"smartvase/{vase_id}/command/config"
-                    
-                    print(f"\nFirestore Trigger: Config updated for {vase_id}. Publishing to MQTT...")
-                    # thread-safe publish, using QoS 1 and Retain=True for config data
-                    client.publish(mqtt_topic, payload_json, qos=1, retain=True)
+    try:
+        for change in changes:
+            # We only care if the Flutter app added or modified the document
+            if change.type.name in ['ADDED', 'MODIFIED']:
+                doc = change.document
+                
+                # Ensure we are only reacting to documents actually named 'config'
+                if doc.id == 'config':
+                    path_parts = doc.reference.path.split('/')
+                    # Expected path: smartvase/{vase_id}/command/config
+                    if len(path_parts) >= 4:
+                        vase_id = path_parts[1]
+                        payload_dict = doc.to_dict()
+                        
+                        # Convert Firestore dict back to JSON string for MQTT
+                        payload_json = json.dumps(payload_dict)
+                        mqtt_topic = f"smartvase/{vase_id}/command/config"
+                        
+                        print(f"\nFirestore Trigger: Config updated for {vase_id}. Publishing to MQTT...")
+                        # thread-safe publish, using QoS 1 and Retain=True for config data
+                        client.publish(mqtt_topic, payload_json, qos=1, retain=True)
+    except Exception as e:
+        print(f"ERROR: Exception in Firestore configuration listener: {e}")
 
 # Attach the Firestore background listener
 # Using a collection_group query to listen to ALL subcollections named 'command'

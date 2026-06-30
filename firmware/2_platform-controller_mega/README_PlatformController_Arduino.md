@@ -1,10 +1,12 @@
 # SmartVase - Firmware Platform Controller (Arduino Mega)
 
-Firmware del **Platform Controller** SmartVase. Versione **5.1** (2026-06-11):
-hardening pre-bring-up con protezione tanica per la pompa, CLI estesa,
-modalità standalone e driver locali per HC-SR04 e DS3232.
-La v5.0 (2026-05-19) era il refactor totale sul nuovo PIN map
-(`docs/PINS - Sheet1.csv`).
+Firmware del **Platform Controller** SmartVase. Versione **5.2** (working tree):
+oltre all'hardening v5.1 (protezione tanica pompa, CLI estesa, modalità
+standalone, driver locali HC-SR04/DS3232), la v5.2 aggiunge rate-limit
+irrigazione, no-op EEPROM su `setMotionParams`, EMA su lux/soil, anti-circling
+del seeking e i contatori seeking/escape in `TelemetryDeep`.
+Riferimento architetturale **autoritativo**: `docs/ARCHITECTURE.md`.
+PIN map: `docs/PINS - Sheet1.csv`.
 
 ## Architettura
 

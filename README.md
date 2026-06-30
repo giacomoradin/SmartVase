@@ -76,9 +76,11 @@ used by the ESP32-CAM (see `infra/cloud-functions/upload-image/`).
 
 ### Vision Pipeline
 
-A Python package (`vision/`) provides quality gating, color/shape metrics, and
-a rule-based leaf-health classifier. Output is JSON conformant to the
-`vision/result` schema defined in `SmartVase_data_structure.md`.
+A Python script (`vision/pixel_analyzer.py`, owned by Antonio) downsamples a
+frame to 160×120 RGB565 and counts green/brown pixels to produce a biomass /
+disease index. The richer rule-based pipeline (quality gate, HSV metrics,
+leaf-health classifier) targeted by the `vision/result` schema in
+`SmartVase_data_structure.md` is **not implemented yet**.
 
 ---
 
@@ -193,6 +195,7 @@ Connect the Mega via USB at 115200 baud (Newline terminator):
 ```
 --- SmartVase CLI ---
 help                       this menu
+version                    firmware version
 status                     mode + runtime state
 stats                      cumulative EEPROM stats
 config                     current config
@@ -200,6 +203,10 @@ sensors                    latest sensor readings
 mode <idle|light|shadow>   set operating mode
 motor <f|b|l|r> <ms>       motor test (max 5000 ms)
 pump <ms>                  pump test (max 60000 ms)
+tank <cm>                  empty-tank threshold (US4)
+calib <left> <right>       straight-drive PWM trim (0..255)
+rtc / rtc set <epoch>      read / set the RTC clock
+standalone <on|off>        bench mode (suspends the Hub deadman)
 reboot                     soft reset
 ```
 
@@ -207,12 +214,16 @@ reboot                     soft reset
 
 ## 📈 7. Project Status
 
-- **Firmware** — Mega v5.0, Hub v1.1, CAM v2.0. Aligned to the current PIN
-  map in [`docs/PINS - Sheet1.csv`](docs/PINS%20-%20Sheet1.csv).
-- **Vision pipeline** — Rule-based v0.2 (`quality_gate`, `metrics`,
-  `leaf_health`, `pipeline`); 18 pytest cases passing.
-- **Cloud** — Image-upload Cloud Function stub in place; MQTT-to-Firestore
-  bridging is in progress.
+- **Firmware** — Mega v5.2, Hub v1.3, CAM v2.1 (serial protocol nanopb v4.0).
+  Aligned to the PIN map in [`docs/PINS - Sheet1.csv`](docs/PINS%20-%20Sheet1.csv).
+  All three build offline; hardware bring-up still pending.
+- **Vision** — Single script `vision/pixel_analyzer.py` (green/brown pixel
+  analysis) with one test under `vision/tests/`. The full quality-gate /
+  leaf-health pipeline is not implemented yet.
+- **Cloud** — The image-upload Cloud Function is a stub; a dev MQTT→Firestore
+  bridge lives in `server/mqtt_listener.py`. Production pipeline TBD.
+- **Host tests** — `tests/host/` runs pure-logic unit tests with g++ (CRC16,
+  command/sensor policies).
 - **Android app** — Tracked in a separate repository.
 
 Open items (HW-dependent or external) are tracked in

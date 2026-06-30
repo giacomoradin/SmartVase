@@ -43,6 +43,7 @@ private:
     void execute(char* line);
     void printHelp();
     void printStatus();
+    void printDiag();
     void printShow();
     void printTelemetry();
     bool handleSet(char* args);

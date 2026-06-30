@@ -1,5 +1,7 @@
 #include "ConfigManager.h" // <-- LA RIGA FONDAMENTALE CHE MANCAVA!
 
+#include "secrets.h"       // credenziali bench (gitignorato; vedi secrets.h.example)
+#include "crc_utils.h"     // crc16_ibm (condiviso)
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_log.h"
@@ -16,25 +18,10 @@ static const char *TAG = "ConfigManager";
 // Magic number per validare la struttura dati
 #define CONFIG_MAGIC_NUMBER 0xCF6BEEF6
 
-// Funzione CRC16 (stessa del Mega per coerenza)
-// Definita qui perché usata solo in questo modulo.
+// CRC16 per l'integrita' dei blob NVS: IBM/ARC (poly 0xA001), implementazione
+// condivisa in crc_utils. NB: e' DIVERSO dal CRC del protocollo seriale (CCITT,
+// vedi SerialManager/Mega) ed e' corretto cosi' — sono due usi indipendenti.
 namespace {
-    uint16_t crc16_update(uint16_t crc, uint8_t a) {
-        crc ^= a;
-        for (int i = 0; i < 8; ++i) {
-            if (crc & 1) crc = (crc >> 1) ^ 0xA001;
-            else crc = (crc >> 1);
-        }
-        return crc;
-    }
-    uint16_t calculate_crc16(const uint8_t* data, size_t length) {
-        uint16_t crc = 0x0;
-        for (size_t i = 0; i < length; i++) {
-            crc = crc16_update(crc, data[i]);
-        }
-        return crc;
-    }
-
     // CRC dell'intera struct con il campo crc16 azzerato. Il campo crc16
     // sta in mezzo alla struct: calcolare il CRC con dentro il valore
     // vecchio (come faceva la versione precedente) rendeva impossibile la
@@ -43,7 +30,7 @@ namespace {
     uint16_t config_crc(const DeviceConfig& cfg) {
         DeviceConfig tmp = cfg;
         tmp.crc16 = 0;
-        return calculate_crc16(reinterpret_cast<const uint8_t*>(&tmp), sizeof(DeviceConfig));
+        return crc16_ibm(reinterpret_cast<const uint8_t*>(&tmp), sizeof(DeviceConfig));
     }
 }
 
@@ -81,21 +68,6 @@ bool ConfigManager::init() {
 }
 
 bool ConfigManager::loadConfig() {
-    // ============================================================
-    // ⚠️  BENCH ONLY — credenziali hard-coded per il collaudo.
-    //     RIMUOVERE QUESTO BLOCCO prima di qualsiasi commit/push
-    //     (repo accademico: niente password reali nel versionato).
-    //     Forza la config in RAM a ogni boot, bypassando la NVS.
-    // ============================================================
-    memset(&_config, 0, sizeof(DeviceConfig));
-    _config.magic_number = CONFIG_MAGIC_NUMBER;
-    setWifiCredentials("GiacomoPhone", "giacomonoretaaleinternet");
-    setMqttConfig("fec435c1f9c5410e8105bc0a677662ab.s1.eu.hivemq.cloud",
-                  8883, "SmartVase", "7w#po8N&Hr6R6Z");
-    ESP_LOGW(TAG, "BENCH: credenziali hard-coded attive (RIMUOVERE prima del commit)");
-    return true;
-    // ============ fine blocco bench — sotto la logica NVS normale ============
-
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
     if (err != ESP_OK) {
@@ -137,18 +109,34 @@ bool ConfigManager::loadConfig() {
 
     nvs_close(nvs_handle);
 
-    if (!load_successful) {
-        ESP_LOGW(TAG, "Loading default configuration and saving to NVS.");
-        // Resetta la configurazione ai default del costruttore prima di salvare
-        memset(&_config, 0, sizeof(DeviceConfig)); // Ripulisce tutto
-        _config.magic_number = CONFIG_MAGIC_NUMBER; // Reimposta il magic
-        // Reimposta eventuali altri default non a zero qui se necessario
-         _config.mqtt_port = 1883;
-        // ...
-        return saveConfig(); // Salva i valori di default (che ora includono il magic number corretto)
+    // NVS-first: se la config e' valida E contiene credenziali Wi-Fi, usala.
+    // Cosi' il provisioning via CLI (`set` + `save`) viene rispettato dopo un
+    // riavvio (era rotto dal vecchio bypass bench che ritornava subito).
+    bool provisioned = load_successful && _config.wifi_ssid[0] != '\0';
+    if (provisioned) {
+        ESP_LOGI(TAG, "Configuration loaded from NVS (provisioned).");
+        return true;
     }
 
+    // NVS vuota / invalida / senza Wi-Fi: parti da default puliti.
+    memset(&_config, 0, sizeof(DeviceConfig));
+    _config.magic_number = CONFIG_MAGIC_NUMBER;
+    _config.mqtt_port    = 1883;
+
+#ifdef SV_BENCH_MODE
+    // Fallback BENCH: credenziali da secrets.h (gitignorato) per collaudo
+    // immediato senza provisioning. Tenute solo in RAM (NON salvate): editare
+    // secrets.h ha effetto a ogni boot, e un `set`+`save` da CLI passa
+    // stabilmente alla NVS (che da quel momento vince, vedi 'provisioned').
+    setWifiCredentials(SV_WIFI_SSID, SV_WIFI_PASS);
+    setMqttConfig(SV_MQTT_BROKER, SV_MQTT_PORT, SV_MQTT_USER, SV_MQTT_PASS);
+    ESP_LOGW(TAG, "NVS vuota: uso credenziali di fallback da secrets.h (SV_BENCH_MODE).");
     return true;
+#else
+    // Produzione: nessuna credenziale -> provisioning via CLI o AP. Inizializza NVS.
+    ESP_LOGW(TAG, "NVS vuota: nessuna credenziale, provisioning necessario.");
+    return saveConfig();
+#endif
 }
 
 

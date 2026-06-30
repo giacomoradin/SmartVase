@@ -2,6 +2,7 @@
 #include "esp_log.h"
 #include <ArduinoJson.h>
 #include <time.h>
+#include <math.h>
 #include <esp_wifi.h>
 
 static const char *TAG = "MainLogic";
@@ -11,16 +12,14 @@ static const char* logLevelToStr(Log_LogLevel l);
 
 // Intervalli scheduling (ms)
 #define TELEMETRY_PUBLISH_INTERVAL_MS  (60 * 1000)
-// Il timer pubblica solo se la telemetria non e' gia' uscita di recente
-// (la pubblicazione principale avviene all'arrivo della TelemetryDeep,
-// ogni 30 s): evita doppioni ravvicinati sullo stesso topic.
-#define TELEMETRY_STALE_AFTER_MS       (45 * 1000)
 // Deadman switch: Mega muto per > MEGA_HEARTBEAT_TIMEOUT_MS ⇒ alarm.
 // Lasciato leggermente superiore al deadman del Mega (120s) per i ritardi.
 #define MEGA_HEARTBEAT_TIMEOUT_MS      (130 * 1000)
 // Heartbeat Hub -> Mega: il deadman del Mega (120 s) scatta se non riceve
 // NULLA dall'Hub; i soli comandi sporadici non bastano a tenerlo vivo.
 #define HUB_HEARTBEAT_INTERVAL_MS      (30 * 1000)
+// Versione firmware Hub pubblicata in telemetria (allineata a HubCli.cpp).
+#define HUB_FW_VERSION                 "1.3.0"
 
 MainLogic::MainLogic(QueueHandle_t serialRxQueue, QueueHandle_t serialTxQueue,
                      QueueHandle_t mqttTxQueue, QueueHandle_t mqttRxQueue,
@@ -30,14 +29,19 @@ MainLogic::MainLogic(QueueHandle_t serialRxQueue, QueueHandle_t serialTxQueue,
       _mqttTxQueue(mqttTxQueue),
       _mqttRxQueue(mqttRxQueue),
       _configManager(configManager),
-      _telemetryTimer(NULL),
       _lastMegaHeartbeatMs(0),
       _isMegaConnected(false),
       _lastTelemetryPublishMs(0)
 {
     memset(&_lastFastTelemetry, 0, sizeof(TelemetryFast));
     memset(&_lastDeepTelemetry, 0, sizeof(TelemetryDeep));
-    // device_id derivato dal MAC al primo uso
+    // Ambient a NaN finche' non arriva la prima TelemetryDeep: evita che il
+    // publish di fallback emetta 0 come se fossero letture reali (coerente con
+    // l'omissione in publishTelemetryJson).
+    _lastDeepTelemetry.temperature_c    = NAN;
+    _lastDeepTelemetry.humidity_percent = NAN;
+    _lastDeepTelemetry.pressure_hpa     = NAN;
+    _lastDeepTelemetry.battery_voltage  = NAN;
     _deviceId[0] = '\0';
 }
 
@@ -45,32 +49,11 @@ void MainLogic::init() {
     ESP_LOGI(TAG, "Initializing Main Logic...");
     _lastMegaHeartbeatMs = millis();
 
-    // For now, let _deviceId be hardcoded; when we will have more than 1 user, we will derive it from the MAC address.
-    snprintf(_deviceId, sizeof(_deviceId), "HUB_123456");
-
-    // // Genera device_id "HUB_XXXXXX" dagli ultimi 3 byte del MAC.
-    // // esp_read_mac legge dalla eFuse: funziona anche con radio Wi-Fi spenta
-    // // (esp_wifi_get_mac fallirebbe se lo stack Wi-Fi non e' avviato).
-    // uint8_t mac[6] = {0};
-    // esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    // snprintf(_deviceId, sizeof(_deviceId), "HUB_%02X%02X%02X", mac[3], mac[4], mac[5]);
+    // Device ID STATICO da fonte unica HUB_DEVICE_ID (ConfigManager.h),
+    // coerente con MqttManager::init().
+    snprintf(_deviceId, sizeof(_deviceId), "%s", HUB_DEVICE_ID);
 
     ESP_LOGI(TAG, "Device ID: %s", _deviceId);
-
-    _telemetryTimer = xTimerCreate(
-        "TelemetryTimer",
-        pdMS_TO_TICKS(TELEMETRY_PUBLISH_INTERVAL_MS),
-        pdTRUE,
-        (void*)this,
-        MainLogic::telemetryTimerCallback);
-
-    if (_telemetryTimer == NULL) {
-        ESP_LOGE(TAG, "Failed to create telemetry timer!");
-    } else if (xTimerStart(_telemetryTimer, 0) != pdPASS) {
-        ESP_LOGE(TAG, "Failed to start telemetry timer!");
-    } else {
-        ESP_LOGI(TAG, "Telemetry timer started (interval: %d ms).", TELEMETRY_PUBLISH_INTERVAL_MS);
-    }
 }
 
 void MainLogic::taskEntry(void* pvParameters) {
@@ -87,10 +70,13 @@ void MainLogic::taskRun() {
     uint32_t      lastHubHeartbeatMs = 0;
 
     while (true) {
-        if (xQueueReceive(_serialRxQueue, &receivedSerialMsg, pdMS_TO_TICKS(50)) == pdPASS) {
+        // Drena completamente le code (letture non bloccanti): bassa latenza
+        // sui comandi MQTT in rapida successione. Il tempo lo da' il vTaskDelay
+        // a fine loop, non i timeout delle receive.
+        while (xQueueReceive(_serialRxQueue, &receivedSerialMsg, 0) == pdPASS) {
             processSerialMessage(receivedSerialMsg.message);
         }
-        if (xQueueReceive(_mqttRxQueue, &receivedMqttCmd, pdMS_TO_TICKS(50)) == pdPASS) {
+        while (xQueueReceive(_mqttRxQueue, &receivedMqttCmd, 0) == pdPASS) {
             processMqttCommand(receivedMqttCmd);
         }
 
@@ -110,6 +96,15 @@ void MainLogic::taskRun() {
             }
         }
 
+        // Fallback Telemetria: se il Mega e' connesso e non abbiamo pubblicato di recente
+        if (_isMegaConnected && (millis() - _lastTelemetryPublishMs >= TELEMETRY_PUBLISH_INTERVAL_MS)) {
+            TelemetryFast tf;
+            TelemetryDeep td;
+            getTelemetrySnapshot(tf, td);
+            publishTelemetryJson(tf, td);
+            _lastTelemetryPublishMs = millis();
+        }
+
         checkMegaConnection();
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -120,6 +115,14 @@ void MainLogic::taskRun() {
 // =================================================================
 void MainLogic::processMqttCommand(const MqttCommand& cmd) {
     ESP_LOGI(TAG, "MQTT command from %s", cmd.topic);
+
+    // Anti-loopback: la subscription e' command/#, che ricattura i nostri
+    // stessi messaggi su command/ack (e lo /status retained). Ignorali.
+    if (strstr(cmd.topic, "/command/ack") != nullptr ||
+        strstr(cmd.topic, "/status")      != nullptr) {
+        return;
+    }
+
     StaticJsonDocument<MAX_JSON_MESSAGE_LENGTH> doc;
     DeserializationError err = deserializeJson(doc, cmd.payload);
     if (err) {
@@ -134,6 +137,23 @@ void MainLogic::processMqttCommand(const MqttCommand& cmd) {
         return;
     }
 
+    // Coerenza topic/azione: se l'ultimo segmento del topic e' un'azione nota
+    // diversa dal "type" del payload, rifiuta (evita comandi camuffati su un
+    // topic che non corrisponde all'azione richiesta).
+    const char* seg = strrchr(cmd.topic, '/');
+    if (seg) {
+        seg++; // salta lo slash
+        bool segIsAction =
+            !strcmp(seg, "setMode") || !strcmp(seg, "water") || !strcmp(seg, "stop") ||
+            !strcmp(seg, "requestDiagnostics") || !strcmp(seg, "setMotionParams") ||
+            !strcmp(seg, "readSoil") || !strcmp(seg, "softReset");
+        if (segIsAction && strcmp(seg, type) != 0) {
+            ESP_LOGW(TAG, "Topic/type mismatch: topic=%s type=%s", cmd.topic, type);
+            publishAlarmJson("topic_type_mismatch", type);
+            return;
+        }
+    }
+
     Command megaCmd = Command_init_zero;
     megaCmd.cmd_id  = doc["cmd_id"] | 0;
 
@@ -145,7 +165,14 @@ void MainLogic::processMqttCommand(const MqttCommand& cmd) {
         else                                     megaCmd.command_type.set_mode.mode = SetModeCommand_Mode_IDLE;
     } else if (strcmp(type, "water") == 0) {
         megaCmd.which_command_type = Command_water_tag;
-        megaCmd.command_type.water.duration_ms = doc["duration_ms"] | 0;
+        // Defense-in-depth: limita la durata a 30 s sull'Hub (oltre ai limiti
+        // del Mega) per proteggere pianta e pompa da comandi anomali.
+        uint32_t dur = doc["duration_ms"] | 0;
+        if (dur > 30000) {
+            ESP_LOGW(TAG, "Watering %lu ms troncato a 30000 ms (safety)", (unsigned long)dur);
+            dur = 30000;
+        }
+        megaCmd.command_type.water.duration_ms = dur;
     } else if (strcmp(type, "stop") == 0) {
         megaCmd.which_command_type = Command_stop_tag;
     } else if (strcmp(type, "requestDiagnostics") == 0) {
@@ -256,6 +283,7 @@ void MainLogic::publishTelemetryJson(const TelemetryFast& tf, const TelemetryDee
     doc["timestamp_utc"]    = tf.epoch_s != 0 ? tf.epoch_s : td.epoch_s;
     doc["uptime_s"]         = td.uptime_s;
     doc["device_id"]        = _deviceId;
+    doc["fw_version"]       = HUB_FW_VERSION;
     doc["movement_state"]   = movementStateToStr(tf.movement_state);
     doc["lux"]              = tf.lux;
     doc["soil_moisture"]    = tf.soil_moisture;
@@ -267,11 +295,15 @@ void MainLogic::publishTelemetryJson(const TelemetryFast& tf, const TelemetryDee
     d["left"]        = tf.left_dist_cm;
     d["right"]       = tf.right_dist_cm;
 
-    doc["temperature_c"]      = td.temperature_c;
-    doc["humidity_percent"]   = td.humidity_percent;
-    doc["pressure_hpa"]       = td.pressure_hpa;
-    doc["gas_resistance_ohms"]= td.gas_resistance_ohms;
-    doc["battery_voltage"]    = td.battery_voltage;
+    // Campi ambientali: inclusi solo se realmente misurati. Il Mega invia NaN
+    // quando il BME680 non e' montato e per la batteria se il monitoring e' off;
+    // pubblicarli come 0 ingannerebbe l'app (sembrerebbero letture reali).
+    if (!isnan(td.temperature_c))    doc["temperature_c"]       = td.temperature_c;
+    if (!isnan(td.humidity_percent)) doc["humidity_percent"]    = td.humidity_percent;
+    if (!isnan(td.pressure_hpa))     doc["pressure_hpa"]        = td.pressure_hpa;
+    if (td.gas_resistance_ohms > 0)  doc["gas_resistance_ohms"] = td.gas_resistance_ohms;
+    if (!isnan(td.battery_voltage) && td.battery_voltage > 0.0f)
+        doc["battery_voltage"] = td.battery_voltage;
     doc["free_ram_bytes"]     = td.free_ram_bytes;
 
     JsonObject c = doc.createNestedObject("counters");
@@ -284,6 +316,9 @@ void MainLogic::publishTelemetryJson(const TelemetryFast& tf, const TelemetryDee
     c["bme_read_errors"]              = td.bme_read_errors;
     c["log_overflows"]                = td.log_overflows;
     c["pb_decode_failures"]           = td.pb_decode_failures;
+    c["light_seeking_sessions"]       = td.light_seeking_sessions;
+    c["shadow_seeking_sessions"]      = td.shadow_seeking_sessions;
+    c["escape_attempts"]              = td.escape_attempts;
 
     size_t n = serializeJson(doc, out.payload, sizeof(out.payload));
     if (n == 0 || n >= sizeof(out.payload)) {
@@ -359,21 +394,6 @@ void MainLogic::getTelemetrySnapshot(TelemetryFast& tf, TelemetryDeep& td) {
     tf = _lastFastTelemetry;
     td = _lastDeepTelemetry;
     portEXIT_CRITICAL(&_telemetryMux);
-}
-
-void MainLogic::telemetryTimerCallback(TimerHandle_t xTimer) {
-    MainLogic* instance = static_cast<MainLogic*>(pvTimerGetTimerID(xTimer));
-    // Fallback: pubblica solo se la telemetria guidata dalla TelemetryDeep
-    // non e' uscita di recente (es. Mega che manda solo fast). A Mega
-    // disconnesso non si pubblica nulla: dati vecchi farebbero solo danno
-    // a valle (l'assenza e' gia' segnalata dall'alarm mega_offline).
-    if (!instance->_isMegaConnected) return;
-    if (millis() - instance->_lastTelemetryPublishMs < TELEMETRY_STALE_AFTER_MS) return;
-    TelemetryFast tf;
-    TelemetryDeep td;
-    instance->getTelemetrySnapshot(tf, td);
-    instance->publishTelemetryJson(tf, td);
-    instance->_lastTelemetryPublishMs = millis();
 }
 
 void MainLogic::checkMegaConnection() {

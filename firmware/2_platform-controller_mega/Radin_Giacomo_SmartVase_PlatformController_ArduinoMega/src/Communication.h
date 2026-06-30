@@ -57,6 +57,8 @@ private:
     uint8_t protobuf_rx_buffer[PROTOBUF_BUFFER_SIZE];
 
     unsigned long last_hub_message_ms;
+    unsigned long last_water_ms;      // anti over-watering / flood su WaterCommand
+    uint32_t      _lastExecutedCmdId; // idempotenza: ultimo cmd_id eseguito (0 = nessuno)
 };
 
 #endif // COMMUNICATION_H

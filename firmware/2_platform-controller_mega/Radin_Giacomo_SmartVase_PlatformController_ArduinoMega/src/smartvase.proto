@@ -71,6 +71,12 @@ message TelemetryDeep {
   // Batteria (disabilitato finche' non viene cablato il partitore resistivo).
   // Quando attivo: tensione VBATT in volt dopo divisore.
   float battery_voltage        = 18;
+
+  // Contatori cumulativi aggiuntivi: prima calcolati in Movement/stats ma mai
+  // pubblicati in telemetria. Aggiunti in coda (tag 19-21) per compatibilita'.
+  uint32 light_seeking_sessions  = 19;
+  uint32 shadow_seeking_sessions = 20;
+  uint32 escape_attempts         = 21;
 }
 
 message Log {

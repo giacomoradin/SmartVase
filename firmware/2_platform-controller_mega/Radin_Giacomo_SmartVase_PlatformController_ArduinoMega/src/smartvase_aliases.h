@@ -83,6 +83,7 @@ typedef smartvase_CommandResponse        CommandResponse;
 typedef struct {
     uint32_t magic_number;
     uint16_t crc16;
+    uint16_t write_counter;      // contatore di scrittura per wear leveling
     uint8_t  motorCalibLeft;     // PWM 0..255
     uint8_t  motorCalibRight;    // PWM 0..255
     uint16_t avoid_reverse_ms;   // durata retromarcia in avoidance
@@ -97,6 +98,7 @@ typedef struct {
 typedef struct {
     uint32_t magic_number;
     uint16_t crc16;
+    uint16_t write_counter;              // contatore di scrittura per wear leveling
     uint32_t total_motor_active_time_s;
     uint32_t total_irrigations;
     uint32_t total_irrigation_duration_s;
