@@ -1,3 +1,15 @@
+/*!
+    @file   Crc16.cpp
+
+    @ingroup MegaComm
+
+    @brief  Implementazione del CRC16-CCITT (vedi Crc16.h).
+
+    @date   2026-05-20
+
+    @author Giacomo Radin
+*/
+
 #include "Crc16.h"
 
 uint16_t crc16_ccitt(const uint8_t* data, size_t length) {

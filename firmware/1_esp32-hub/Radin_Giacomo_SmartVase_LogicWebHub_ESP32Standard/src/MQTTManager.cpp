@@ -1,3 +1,11 @@
+/*! @file MQTTManager.cpp
+ *  @ingroup HubNetworking
+ *  @brief Implementazione di MqttManager: init transport TLS/plaintext, loop
+ *  di connessione/pubblicazione, callback dei messaggi in arrivo.
+ *  @author Giacomo Radin
+ *  @date 2025-10-28
+ */
+
 #include "MqttManager.h"
 #include "esp_log.h"
 #include <esp_wifi.h>

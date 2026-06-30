@@ -1,3 +1,10 @@
+/**
+ * @file hivemq_ca_cert.h
+ * @brief Definizione delle classi e funzioni per hivemq_ca_cert
+ * @author Giacomo Radin
+ * @date 2026-06-30
+ */
+
 /*
  * =================================================================
  * HiveMQ Cloud — Root CA certificate

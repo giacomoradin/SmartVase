@@ -1,18 +1,24 @@
-/*
- * =================================================================
- * SmartVase - Platform Controller (Arduino Mega)
- * Versione 5.1 — 2026-06-11 (hardening pre-bring-up)
- * =================================================================
- *  - 6 sensori HC-SR04 con pin del nuovo PIN map (driver locale Ultrasonic)
- *  - Forcella umidita' suolo su A0, LDR spostato su A1
- *  - Pompa irrigazione via rele' D10 con protezione tanica vuota (US4)
- *  - RTC DS3232 (I2C 0x68) per timestamp epoch nei messaggi
- *  - WDT 4s, doppio slot EEPROM con CRC16, log queue
- *  - Comunicazione Serial1 Protobuf+framing verso ESP32 Hub
- *  - Scheduler non-bloccante per telemetria/heartbeat/log
- *  - Modalita' standalone (CLI) per test a banco senza Hub
- * =================================================================
- */
+/*!
+    @file   main.cpp
+
+    @ingroup MegaCore
+
+    @brief  Setup/loop del Platform Controller (Arduino Mega) — "The Brawn".
+
+    @details Versione 5.2:
+             - 6 sensori HC-SR04 con pin del PIN map autoritativo (driver locale Ultrasonic)
+             - Forcella umidità suolo su A0, LDR su A1
+             - Pompa irrigazione via relè D10 con protezione tanica vuota (US4)
+             - RTC DS3232 (I2C 0x68) per timestamp epoch nei messaggi
+             - WDT 4s, doppio slot EEPROM con CRC16 (wear-leveling), log queue
+             - Comunicazione Serial1 Protobuf+framing verso ESP32 Hub
+             - Scheduler non bloccante per telemetria/heartbeat/log
+             - Modalità standalone (CLI) per test a banco senza Hub
+
+    @date   2026-04-29
+
+    @author Giacomo Radin
+*/
 
 #include <Arduino.h>
 #include <avr/wdt.h>
@@ -61,14 +67,33 @@ unsigned long lastLogDrainMs       = 0;
 // =================================================================
 // Utility
 // =================================================================
+
+/*!
+    @brief    Stima la SRAM libera residua (heap libero rispetto allo stack).
+    @details  Usata dagli health check del loop e dai comandi CLI `status`/`diag`
+              per rilevare condizioni di RAM bassa prima che causino corruzione
+              dello stack (AVR non ha protezione di memoria).
+    @return   Byte liberi stimati tra la fine dello heap (`__brkval`/`__heap_start`)
+              e lo stack pointer corrente.
+*/
 int freeRam() {
     extern int __heap_start, *__brkval;
     int v;
     return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) &__brkval);
 }
 
-// Disabilita il WDT subito dopo il reset hardware (prima di setup()) e
-// salva il valore di MCUSR per distinguere watchdog reset da power-on.
+/*!
+    @brief    Disabilita il watchdog subito dopo il reset hardware, prima di `setup()`.
+    @details  Gira nella sezione `.init3` (eseguita prima dell'inizializzazione delle
+              variabili globali), quindi prima ancora di `main()`. Necessario perché
+              su AVR il WDT resta attivo dopo un reset causato dal WDT stesso: senza
+              questa disabilitazione immediata, un boot lento (es. inizializzazione
+              sensori) potrebbe essere interrotto da un secondo reset prima che
+              `setup()` possa richiamare `wdt_enable()` con il timeout definitivo.
+              Salva inoltre `MCUSR` in `mcusr_mirror` (sezione `.noinit`, sopravvive
+              al reset) per permettere a `setup()` di distinguere un reset da
+              watchdog da un power-on normale.
+*/
 void wdt_init(void) __attribute__((naked)) __attribute__((section(".init3")));
 void wdt_init(void) {
     mcusr_mirror = MCUSR;
@@ -76,6 +101,16 @@ void wdt_init(void) {
     wdt_disable();
 }
 
+/*!
+    @brief    Entra in modalità degradata, disabilitando motori e pompa.
+    @details  Idempotente: se il sistema è già in degraded mode non fa nulla (evita
+              di rilanciare il log/salvataggio statistiche ad ogni iterazione del
+              loop mentre la condizione persiste). Registra il motivo, ferma
+              immediatamente l'attuazione fisica (motori e pompa), logga un evento
+              CRITICAL verso l'Hub e forza il salvataggio delle statistiche.
+    @param[in] reason Stringa breve che identifica la causa (es. "low_sram", "hub_missing"),
+                       copiata in `systemStatus.degradedReason`.
+*/
 void enterDegradedMode(const char* reason) {
     if (systemStatus.degradedModeActive) return;
     systemStatus.degradedModeActive = true;
@@ -89,6 +124,13 @@ void enterDegradedMode(const char* reason) {
     persistence.saveStats(true);
 }
 
+/*!
+    @brief    Esce dalla modalità degradata e logga il recupero.
+    @details  Va chiamata solo quando NESSuna delle condizioni di degraded mode è
+              più attiva (RAM bassa, Hub assente, ecc.): i chiamanti nel `loop()`
+              verificano già le altre cause prima di invocarla. Idempotente: se il
+              sistema non è in degraded mode non fa nulla.
+*/
 void exitDegradedMode() {
     if (!systemStatus.degradedModeActive) return;
     systemStatus.degradedModeActive = false;
@@ -97,6 +139,13 @@ void exitDegradedMode() {
                   systemStatus.deviceId, persistence.getStats());
 }
 
+/*!
+    @brief    Esegue un reset software via watchdog, su richiesta di un comando.
+    @details  Salva le statistiche, logga l'evento, poi forza un reset volontario
+              armando il WDT con un timeout brevissimo (15 ms) ed entrando in un
+              loop infinito di attesa: non c'è un modo "pulito" di fare un reset
+              software su AVR, quindi si sfrutta deliberatamente il watchdog.
+*/
 void performSoftReset() {
     persistence.saveStats(true);
     comm.logEvent(Log_LogLevel_WARN, "soft_reset", "via_command",
@@ -109,6 +158,15 @@ void performSoftReset() {
 // =================================================================
 // Setup
 // =================================================================
+
+/*!
+    @brief    Inizializzazione del firmware: seriali, EEPROM, sensori, attuatori, watchdog.
+    @details  Ordine rilevante: carica config/stats da EEPROM prima di diagnosticare
+              il motivo del reset (serve per poter incrementare/salvare
+              `watchdog_resets`), poi abilita il WDT (4 s) solo dopo aver completato
+              le inizializzazioni potenzialmente lente, per non rischiare un reset
+              prematuro durante il boot stesso.
+*/
 void setup() {
     Serial.begin(115200);   // USB / CLI debug
     Serial1.begin(115200);  // Verso ESP32 Hub (Protobuf framing)
@@ -165,6 +223,21 @@ void setup() {
 // =================================================================
 // Main loop (non bloccante)
 // =================================================================
+
+/*!
+    @brief    Ciclo principale non bloccante: CLI, comunicazione, sensori, attuazione, scheduler, health check.
+    @details  Nessuna chiamata bloccante (niente `delay()`, salvo `performSoftReset`
+              che termina volontariamente il firmware): ogni sotto-sistema viene
+              "tickato" una volta per iterazione e decide internamente se ha lavoro
+              da fare in base a `millis()`. L'ordine dei passi è rilevante:
+              1. CLI debug USB; 2. RX seriale dall'Hub (può eseguire comandi);
+              3. campionamento sensori; 4. tick pompa (autospegnimento/safety tanica);
+              5. state machine movimento; 6. trasmissioni periodiche (telemetria/
+              heartbeat/log) con scheduler a intervalli indipendenti; 7. persistenza
+              EEPROM (stats throttled, config deferita a seriale inattiva);
+              8. health check (RAM, deadman Hub) con isteresi per evitare oscillazioni;
+              9. eventuale soft reset richiesto da comando.
+*/
 void loop() {
     wdt_reset();
     const unsigned long now = millis();

@@ -1,6 +1,14 @@
+/*!
+ * @file Ultrasonic.cpp
+ * @ingroup MegaSensors
+ * @brief Implementazione del driver HC-SR04: ciclo trigger/echo e conversione tempo di volo -> distanza.
+ * @date 2026-06-11
+ * @author Giacomo Radin
+ */
+
 #include "Ultrasonic.h"
 
-// Andata+ritorno del suono: ~58 us per cm a 20 °C.
+/** @brief Tempo di andata+ritorno del suono in aria: ~58 us per cm percorso, a 20 °C. */
 #define US_ROUNDTRIP_US_PER_CM 58UL
 
 Ultrasonic::Ultrasonic(uint8_t triggerPin, uint8_t echoPin, uint16_t maxDistanceCm)

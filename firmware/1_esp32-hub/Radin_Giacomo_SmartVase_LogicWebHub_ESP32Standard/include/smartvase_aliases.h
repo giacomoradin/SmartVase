@@ -1,15 +1,32 @@
-/*
- * =================================================================
- * SmartVase - Protobuf Alias Definitions (lato Hub ESP32)
- * =================================================================
- * Schema v4.0 — 2026-05-19. Solo alias Protobuf — niente tipi C++ interni
- * del Mega (DeviceConfig, CumulativeStats, ecc.).
+/*! @file smartvase_aliases.h
+ *  @ingroup HubMisc
+ *  @brief Alias senza prefisso `smartvase_` per i tipi/tag generati da nanopb
+ *  a partire da `smartvase.proto`, cosi' che il resto del codice Hub possa
+ *  usare nomi corti (es. `Command` invece di `smartvase_Command`).
+ *  @details Schema v4.0 — 2026-05-19. Solo alias Protobuf: niente tipi C++
+ *  interni del Mega (DeviceConfig, CumulativeStats, ecc.), che restano
+ *  privati al firmware Mega.
+ *  @note Va tenuto allineato a mano al `.proto` canonico (`infra/smartvase-proto/smartvase.proto`):
+ *  se si aggiungono/rinominano campi o tag nel `.proto`, aggiornare qui i
+ *  corrispondenti alias dopo la rigenerazione dei `.pb.{c,h}` (vedi
+ *  CLAUDE.md §5.3 per il workflow schema-first completo).
+ *  @author Giacomo Radin
+ *  @date 2025-10-20
+ */
+
+/*! @defgroup HubMisc Varie (alias protobuf, certificati)
+ *  @brief File di supporto trasversali: alias dei tipi protobuf generati e
+ *  certificato CA per la TLS verso HiveMQ Cloud.
  */
 
 #ifndef SMARTVASE_ALIASES_H_INCLUDED
 #define SMARTVASE_ALIASES_H_INCLUDED
 
 #include "smartvase.pb.h"
+
+/*! @addtogroup HubMisc
+ *  @{
+ */
 
 // --- Alias per Tipi (Structs & Enums) ---
 typedef smartvase_WrapperMessage         WrapperMessage;
@@ -71,5 +88,7 @@ typedef smartvase_CommandResponse        CommandResponse;
 #define MS_AVOID_REVERSING smartvase_MovementState_M_AVOID_REVERSING
 #define MS_AVOID_TURNING   smartvase_MovementState_M_AVOID_TURNING
 #define MS_STUCK           smartvase_MovementState_M_STUCK
+
+/*! @} */ // end of HubMisc group
 
 #endif // SMARTVASE_ALIASES_H_INCLUDED

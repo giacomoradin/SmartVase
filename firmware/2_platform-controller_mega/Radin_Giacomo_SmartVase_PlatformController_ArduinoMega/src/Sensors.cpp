@@ -1,3 +1,11 @@
+/*!
+ * @file Sensors.cpp
+ * @ingroup MegaSensors
+ * @brief Implementazione del modulo Sensors: pin map, costanti di campionamento, filtri EMA, costruzione telemetria.
+ * @date 2026-04-29
+ * @author Giacomo Radin
+ */
+
 #include "Sensors.h"
 #include <Wire.h>
 

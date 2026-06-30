@@ -1,3 +1,15 @@
+/*!
+    @file   Communication.cpp
+
+    @ingroup MegaComm
+
+    @brief  Implementazione di Communication: framing seriale, coda log ed esecuzione comandi.
+
+    @date   2026-04-29
+
+    @author Giacomo Radin
+*/
+
 #include "Communication.h"
 #include "Movement.h"
 #include "Persistence.h"

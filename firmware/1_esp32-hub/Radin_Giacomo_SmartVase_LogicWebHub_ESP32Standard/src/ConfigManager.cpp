@@ -1,3 +1,11 @@
+/*! @file ConfigManager.cpp
+ *  @ingroup HubConfig
+ *  @brief Implementazione di ConfigManager: I/O su NVS, validazione CRC,
+ *  fallback bench da secrets.h.
+ *  @author Giacomo Radin
+ *  @date 2025-10-28
+ */
+
 #include "ConfigManager.h" // <-- LA RIGA FONDAMENTALE CHE MANCAVA!
 
 #include "secrets.h"       // credenziali bench (gitignorato; vedi secrets.h.example)
@@ -22,11 +30,16 @@ static const char *TAG = "ConfigManager";
 // condivisa in crc_utils. NB: e' DIVERSO dal CRC del protocollo seriale (CCITT,
 // vedi SerialManager/Mega) ed e' corretto cosi' — sono due usi indipendenti.
 namespace {
-    // CRC dell'intera struct con il campo crc16 azzerato. Il campo crc16
-    // sta in mezzo alla struct: calcolare il CRC con dentro il valore
-    // vecchio (come faceva la versione precedente) rendeva impossibile la
-    // verifica al load — la config NVS risultava sempre corrotta e le
-    // credenziali venivano azzerate a ogni boot.
+    /*! @brief Calcola il CRC16-IBM dell'intera `DeviceConfig` con il campo
+     *  `crc16` azzerato, per renderlo riproducibile sia in scrittura che in
+     *  lettura.
+     *  @param[in] cfg Configurazione su cui calcolare il checksum (passata per copia
+     *  internamente per poter azzerare il campo crc16 senza alterare l'originale).
+     *  @return CRC16-IBM calcolato sui byte della struct.
+     *  @note Il campo `crc16` sta in mezzo alla struct: calcolare il CRC con
+     *  dentro il valore vecchio (come faceva la versione precedente) rendeva
+     *  impossibile la verifica al load — la config NVS risultava sempre
+     *  corrotta e le credenziali venivano azzerate a ogni boot. */
     uint16_t config_crc(const DeviceConfig& cfg) {
         DeviceConfig tmp = cfg;
         tmp.crc16 = 0;

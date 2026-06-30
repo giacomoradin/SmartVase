@@ -1,3 +1,11 @@
+/*! @file MainLogic.cpp
+ *  @ingroup HubCore
+ *  @brief Implementazione di MainLogic: loop del task, bridge JSON<->Protobuf,
+ *  scheduling telemetria/heartbeat, deadman switch verso il Mega.
+ *  @author Giacomo Radin
+ *  @date 2025-10-28
+ */
+
 #include "MainLogic.h"
 #include "esp_log.h"
 #include <ArduinoJson.h>
@@ -7,7 +15,18 @@
 
 static const char *TAG = "MainLogic";
 
+/*! @brief Converte un `MovementState` Protobuf nella stringa pubblicata nel
+ *  campo `movement_state` della telemetria JSON.
+ *  @param[in] s Stato di movimento riportato dal Mega.
+ *  @return Stringa costante (es. "MOVING", "STUCK"); "IDLE" per qualsiasi
+ *  valore non riconosciuto, incluso MS_IDLE stesso. */
 static const char* movementStateToStr(MovementState s);
+
+/*! @brief Converte un `Log_LogLevel` Protobuf nella stringa pubblicata nel
+ *  campo `level` dei log JSON.
+ *  @param[in] l Livello di log riportato dal Mega.
+ *  @return Stringa costante ("WARN", "ERROR", "CRITICAL"); "INFO" per
+ *  qualsiasi valore non riconosciuto, incluso Log_LogLevel_INFO stesso. */
 static const char* logLevelToStr(Log_LogLevel l);
 
 // Intervalli scheduling (ms)

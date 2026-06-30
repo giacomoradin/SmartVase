@@ -1,3 +1,15 @@
+/*!
+    @file   Persistence.cpp
+
+    @ingroup MegaPersistence
+
+    @brief  Implementazione della persistenza EEPROM dual-slot (config + stats).
+
+    @date   2026-04-29
+
+    @author Giacomo Radin
+*/
+
 #include "Persistence.h"
 #include "Crc16.h"
 
@@ -25,16 +37,32 @@ static_assert(sizeof(CumulativeStats) <= 128, "CumulativeStats supera lo slot EE
 #define EEPROM_CONFIG_WRITE_INTERVAL  60000UL    //  60 s
 #define EEPROM_STATS_WRITE_INTERVAL  300000UL    // 300 s
 
-// CRC di un blob che CONTIENE il proprio campo crc16: si calcola su una
-// copia con il campo azzerato, coprendo l'intera struct. La versione
-// precedente includeva nel calcolo il crc16 col valore vecchio (ed escludeva
-// gli ultimi 2 byte di dati): la verifica al load falliva sempre e config e
-// stats tornavano ai default a ogni boot.
+/*!
+    @brief    Calcola il CRC16 di una `DeviceConfig`, escludendo il proprio campo `crc16`.
+
+    @details  Il blob CONTIENE il proprio campo crc16, quindi il calcolo va fatto su una
+              copia locale con quel campo azzerato, per coprire l'intera struct in modo
+              deterministico. (Bug storico corretto: la versione precedente includeva nel
+              calcolo il crc16 col valore vecchio ed escludeva gli ultimi 2 byte di dati,
+              per cui la verifica al load falliva sempre e config/stats tornavano ai
+              default ad ogni boot.)
+
+    @param[in] c Configurazione di cui calcolare il CRC (passata per copia: il campo
+                 `crc16` dell'originale non viene toccato).
+
+    @return   Il CRC16-CCITT della struct con `crc16` azzerato.
+*/
 static uint16_t configCrc(DeviceConfig c) {
     c.crc16 = 0;
     return crc16_ccitt((uint8_t*)&c, sizeof(c));
 }
 
+/*!
+    @brief    Calcola il CRC16 di una `CumulativeStats`, escludendo il proprio campo `crc16`.
+    @details  Stessa logica di ::configCrc, applicata alle statistiche cumulative.
+    @param[in] s Statistiche di cui calcolare il CRC (passate per copia).
+    @return   Il CRC16-CCITT della struct con `crc16` azzerato.
+*/
 static uint16_t statsCrc(CumulativeStats s) {
     s.crc16 = 0;
     return crc16_ccitt((uint8_t*)&s, sizeof(s));

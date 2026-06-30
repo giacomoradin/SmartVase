@@ -1,3 +1,10 @@
+/**
+ * @file main.cpp
+ * @brief Sorgente per il modulo main
+ * @author Giacomo Radin
+ * @date 2026-06-30
+ */
+
 /*
  * =================================================================
  * SmartVase - Vision Co-Processor (ESP32-CAM)
@@ -78,23 +85,31 @@ static char deviceId[16] = {0};
 Preferences prefs;
 Preferences statsPrefs;
 
+/**
+ * @struct CamConfig
+ * @brief Configurazione dell'ESP32-CAM memorizzata in NVS.
+ */
 struct CamConfig {
-    String wifi_ssid;
-    String wifi_pass;
-    String mqtt_broker;
-    uint16_t mqtt_port;
-    String mqtt_user;
-    String mqtt_pass;
-    String upload_url;
-    uint32_t interval_s;
+    String wifi_ssid;    /**< SSID della rete Wi-Fi */
+    String wifi_pass;    /**< Password della rete Wi-Fi */
+    String mqtt_broker;  /**< Indirizzo del broker MQTT */
+    uint16_t mqtt_port;  /**< Porta del broker MQTT (es. 8883) */
+    String mqtt_user;    /**< Username MQTT */
+    String mqtt_pass;    /**< Password MQTT */
+    String upload_url;   /**< URL della Cloud Function per l'upload dell'immagine */
+    uint32_t interval_s; /**< Intervallo di cattura periodica in secondi */
 } cfg;
 
+/**
+ * @struct CamStats
+ * @brief Statistiche cumulative persistenti sull'uso dell'ESP32-CAM.
+ */
 struct CamStats {
-    uint32_t successful_frames;
-    uint32_t failed_frames;
-    uint32_t upload_errors;
-    uint32_t mqtt_errors;
-    uint64_t total_capture_time_ms;
+    uint32_t successful_frames;    /**< Numero di catture andate a buon fine */
+    uint32_t failed_frames;        /**< Numero di catture fallite */
+    uint32_t upload_errors;        /**< Numero di errori HTTP durante l'upload */
+    uint32_t mqtt_errors;          /**< Numero di errori di connessione/invio MQTT */
+    uint64_t total_capture_time_ms;/**< Tempo totale accumulato per la cattura e upload */
 } stats;
 
 // -------------------- MQTT --------------------
@@ -121,6 +136,13 @@ unsigned long lastDebugMs       = 0;     // throttle telemetria debug seriale
 httpd_handle_t cameraHttpd      = NULL;  // server web feed (porta 80)
 
 // -------------------- UTILITIES --------------------
+/**
+ * @brief Calcola il checksum CRC32 (Little Endian) di un buffer di dati.
+ * @param crc Valore iniziale del CRC.
+ * @param buf Puntatore al buffer dei dati.
+ * @param len Lunghezza in byte dei dati nel buffer.
+ * @return uint32_t Il checksum CRC32 calcolato.
+ */
 uint32_t crc32_le(uint32_t crc, const uint8_t *buf, size_t len) {
     static const uint32_t table[16] = {
         0x00000000, 0x1db71064, 0x3b6e20c8, 0x26d930ac,
@@ -137,6 +159,9 @@ uint32_t crc32_le(uint32_t crc, const uint8_t *buf, size_t len) {
     return ~crc;
 }
 
+/**
+ * @brief Carica le configurazioni dell'ESP32-CAM dalla memoria NVS.
+ */
 void loadConfig() {
     prefs.begin("cam", true);
     cfg.wifi_ssid   = prefs.getString("wifi_ssid",   "");
@@ -165,19 +190,25 @@ void loadConfig() {
     // ============ fine blocco bench ============
 }
 
+/**
+ * @brief Salva le configurazioni correnti dell'ESP32-CAM nella memoria NVS.
+ */
 void saveConfig() {
     prefs.begin("cam", false);
     prefs.putString("wifi_ssid",   cfg.wifi_ssid);
     prefs.putString("wifi_pass",   cfg.wifi_pass);
     prefs.putString("mqtt_broker", cfg.mqtt_broker);
     prefs.putUShort("mqtt_port",   cfg.mqtt_port);
-    prefs.putString("mqtt_user",   cfg.mqtt_user);
+    prefs.putString("wifi_user",   cfg.mqtt_user);
     prefs.putString("mqtt_pass",   cfg.mqtt_pass);
     prefs.putString("upload_url",  cfg.upload_url);
     prefs.putUInt  ("interval_s",  cfg.interval_s);
     prefs.end();
 }
 
+/**
+ * @brief Carica le statistiche sull'utilizzo della fotocamera dalla memoria NVS.
+ */
 void loadStats() {
     statsPrefs.begin("cam_stats", true);
     stats.successful_frames     = statsPrefs.getUInt   ("succ_frames",   0);

@@ -1,16 +1,17 @@
-/*
- * =================================================================
- * SmartVase - ESP32 Hub (Gateway)
- * Firmware Versione 1.2 — 2026-06-11 (hardening pre-bring-up)
- * =================================================================
- * Punto di ingresso: setup() crea code e moduli, poi i task FreeRTOS.
- * loop() gestisce solo la CLI seriale di debug/provisioning.
- *
- * Nota d'ordine: i manager sono allocati in setup() DOPO la creazione
- * delle code FreeRTOS. La versione precedente li istanziava come oggetti
- * globali: i costruttori copiavano gli handle delle code quando erano
- * ancora NULL (static init) e i task partivano su code inesistenti.
- * =================================================================
+/*! @file main.cpp
+ *  @ingroup HubCore
+ *  @brief Punto di ingresso del firmware Hub: bootstrap di NVS/Wi-Fi/code
+ *  FreeRTOS, creazione dei tre task pinnati (TaskSerialMega, TaskMqttLink,
+ *  TaskMainLogic) e loop Arduino dedicato a CLI/provisioning/OTA.
+ *  @details setup() crea le code FreeRTOS PRIMA di istanziare i moduli che le
+ *  usano (SerialManager, MqttManager, MainLogic): un tentativo precedente li
+ *  istanziava come oggetti globali, i cui costruttori copiavano gli handle
+ *  delle code quando erano ancora NULL (inizializzazione statica), facendo
+ *  partire i task su code inesistenti. loop() gestisce solo attivita' non
+ *  time-critical a priorita' minima (CLI seriale, captive portal, OTA): la
+ *  logica vera gira nei tre task FreeRTOS creati da setup().
+ *  @author Giacomo Radin
+ *  @date 2025-10-28
  */
 
 #include <Arduino.h>
@@ -26,27 +27,33 @@
 
 // --- Code FreeRTOS ---
 // Comunicazione seriale (Mega <-> Hub)
-QueueHandle_t serialRxQueue; // Messaggi Protobuf dal Mega all'Hub (MainLogic)
-QueueHandle_t serialTxQueue; // Messaggi Protobuf dall'Hub (MainLogic/CLI) al Mega
+QueueHandle_t serialRxQueue; /**< Messaggi Protobuf dal Mega all'Hub (consumata da MainLogic). */
+QueueHandle_t serialTxQueue; /**< Messaggi Protobuf dall'Hub (MainLogic/HubCli) al Mega. */
 
 // Comunicazione MQTT (Hub <-> Broker)
-QueueHandle_t mqttTxQueue;   // Messaggi JSON dall'Hub (MainLogic) al Broker MQTT
-QueueHandle_t mqttRxQueue;   // Messaggi JSON dal Broker MQTT all'Hub (MainLogic)
+QueueHandle_t mqttTxQueue;   /**< Messaggi JSON dall'Hub (MainLogic) al broker MQTT. */
+QueueHandle_t mqttRxQueue;   /**< Messaggi JSON dal broker MQTT all'Hub (MainLogic). */
 
 // --- Moduli ---
 // Senza dipendenze dalle code: istanze globali.
-ConfigManager configManager;
-WifiManager   wifiManager(configManager);
-HubCli        hubCli;
+ConfigManager configManager;          /**< Configurazione persistente (NVS). */
+WifiManager   wifiManager(configManager); /**< Connessione Wi-Fi STA + provisioning AP. */
+HubCli        hubCli;                 /**< CLI seriale di debug/provisioning. */
 
 // Dipendenti dalle code: creati in setup() dopo xQueueCreate.
-SerialManager* serialManager = nullptr;
-MqttManager*   mqttManager   = nullptr;
-MainLogic*     mainLogic     = nullptr;
+SerialManager* serialManager = nullptr; /**< Corpo del task TaskSerialMega; allocato in setup(). */
+MqttManager*   mqttManager   = nullptr; /**< Corpo del task TaskMqttLink; allocato in setup(). */
+MainLogic*     mainLogic     = nullptr; /**< Corpo del task TaskMainLogic; allocato in setup(). */
 
-// =================================================================
-// SETUP
-// =================================================================
+/*! @brief Entry point Arduino: inizializza NVS/Wi-Fi, crea le quattro code
+ *  FreeRTOS e i moduli che le usano, poi avvia i tre task pinnati
+ *  (TaskSerialMega su Core 1 prio 3, TaskMqttLink su Core 0 prio 2,
+ *  TaskMainLogic su Core 1 prio 1).
+ *  @details Ordine critico: le code vengono create PRIMA di istanziare
+ *  SerialManager/MqttManager/MainLogic, che le ricevono per puntatore nel
+ *  costruttore (vedi commento di modulo sopra). Su fallimento di NVS o delle
+ *  xQueueCreate() esegue un riavvio (ESP.restart()) dopo un breve delay
+ *  diagnostico: non c'e' un percorso degradato senza code funzionanti. */
 void setup() {
     // 1. Seriale di Debug/CLI (USB)
     pinMode(3, INPUT_PULLUP); // Evita che RXD0 fluttui quando l'USB non e' connesso
@@ -121,9 +128,14 @@ void setup() {
     Serial.println("[SETUP] Setup completato. Avvio dei Task.");
 }
 
-// =================================================================
-// LOOP (Task Principale Arduino)
-// =================================================================
+/*! @brief Loop Arduino principale: gestisce solo attivita' non time-critical
+ *  a priorita' minima (la logica core gira nei task FreeRTOS avviati da setup()).
+ *  @details Ad ogni giro: drena la CLI seriale (hubCli.tick()), fa avanzare il
+ *  Captive Portal se l'AP di provisioning e' attivo (no-op altrimenti), e
+ *  avvia/gestisce ArduinoOTA una volta che il Wi-Fi STA risulta connesso.
+ *  @note L'avvio di OTA (`ArduinoOTA.begin()`) avviene una sola volta tramite
+ *  il flag locale `otaStarted`; da quel momento `ArduinoOTA.handle()` viene
+ *  chiamato ad ogni iterazione indipendentemente dallo stato della connessione. */
 void loop() {
     // CLI di debug/provisioning: attività non critica a priorità minima.
     hubCli.tick();

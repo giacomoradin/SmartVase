@@ -1,3 +1,11 @@
+/*! @file HubCli.cpp
+ *  @ingroup HubCli
+ *  @brief Implementazione di HubCli: parsing comandi, comandi locali e
+ *  passthrough verso il Mega.
+ *  @author Giacomo Radin
+ *  @date 2026-06-11
+ */
+
 #include "HubCli.h"
 
 #include <WiFi.h>
@@ -170,6 +178,11 @@ void HubCli::sendMegaCommand(uint8_t which, uint32_t arg) {
     }
 }
 
+/*! @brief Stampa su Serial un'etichetta seguita da un valore mascherato
+ *  (solo primo e ultimo carattere visibili, il resto sostituito da "***"),
+ *  per non esporre per intero password/segreti nel monitor seriale.
+ *  @param[in] label Testo da stampare prima del valore (es. "wifi_pass   = ").
+ *  @param[in] value Stringa da mascherare; se vuota stampa "(vuoto)". */
 static void printMasked(const char* label, const char* value) {
     Serial.print(label);
     size_t n = strlen(value);

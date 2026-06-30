@@ -1,3 +1,12 @@
+/*!
+ * @file Movement.cpp
+ * @ingroup MegaMovement
+ * @brief Implementazione della classe Movement: driver motori H-bridge, FSM di navigazione,
+ *        seeking luce/ombra con anti-circling, obstacle avoidance e stato "stuck" con backoff.
+ * @date 2026-04-29
+ * @author Giacomo Radin
+ */
+
 #include "Movement.h"
 #include "SensorPolicy.h"
 #include <avr/wdt.h>
@@ -20,6 +29,7 @@
 // Timeout safety motori sempre attivi (ms)
 #define MOTOR_SAFETY_TIMEOUT_MS  20000UL
 
+// Inizializza i valori predefiniti della state machine (vedi Movement.h per il dettaglio dei campi).
 Movement::Movement() :
     currentMovementState(CPP_M_IDLE),
     targetMode(CPP_IDLE),

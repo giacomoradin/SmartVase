@@ -1,3 +1,11 @@
+/*! @file crc_utils.cpp
+ *  @ingroup HubSerial
+ *  @brief Implementazione bit-a-bit (no lookup table) dei due CRC16 condivisi
+ *  dell'Hub.
+ *  @author Giacomo Radin
+ *  @date 2026-06-30
+ */
+
 #include "crc_utils.h"
 
 // CCITT poly 0x1021, MSB-first (identico al Mega).

@@ -1,18 +1,35 @@
-/*
- * =================================================================
- * SmartVase - Protobuf Alias Definitions + Tipi C++ interni
- * =================================================================
- * Mappa i simboli nanopb generati con prefisso 'smartvase_' ai nomi
- * corti usati nel firmware. Include anche struct/enum C++ usati solo
- * lato Mega e non parte del protocollo Protobuf.
- *
- * Schema v4.0 — 2026-05-19 (refactor totale post-PIN map nuovo).
- */
+/*!
+    @file   smartvase_aliases.h
+
+    @ingroup MegaMisc
+
+    @brief  Alias verso i simboli protobuf nanopb + tipi C++ interni del Mega.
+
+    @details Mappa i simboli generati da nanopb con prefisso `smartvase_`
+             (definiti in `smartvase.pb.h`, rigenerato dal `.proto` canonico
+             in `infra/smartvase-proto/`) ai nomi corti usati nel resto del
+             firmware. Contiene inoltre i tipi C++ usati solo lato Mega
+             (`DeviceConfig`, `CumulativeStats`, `CppMovementState`, `CppMode`)
+             che NON fanno parte del protocollo Protobuf, tenuti
+             deliberatamente separati dagli enum protobuf per non legare la
+             logica interna allo schema di rete (vedi `cppMovementStateToProto`).
+
+             Schema protobuf v4.0 — 2026-05-19 (refactor totale post-PIN map nuovo).
+
+    @date   2025-10-20
+
+    @author Giacomo Radin
+*/
 
 #ifndef SMARTVASE_ALIASES_H_INCLUDED
 #define SMARTVASE_ALIASES_H_INCLUDED
 
 #include "smartvase.pb.h"
+
+/*!
+    @addtogroup MegaMisc
+    @{
+*/
 
 // --- Alias per Tipi (Structs & Enums) ---
 typedef smartvase_WrapperMessage         WrapperMessage;
@@ -79,59 +96,82 @@ typedef smartvase_CommandResponse        CommandResponse;
 // Tipi C++ interni (non Protobuf)
 // =================================================================
 
-// Configurazione device persistita in EEPROM
+/*!
+    @struct DeviceConfig
+    @brief  Configurazione del device persistita in EEPROM (dual-slot, vedi Persistence.h).
+*/
 typedef struct {
-    uint32_t magic_number;
-    uint16_t crc16;
-    uint16_t write_counter;      // contatore di scrittura per wear leveling
-    uint8_t  motorCalibLeft;     // PWM 0..255
-    uint8_t  motorCalibRight;    // PWM 0..255
-    uint16_t avoid_reverse_ms;   // durata retromarcia in avoidance
-    uint16_t avoid_turn_ms;      // durata rotazione in avoidance
-    uint16_t soil_dry_threshold; // soglia ADC sotto la quale 'dry'
-    uint16_t light_threshold;    // soglia lux per inversione light/shadow
-    uint16_t tank_empty_cm;      // distanza US4->acqua oltre la quale la
-                                 // tanica e' considerata vuota (pompa bloccata)
+    uint32_t magic_number;       /**< Magic number per validare lo slot EEPROM. */
+    uint16_t crc16;               /**< CRC16-CCITT della struct (vedi Crc16.h), validato al load. */
+    uint16_t write_counter;       /**< Contatore di scrittura per il wear-leveling dual-slot. */
+    uint8_t  motorCalibLeft;      /**< PWM di calibrazione motore sinistro, 0..255. */
+    uint8_t  motorCalibRight;     /**< PWM di calibrazione motore destro, 0..255. */
+    uint16_t avoid_reverse_ms;    /**< Durata retromarcia durante l'obstacle avoidance, in ms. */
+    uint16_t avoid_turn_ms;       /**< Durata rotazione durante l'obstacle avoidance, in ms. */
+    uint16_t soil_dry_threshold;  /**< Soglia ADC suolo sotto la quale il terreno è considerato 'dry'. */
+    uint16_t light_threshold;     /**< Soglia ADC di luminosità per l'inversione light/shadow seeking. */
+    uint16_t tank_empty_cm;       /**< Distanza US4→acqua (cm) oltre la quale la tanica è considerata vuota (pompa bloccata). */
 } DeviceConfig;
 
-// Statistiche cumulative persistite in EEPROM
+/*!
+    @struct CumulativeStats
+    @brief  Statistiche cumulative di utilizzo persistite in EEPROM (dual-slot, vedi Persistence.h).
+*/
 typedef struct {
-    uint32_t magic_number;
-    uint16_t crc16;
-    uint16_t write_counter;              // contatore di scrittura per wear leveling
-    uint32_t total_motor_active_time_s;
-    uint32_t total_irrigations;
-    uint32_t total_irrigation_duration_s;
-    uint32_t light_seeking_sessions;
-    uint32_t shadow_seeking_sessions;
-    uint32_t obstacles_avoided;
-    uint32_t escape_attempts;
-    uint32_t stuck_events;
-    uint32_t watchdog_resets;
-    uint32_t bme_read_errors;
-    uint32_t log_overflows;
-    uint32_t pb_decode_failures;
+    uint32_t magic_number;                  /**< Magic number per validare lo slot EEPROM. */
+    uint16_t crc16;                          /**< CRC16-CCITT della struct (vedi Crc16.h), validato al load. */
+    uint16_t write_counter;                  /**< Contatore di scrittura per il wear-leveling dual-slot. */
+    uint32_t total_motor_active_time_s;      /**< Tempo cumulativo di attività dei motori, in secondi. */
+    uint32_t total_irrigations;              /**< Numero totale di irrigazioni eseguite. */
+    uint32_t total_irrigation_duration_s;    /**< Durata cumulativa delle irrigazioni, in secondi. */
+    uint32_t light_seeking_sessions;         /**< Numero di sessioni di ricerca luce (modalità LIGHT). */
+    uint32_t shadow_seeking_sessions;        /**< Numero di sessioni di ricerca ombra (modalità SHADOW). */
+    uint32_t obstacles_avoided;              /**< Numero di ostacoli evitati con successo. */
+    uint32_t escape_attempts;                /**< Numero di tentativi di rilocazione anti-circling durante il seeking. */
+    uint32_t stuck_events;                   /**< Numero di volte in cui il robot è entrato nello stato M_STUCK. */
+    uint32_t watchdog_resets;                /**< Numero di reset causati dal watchdog timer. */
+    uint32_t bme_read_errors;                /**< Numero di errori di lettura dal sensore BME680. */
+    uint32_t log_overflows;                  /**< Numero di volte in cui la coda di log circolare ha scartato voci INFO per overflow. */
+    uint32_t pb_decode_failures;             /**< Numero di frame seriali scartati per fallimento di decodifica protobuf o CRC. */
 } CumulativeStats;
 
-// Stato della macchina a stati del movimento (lato C++).
-// Tenuto in tipo separato per non legare il main al tipo Protobuf.
+/*!
+    @enum  CppMovementState
+    @brief Stato della state machine di movimento, lato C++.
+
+    @details Tenuto come tipo separato dall'enum protobuf `MovementState` per
+             non legare la logica interna del main allo schema di rete; la
+             conversione verso il tipo protobuf avviene esplicitamente con
+             ::cppMovementStateToProto.
+*/
 typedef enum {
-    CPP_M_IDLE,
-    CPP_M_MOVING,
-    CPP_M_AVOID_START,
-    CPP_M_AVOID_REVERSING,
-    CPP_M_AVOID_TURNING,
-    CPP_M_STUCK
+    CPP_M_IDLE,            /**< Robot fermo, nessun movimento target attivo. */
+    CPP_M_MOVING,           /**< Movimento normale (seeking luce/ombra o nessuna ricerca). */
+    CPP_M_AVOID_START,      /**< Ingresso nella sequenza di obstacle avoidance. */
+    CPP_M_AVOID_REVERSING,  /**< Fase di retromarcia dell'obstacle avoidance. */
+    CPP_M_AVOID_TURNING,    /**< Fase di rotazione dell'obstacle avoidance. */
+    CPP_M_STUCK             /**< Robot bloccato, in attesa di backoff prima di un nuovo tentativo. */
 } CppMovementState;
 
-// Modalita' operative
+/*!
+    @enum  CppMode
+    @brief Modalità operative del robot (impostate da CLI o da comando Hub `setMode`).
+*/
 typedef enum {
-    CPP_IDLE,
-    CPP_LIGHT,
-    CPP_SHADOW
+    CPP_IDLE,    /**< Nessuna ricerca attiva: il robot resta fermo se non in movimento manuale. */
+    CPP_LIGHT,   /**< Ricerca della luce (light seeking). */
+    CPP_SHADOW   /**< Ricerca dell'ombra (shadow seeking). */
 } CppMode;
 
-// Mappatura stati C++ <-> enum Protobuf MovementState
+/*!
+    @brief    Converte uno stato di movimento C++ nel corrispondente enum protobuf.
+
+    @param[in] s Stato di movimento lato C++.
+
+    @return   Il valore ::MovementState equivalente da inviare in `TelemetryFast`.
+
+    @note     `CPP_M_IDLE` e qualunque valore non riconosciuto mappano su `MS_IDLE` (default fail-safe).
+*/
 static inline MovementState cppMovementStateToProto(CppMovementState s) {
     switch (s) {
         case CPP_M_MOVING:          return MS_MOVING;
@@ -143,5 +183,7 @@ static inline MovementState cppMovementStateToProto(CppMovementState s) {
         default:                    return MS_IDLE;
     }
 }
+
+/*! @} */ // MegaMisc
 
 #endif // SMARTVASE_ALIASES_H_INCLUDED

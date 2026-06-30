@@ -1,3 +1,11 @@
+/*! @file SerialManager.cpp
+ *  @ingroup HubSerial
+ *  @brief Implementazione di SerialManager: FSM di ricezione del framing
+ *  seriale e invio dei messaggi Protobuf verso il Mega.
+ *  @author Giacomo Radin
+ *  @date 2025-10-28
+ */
+
 #include "SerialManager.h"
 #include "esp_log.h"
 #include <HardwareSerial.h> // Per accedere a Serial2
@@ -141,12 +149,10 @@ void SerialManager::handleSerialReception() {
                     ESP_LOGE(TAG, "CRC Error! Expected 0x%04X, Calculated 0x%04X", receivedCRC, calculatedCRC);
                 }
                 state = WAIT_SOF;
-                break; // Il break rimane DENTRO le graffe
-            } // <-- CHIUSURA PARENTESI GRAFFA spostata QUI!
+                break;
+            }
 
-            // --- CORREZIONE: La chiusura della graffa era qui per errore ---
-
-            default: // Ora 'default' è correttamente all'interno dello switch
+            default:
                 ESP_LOGE(TAG, "Invalid state in serial reception FSM: %d! Resetting to WAIT_SOF.", state);
                 state = WAIT_SOF;
                 break;

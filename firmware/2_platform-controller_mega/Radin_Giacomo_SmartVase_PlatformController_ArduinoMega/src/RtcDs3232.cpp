@@ -1,9 +1,17 @@
+/*!
+ * @file RtcDs3232.cpp
+ * @ingroup MegaSensors
+ * @brief Implementazione del driver DS3232: transazioni I2C per lettura/scrittura ora e gestione flag OSF.
+ * @date 2026-06-11
+ * @author Giacomo Radin
+ */
+
 #include "RtcDs3232.h"
 #include <Wire.h>
 
-#define DS3232_I2C_ADDR   0x68
-#define DS3232_REG_TIME   0x00  // 7 byte BCD: sec, min, ora, dow, giorno, mese, anno
-#define DS3232_REG_STATUS 0x0F  // bit7 = OSF (oscillator stop flag)
+#define DS3232_I2C_ADDR   0x68 /**< Indirizzo I2C a 7 bit del DS3232/DS3231. */
+#define DS3232_REG_TIME   0x00 /**< Registro iniziale del blocco ora: 7 byte BCD (sec, min, ora, dow, giorno, mese, anno). */
+#define DS3232_REG_STATUS 0x0F /**< Registro di status; bit7 = OSF (Oscillator Stop Flag). */
 
 bool RtcDs3232::begin() {
     Wire.beginTransmission(DS3232_I2C_ADDR);

@@ -1,3 +1,11 @@
+/*! @file WifiManager.cpp
+ *  @ingroup HubNetworking
+ *  @brief Implementazione di WifiManager: connessione STA, sync NTP, AP di
+ *  provisioning con Captive Portal.
+ *  @author Giacomo Radin
+ *  @date 2025-10-28
+ */
+
 #include "WifiManager.h"
 #include "ConfigManager.h" // Necessario per accedere alle credenziali
 #include <WiFi.h>
@@ -18,9 +26,16 @@ namespace {
     volatile bool provisioningComplete = false; // volatile perché modificato in un handler
 }
 
-// NTP best-effort: senza ora reale la verifica di validita' del certificato
-// TLS verso HiveMQ fallisce ("certificate not yet valid") e l'handshake non
-// parte. Attesa breve e non bloccante oltre ~5 s (al boot e' accettabile).
+/*! @brief Avvia la sincronizzazione SNTP e attende (al massimo ~5 s, bloccante)
+ *  che l'orologio di sistema raggiunga un epoch plausibile.
+ *  @details NTP best-effort: senza ora reale la verifica di validita' del
+ *  certificato TLS verso HiveMQ fallisce ("certificate not yet valid") e
+ *  l'handshake non parte. L'attesa qui e' solo un primo tentativo al boot:
+ *  se a 5 s l'ora non e' ancora valida, MqttManager::reconnect() forza
+ *  comunque nuovi tentativi SNTP periodici prima di connettersi.
+ *  @note Bloccante per `delay(100)` a step: accettabile solo perche' chiamata
+ *  una tantum all'avvio (dopo connect() riuscita), mai dai task FreeRTOS a
+ *  regime. */
 static void syncTimeNtp() {
     configTime(0, 0, "pool.ntp.org", "time.google.com");
     unsigned long t0 = millis();
@@ -49,10 +64,11 @@ WifiManager::WifiManager(ConfigManager& configMgr)
 
 // Tenta la connessione al WiFi con timeout; in ogni caso il boot prosegue.
 //
-// Comportamento rivisto per il bring-up: il fallimento della connessione NON
-// cancella piu' le credenziali da NVS e NON avvia l'AP di provisioning (la
-// configurazione si fa dalla CLI seriale). L'autoreconnect dell'SDK continua
-// a riprovare in background, quindi l'Hub aggancia la rete appena disponibile.
+// Se mancano le credenziali in NVS, o se la connessione STA non va a buon
+// fine entro WIFI_CONNECT_TIMEOUT_MS, avvia l'AP di provisioning
+// "SmartVase_Setup_XXXX" + Captive Portal (vedi startProvisioningAP()).
+// Le credenziali NVS non vengono mai cancellate in caso di fallimento: un
+// nuovo tentativo si puo' fare anche da CLI seriale (`wifi connect`).
 void WifiManager::connect() {
     const char* ssid = _configMgr.getWifiSsid();
     const char* password = _configMgr.getWifiPassword();

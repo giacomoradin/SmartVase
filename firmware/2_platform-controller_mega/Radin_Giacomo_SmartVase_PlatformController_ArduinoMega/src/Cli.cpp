@@ -1,3 +1,15 @@
+/*!
+    @file   Cli.cpp
+
+    @ingroup MegaCli
+
+    @brief  Implementazione del parser/dispatcher CLI (vedi Cli.h per la tabella comandi).
+
+    @date   2026-05-20
+
+    @author Giacomo Radin
+*/
+
 #include "Cli.h"
 #include "Movement.h"
 #include "Sensors.h"
@@ -5,9 +17,16 @@
 #include "Persistence.h"
 #include "SystemStatus.h"
 
-extern int freeRam(); // definito in main.cpp
+/*! @brief RAM SRAM libera in byte, definita in main.cpp (usata da `status`/`diag`). */
+extern int freeRam();
 
-// Nome leggibile dello stato di movimento (usato dalla diagnostica).
+/*!
+    @brief    Nome leggibile (stringa in flash) dello stato di movimento.
+    @details  Usato dal comando `diag` per stampare lo stato corrente della FSM senza
+              tenere una stringa duplicata in RAM (`F()` la mette in PROGMEM su AVR).
+    @param[in] s Stato di movimento da convertire.
+    @return   Puntatore a stringa flash con il nome dello stato.
+*/
 static const __FlashStringHelper* movStateName(CppMovementState s) {
     switch (s) {
         case CPP_M_MOVING:          return F("MOVING");
@@ -20,7 +39,16 @@ static const __FlashStringHelper* movStateName(CppMovementState s) {
     }
 }
 
-// Stampa una riga di diagnostica per una sonda US: valore + verdetto + hint.
+/*!
+    @brief    Stampa una riga di diagnostica per una sonda ad ultrasuoni.
+    @details  Usata dal comando `diag` per ciascuna delle 6 sonde HC-SR04: mostra
+              pin TRIG/ECHO, valore letto e un suggerimento di troubleshooting se
+              la lettura è `NaN` (nessun eco, possibile problema di cablaggio/alimentazione).
+    @param[in] label Etichetta della sonda (stringa flash, es. "US1 top").
+    @param[in] trig  Numero del pin TRIG (solo per la stampa diagnostica).
+    @param[in] echo  Numero del pin ECHO (solo per la stampa diagnostica).
+    @param[in] cm    Distanza misurata in cm (`NaN` se la lettura non è valida).
+*/
 static void diagUs(const __FlashStringHelper* label, uint8_t trig, uint8_t echo, float cm) {
     Serial.print(F("  "));
     Serial.print(label);

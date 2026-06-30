@@ -1,3 +1,15 @@
+/*!
+    @file   Pump.cpp
+
+    @ingroup MegaPump
+
+    @brief  Implementazione del driver relè pompa (vedi Pump.h).
+
+    @date   2026-05-20
+
+    @author Giacomo Radin
+*/
+
 #include "Pump.h"
 
 // PIN map autoritativo: relay IN1 = D10 (pompa), IN2 = D11 (riservato).
@@ -12,6 +24,7 @@
 // Sopra questa soglia il comando viene rifiutato.
 #define PUMP_MAX_DURATION_MS    60000UL  // 60 s
 
+/*! @brief Attiva il relè della pompa (gestisce la polarità via `PUMP_RELAY_ACTIVE_LOW`). */
 static inline void pumpOn() {
 #if PUMP_RELAY_ACTIVE_LOW
     digitalWrite(PUMP_RELAY_PIN, LOW);
@@ -20,6 +33,7 @@ static inline void pumpOn() {
 #endif
 }
 
+/*! @brief Disattiva il relè della pompa (gestisce la polarità via `PUMP_RELAY_ACTIVE_LOW`). */
 static inline void pumpOff() {
 #if PUMP_RELAY_ACTIVE_LOW
     digitalWrite(PUMP_RELAY_PIN, HIGH);
