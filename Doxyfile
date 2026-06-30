@@ -1,0 +1,90 @@
+# Doxyfile generated for SmartVase Project
+PROJECT_NAME           = "SmartVase"
+PROJECT_NUMBER         = "v1.3.0"
+PROJECT_BRIEF          = "IoT Mobile Greenhouse (ESP32 Hub, ESP32 CAM & Arduino Mega Platform Controller)"
+OUTPUT_DIRECTORY       = docs/doxygen
+CREATE_SUBDIRS         = NO
+OUTPUT_LANGUAGE        = Italian
+BRIEF_MEMBER_DESC      = YES
+REPEAT_BRIEF           = YES
+ALWAYS_DETAILED_SEC    = NO
+FULL_PATH_NAMES        = YES
+STRIP_FROM_PATH        = C:/SmartVase_prject/smartvase/
+JAVADOC_AUTOBRIEF      = YES
+OPTIMIZE_OUTPUT_FOR_C  = YES
+MARKDOWN_SUPPORT       = YES
+AUTOLINK_SUPPORT       = YES
+SUBGROUPING            = YES
+
+# Build-related settings
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+EXTRACT_LOCAL_METHODS  = YES
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = NO
+GENERATE_TODOLIST      = YES
+GENERATE_TESTLIST      = YES
+GENERATE_BUGLIST       = YES
+GENERATE_DEPRECATEDLIST= YES
+SHOW_USED_FILES        = YES
+SHOW_FILES             = YES
+SHOW_NAMESPACES        = YES
+
+# Input files and directories
+INPUT                  = README.md \
+                         docs/ARCHITECTURE.md \
+                         docs/SmartVase_Project_State.md \
+                         docs/Lab_Bringup_Checklist.md \
+                         docs/Scheda_Verifica_Hardware.md \
+                         firmware/1_esp32-hub/Radin_Giacomo_SmartVase_LogicWebHub_ESP32Standard/src \
+                         firmware/1_esp32-hub/Radin_Giacomo_SmartVase_LogicWebHub_ESP32Standard/include \
+                         firmware/2_platform-controller_mega/Radin_Giacomo_SmartVase_PlatformController_ArduinoMega/src \
+                         firmware/3_esp32-cam/Radin_Giacomo_SmartVase_VisionCoProcessor_ESP32CAM/src
+
+INPUT_ENCODING         = UTF-8
+FILE_PATTERNS          = *.c *.cc *.cxx *.cpp *.c++ *.h *.hh *.hxx *.hpp *.h++ *.md
+RECURSIVE              = YES
+EXCLUDE_PATTERNS       = */pb* */smartvase.pb* */nanopb* */.pio/* */.git/*
+USE_MDFILE_AS_MAINPAGE = README.md
+
+# Source browser configuration
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+STRIP_CODE_COMMENTS    = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+REFERENCES_LINK_SOURCE = YES
+
+# HTML configuration
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+HTML_FILE_EXTENSION    = .html
+HTML_EXTRA_STYLESHEET  = docs/doxygen/doxygen-awesome.css docs/doxygen/custom.css
+HTML_DYNAMIC_MENUS     = YES
+HTML_DYNAMIC_SECTIONS  = YES
+HTML_CODE_FOLDING      = YES
+HTML_COPY_CLIPBOARD    = YES
+DISABLE_INDEX          = NO
+GENERATE_TREEVIEW      = YES
+TREEVIEW_WIDTH         = 250
+
+# LaTeX configuration (disabled for speed and size)
+GENERATE_LATEX         = NO
+
+# Graphviz/Dot configuration
+HAVE_DOT               = YES
+DOT_NUM_THREADS        = 4
+CLASS_GRAPH            = YES
+COLLABORATION_GRAPH    = YES
+GROUP_GRAPHS           = YES
+TEMPLATE_RELATIONS     = YES
+INCLUDE_GRAPH          = YES
+INCLUDED_BY_GRAPH      = YES
+CALL_GRAPH             = YES
+CALLER_GRAPH           = YES
+GRAPHICAL_HIERARCHY    = YES
+DIRECTORY_GRAPH        = YES
+DOT_IMAGE_FORMAT       = svg
+INTERACTIVE_SVG        = YES

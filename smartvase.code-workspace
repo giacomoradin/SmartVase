@@ -1,0 +1,23 @@
+{
+	"folders": [
+		{
+			"name": "📄 docs & infra (repo root)",
+			"path": "."
+		},
+		{
+			"name": "🧠 Hub (ESP32)",
+			"path": "firmware/1_esp32-hub/Radin_Giacomo_SmartVase_LogicWebHub_ESP32Standard"
+		},
+		{
+			"name": "💪 Mega (Platform Controller)",
+			"path": "firmware/2_platform-controller_mega/Radin_Giacomo_SmartVase_PlatformController_ArduinoMega"
+		},
+		{
+			"name": "👁 CAM (ESP32-CAM)",
+			"path": "firmware/3_esp32-cam/Radin_Giacomo_SmartVase_VisionCoProcessor_ESP32CAM"
+		}
+	],
+	"settings": {
+		"C_Cpp.intelliSenseEngine": "default"
+	}
+}
