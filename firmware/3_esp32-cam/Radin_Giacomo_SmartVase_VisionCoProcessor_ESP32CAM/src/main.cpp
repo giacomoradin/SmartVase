@@ -20,7 +20,6 @@
  *   - Pubblicazione Firestore su smartvase/{device_id}/vision/image con
  *     l'URL ottenuto + metadati (timestamp, dimensione, CRC32).
  *   - Stats cumulative persistenti in NVS.
- *   - Web server locale (porta 80) con live feed MJPEG (/, /stream, /jpg).
  *   - Telemetria di debug periodica sul monitor seriale (ogni 5 s).
  *
  *  Configurazione (NVS namespace "cam", scrivibile dalla CLI con `set`):
@@ -97,12 +96,6 @@ AsyncClient aClient(ssl_client, getNetwork(network));
 
 FirebaseApp app;
 UserAuth user_auth;
-
-// -------------------- STATE --------------------
-unsigned long lastCaptureMs     = 0;
-unsigned long lastWifiAttemptMs = 0;
-bool cameraOk                   = false;
-bool captureRequested           = false;
 
 // -------------------- NVS PREFERENCES --------------------
 Preferences prefs;
@@ -398,51 +391,6 @@ void notifyFirestore(const String& imageUrl, size_t bytes, uint32_t crc, uint32_
     }
 }
 
-
-// -------------------- CAPTURE --------------------
-// Cattura un frame e (se richiesto) lo uploada e pubblica su Firestore.
-// I metadati del frame vengono copiati PRIMA di restituire il buffer
-// al driver: fb non e' piu' valido dopo esp_camera_fb_return.
-bool doCapture(bool uploadAndPublish) {
-    if (!cameraOk) {
-        Serial.println("[CAM] camera non inizializzata.");
-        return false;
-    }
-    unsigned long t0 = millis();
-    camera_fb_t* fb = esp_camera_fb_get();
-    unsigned long capMs = millis() - t0;
-    if (!fb) {
-        stats.failed_frames++;
-        saveStats();
-        Serial.println("[CAM] cattura FALLITA (fb nullo).");
-        return false;
-    }
-    size_t   frameLen = fb->len;
-    uint32_t crc      = crc32_le(0, fb->buf, fb->len);
-
-    stats.successful_frames++;
-    stats.total_capture_time_ms += capMs;
-
-    Serial.printf("[CAM] frame ok: %u byte, crc32=0x%08lX, %lu ms\n",
-                  (unsigned)frameLen, (unsigned long)crc, capMs);
-
-    String url;
-    if (uploadAndPublish && cfg.upload_url.length() > 0 &&
-        WiFi.status() == WL_CONNECTED) {
-        url = uploadJpeg(fb->buf, frameLen, "image/jpeg");
-    }
-    esp_camera_fb_return(fb);
-
-    if (url.length() > 0) {
-        publishVisionImage(url, frameLen, crc, (uint32_t)capMs);
-        Serial.printf("[CAM] upload ok: %s\n", url.c_str());
-    } else if (uploadAndPublish && cfg.upload_url.length() > 0) {
-        Serial.println("[CAM] upload non riuscito (vedi stats).");
-    }
-    saveStats();
-    return true;
-}
-
 bool doCapture(bool uploadAndPublish) {
     if (!cameraOk) return false;
     
@@ -500,7 +448,6 @@ void cliPrintHelp() {
     Serial.println("capture               cattura di test (senza upload)");
     Serial.println("upload                cattura + upload + publish completo");
     Serial.println("stats                 statistiche cumulative");
-    Serial.println("feed                  URL del live feed web (porta 80)");
     Serial.println("reboot                riavvia la CAM");
 }
 
@@ -516,10 +463,6 @@ void cliPrintStatus() {
         Serial.printf("wifi       = OFFLINE%s\n",
                       cfg.wifi_ssid.length() == 0 ? " (non configurato)" : "");
     }
-    if (webServerStarted && WiFi.status() == WL_CONNECTED)
-        Serial.printf("feed       = http://%s/\n", WiFi.localIP().toString().c_str());
-    else
-        Serial.println("feed       = (in attesa di Wi-Fi)");
     time_t nowEpoch = time(nullptr);
     Serial.printf("ntp_epoch  = %lu%s\n", (unsigned long)nowEpoch,
                   nowEpoch < (time_t)NTP_VALID_EPOCH ? " (non sincronizzato)" : "");
@@ -575,10 +518,6 @@ void cliExecute(char* line) {
     if (strcmp(line, "show")    == 0) { cliPrintShow();   return; }
     if (strcmp(line, "stats")   == 0) { cliPrintStats();  return; }
     if (strcmp(line, "feed")    == 0) {
-        if (webServerStarted && WiFi.status() == WL_CONNECTED)
-            Serial.printf("[CAM] live feed: http://%s/\n", WiFi.localIP().toString().c_str());
-        else
-            Serial.println("[CAM] feed non attivo (Wi-Fi non connesso o camera KO)");
         return;
     }
     if (strcmp(line, "capture") == 0) { doCapture(false); return; }
@@ -603,6 +542,10 @@ void cliExecute(char* line) {
         delay(200);
         ESP.restart();
         return;
+    }
+    if (strncmp(line, "set ", 4) == 0) { 
+        cliHandleSet(line + 4); 
+        return; 
     }
     Serial.printf("[CLI] comando sconosciuto: '%s' (prova 'help')\n", line);
 }
@@ -639,8 +582,6 @@ void printDebugTelemetry() {
                   cameraOk ? "OK" : "FAIL",
                   (unsigned long)stats.successful_frames,
                   (unsigned long)stats.failed_frames);
-    if (webServerStarted && wifiUp)
-        Serial.printf(" | feed=http://%s/", WiFi.localIP().toString().c_str());
     Serial.println();
 }
 
@@ -655,7 +596,6 @@ void setup() {
     loadConfig();
     loadStats();
     makeDeviceId();
-    buildTopics();
     Serial.printf("[CAM] device_id=%s\n", deviceId);
 
     cameraOk = initCamera();
