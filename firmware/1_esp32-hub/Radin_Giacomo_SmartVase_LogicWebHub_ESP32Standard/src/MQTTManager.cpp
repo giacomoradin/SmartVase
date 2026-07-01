@@ -1,7 +1,7 @@
 /*! @file MQTTManager.cpp
  *  @ingroup HubNetworking
- *  @brief Implementazione di MqttManager: init transport TLS/plaintext, loop
- *  di connessione/pubblicazione, callback dei messaggi in arrivo.
+ *  @brief Implementation of MqttManager: TLS/plaintext transport init,
+ *  connection/publish loop, callback for incoming messages.
  *  @author Giacomo Radin
  *  @date 2025-10-28
  */
@@ -17,18 +17,19 @@
 
 static const char *TAG = "MqttManager";
 
-// Sotto questo epoch l'ora di sistema NON e' valida (orologio non sincronizzato
-// via NTP): la verifica di validita' del certificato TLS fallirebbe.
+/*! @brief Minimum epoch below which the system time is considered NOT valid
+ *         (clock not yet synchronized via NTP): the HiveMQ TLS certificate
+ *         validity check would fail, so we wait for NTP before connecting. */
 #define NTP_VALID_EPOCH 1700000000UL
 
-// Cert HiveMQ Cloud (ISRG Root X1). Definito in include/hivemq_ca_cert.h
-// (shared con la CAM via infra/hivemq_ca_cert.h).
+// HiveMQ Cloud cert (ISRG Root X1). Defined in include/hivemq_ca_cert.h
+// (shared with the CAM via infra/hivemq_ca_cert.h).
 static const char* hivemq_ca_cert = SMARTVASE_HIVEMQ_CA_CERT;
 
-// Inizializza il puntatore statico all'istanza
+// Initialize the static instance pointer
 MqttManager* MqttManager::_instance = nullptr;
 
-// --- Implementazione Metodi Classe MqttManager ---
+// --- MqttManager Class Method Implementation ---
 
 MqttManager::MqttManager(QueueHandle_t txQueue, QueueHandle_t rxQueue, ConfigManager& configManager)
     : _txQueue(txQueue),
@@ -36,14 +37,14 @@ MqttManager::MqttManager(QueueHandle_t txQueue, QueueHandle_t rxQueue, ConfigMan
       _configManager(configManager),
       _mqttClient(_wifiClientSecure) // Passa il client sicuro al costruttore di PubSubClient
 {
-    _instance = this; // Salva il puntatore all'istanza per il callback statico
+    _instance = this; // Store the instance pointer for the static callback
 }
 
 void MqttManager::init() {
     ESP_LOGI(TAG, "Initializing MQTT Manager...");
 
-    // Genera un Client ID univoco basato sul MAC Address.
-    // esp_read_mac legge dalla eFuse e funziona anche a radio spenta.
+    // Generate a unique Client ID based on the MAC Address.
+    // esp_read_mac reads from the eFuse and works even with the radio off.
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     _mqttClientId = "SmartVase_HUB_";
@@ -52,16 +53,16 @@ void MqttManager::init() {
     _mqttClientId += macSuffix;
     ESP_LOGI(TAG, "MQTT Client ID: %s", _mqttClientId.c_str());
 
-    // Device ID STATICO da fonte unica HUB_DEVICE_ID (ConfigManager.h), coerente
-    // con MainLogic. Il MAC resta usato solo per il Client ID MQTT qui sopra.
-    _topicCommand = String("smartvase/") + HUB_DEVICE_ID + "/command/#"; // Sottoscrive a tutti i sottotopic
+    // STATIC device ID from the single source HUB_DEVICE_ID (ConfigManager.h),
+    // consistent with MainLogic. The MAC is only used for the MQTT Client ID above.
+    _topicCommand = String("smartvase/") + HUB_DEVICE_ID + "/command/#"; // Subscribes to all sub-topics
     _topicStatus  = String("smartvase/") + HUB_DEVICE_ID + "/status";
     ESP_LOGI(TAG, "Command Topic: %s", _topicCommand.c_str());
     ESP_LOGI(TAG, "Status Topic (LWT): %s", _topicStatus.c_str());
 
 
-    // Transport in base alla porta: TLS (8883/8884, con CA cert + NTP) oppure
-    // in chiaro (1883, broker locale: nessuna TLS, nessun NTP richiesto).
+    // Transport chosen based on the port: TLS (8883/8884, with CA cert + NTP)
+    // or plaintext (1883, local broker: no TLS, no NTP required).
     const char* broker = _configManager.getMqttBroker();
     uint16_t port = _configManager.getMqttPort();
     if (port == 8883 || port == 8884) {
@@ -80,34 +81,34 @@ void MqttManager::init() {
         ESP_LOGE(TAG, "MQTT Broker configuration missing or invalid!");
     }
 
-    // Imposta la funzione di callback per i messaggi in arrivo
+    // Set the callback function for incoming messages
     _mqttClient.setCallback(MqttManager::mqttCallback);
 
-    // Imposta la dimensione del buffer interno di PubSubClient (se necessario)
+    // Set PubSubClient's internal buffer size (if needed)
     _mqttClient.setBufferSize(MQTT_BUFFER_SIZE);
 
-    // Bound al wait del CONNACK/letture: evita che un broker morto tenga il
-    // task appeso a lungo (resilienza; default PubSubClient = 15 s).
+    // Bounds the wait for CONNACK/reads: prevents a dead broker from keeping
+    // the task hanging for a long time (resilience; PubSubClient default = 15 s).
     _mqttClient.setSocketTimeout(10);
 }
 
-// Funzione statica entry point per il Task FreeRTOS
+// Static entry point function for the FreeRTOS Task
 void MqttManager::taskEntry(void* pvParameters) {
     MqttManager* instance = static_cast<MqttManager*>(pvParameters);
-    // init() e' gia' chiamato dal setup() prima della creazione del task:
-    // non lo si ripete per evitare doppia inizializzazione.
-    instance->taskRun(); // Entra nel loop principale del task
+    // init() is already called by setup() before the task is created:
+    // it is not repeated here, to avoid double initialization.
+    instance->taskRun(); // Enter the task's main loop
 }
 
-// Funzione principale del Task (loop infinito)
+// Main task function (infinite loop)
 void MqttManager::taskRun() {
     ESP_LOGI(TAG, "MqttManager Task Started.");
     MqttMessage msgToPublish;
     bool warnedNotConfigured = false;
 
     while (true) {
-        // 0. Broker non configurato: nessun tentativo di connessione.
-        //    Si svuota comunque la coda TX per non far accumulare messaggi.
+        // 0. Broker not configured: no connection attempt.
+        //    The TX queue is drained anyway, to avoid accumulating messages.
         if (!isConfigured()) {
             if (!warnedNotConfigured) {
                 warnedNotConfigured = true;
@@ -119,61 +120,61 @@ void MqttManager::taskRun() {
             continue;
         }
 
-        // 1. Assicurati che il client MQTT sia connesso
+        // 1. Make sure the MQTT client is connected
         if (!_mqttClient.connected()) {
-            // Tenta la riconnessione (con logica di backoff interno).
-            // Nel frattempo la coda TX viene svuotata: la telemetria e'
-            // periodica, accumularla offline non ha valore.
+            // Attempt reconnection (with internal backoff logic).
+            // Meanwhile the TX queue is drained: telemetry is periodic,
+            // accumulating it offline has no value.
             reconnect();
-            // Offline: scarta SOLO la telemetria (perde valore se vecchia) ma
-            // mantieni in coda alarm/ack/log per inviarli alla riconnessione.
-            // Bounded: un solo giro sui messaggi presenti ora.
+            // Offline: discard ONLY telemetry (loses value if stale) but
+            // keep alarm/ack/log queued to send them on reconnection.
+            // Bounded: a single pass over the messages currently present.
             UBaseType_t pending = uxQueueMessagesWaiting(_txQueue);
             for (UBaseType_t i = 0; i < pending; ++i) {
                 if (xQueueReceive(_txQueue, &msgToPublish, 0) != pdPASS) break;
-                if (strstr(msgToPublish.topic, "/telemetry") != nullptr) continue; // scarta
-                if (xQueueSend(_txQueue, &msgToPublish, 0) != pdPASS) break;        // rimetti in coda
+                if (strstr(msgToPublish.topic, "/telemetry") != nullptr) continue; // discard
+                if (xQueueSend(_txQueue, &msgToPublish, 0) != pdPASS) break;        // put back in the queue
             }
         } else {
-            // 2. Se connesso, processa i messaggi MQTT in arrivo e mantieni la connessione attiva
+            // 2. If connected, process incoming MQTT messages and keep the connection alive
             _mqttClient.loop();
 
-            // 3. Controlla se ci sono messaggi JSON da pubblicare dalla coda _txQueue
-            //    Controlla senza bloccare (timeout 0)
+            // 3. Check whether there are JSON messages to publish from the _txQueue
+            //    Check without blocking (timeout 0)
             if (xQueueReceive(_txQueue, &msgToPublish, 0) == pdPASS) {
                 ESP_LOGD(TAG, "Publishing message from TX queue to topic: %s", msgToPublish.topic);
-                //ESP_LOGV(TAG, "Payload: %s", msgToPublish.payload); // Logga payload solo a livello Verbose
+                //ESP_LOGV(TAG, "Payload: %s", msgToPublish.payload); // Log the payload only at Verbose level
 
-                // Pubblica il messaggio
-                // Parametri: topic, payload (byte array), lunghezza payload, retain (false)
+                // Publish the message
+                // Parameters: topic, payload (byte array), payload length, retain (false)
                 if (!_mqttClient.publish(msgToPublish.topic, (uint8_t*)msgToPublish.payload, strlen(msgToPublish.payload), false)) {
                     ESP_LOGE(TAG, "MQTT Publish failed! Topic: %s", msgToPublish.topic);
-                    // Qui potresti rimettere il messaggio in coda o scartarlo
+                    // Here you could requeue the message or discard it
                 } else {
                      ESP_LOGD(TAG, "Publish successful.");
                 }
             }
-        } // Fine else (connesso)
+        } // End else (connected)
 
-        // 4. Pausa del task per cedere CPU
-        //    La frequenza dipende da quanto reattivo deve essere il client MQTT
-        //    e da quanto spesso ci aspettiamo messaggi da pubblicare.
-        vTaskDelay(pdMS_TO_TICKS(100)); // Controlla/Processa ogni 100ms
+        // 4. Task pause to yield the CPU
+        //    The frequency depends on how reactive the MQTT client needs to be
+        //    and how often we expect messages to publish.
+        vTaskDelay(pdMS_TO_TICKS(100)); // Check/process every 100ms
     }
 }
 
-// Tenta la riconnessione al broker MQTT. NON bloccante: ritorna subito se il
-// backoff non e' ancora scaduto (la cadenza la da' il vTaskDelay del taskRun),
-// cosi' il task resta reattivo invece di dormire 5 s a tentativo.
+// Attempts to reconnect to the MQTT broker. NON-blocking: returns immediately
+// if the backoff has not expired yet (the pacing comes from taskRun's
+// vTaskDelay), so the task stays reactive instead of sleeping 5 s per attempt.
 bool MqttManager::reconnect() {
-    // Niente WiFi: nessun tentativo, nessun delay bloccante.
+    // No Wi-Fi: no attempt, no blocking delay.
     if (!WiFi.isConnected()) return false;
 
-    // NTP serve SOLO per la TLS (validazione data del cert): con broker in
-    // chiaro (1883) si salta del tutto, cosi' una rete locale offline puo'
-    // connettersi lo stesso. Con l'ora a 1970 il cert HiveMQ risulta "not yet
-    // valid": SNTP di default ritenta ~ogni ora, quindi se resta invalida forzo
-    // un nuovo tentativo ogni 30 s riavviando SNTP.
+    // NTP is needed ONLY for TLS (cert date validation): with a plaintext
+    // broker (1883) it is skipped entirely, so an offline local network can
+    // still connect. With the clock at 1970 the HiveMQ cert shows as "not yet
+    // valid": SNTP retries by default ~every hour, so if it stays invalid I
+    // force a new attempt every 30 s by restarting SNTP.
     uint16_t mqttPort = _configManager.getMqttPort();
     bool needsTLS = (mqttPort == 8883 || mqttPort == 8884);
     if (needsTLS && time(nullptr) < NTP_VALID_EPOCH) {
@@ -229,11 +230,11 @@ bool MqttManager::reconnect() {
     return false;
 }
 
-// Callback per i messaggi MQTT in arrivo (DEVE essere statica)
+// Callback for incoming MQTT messages (MUST be static)
 void MqttManager::mqttCallback(char* topic, byte* payload, unsigned int length) {
     ESP_LOGI(TAG, "Message arrived [%s]", topic);
 
-    // Controlla se l'istanza e la coda sono valide
+    // Check whether the instance and the queue are valid
     if (!_instance || !_instance->_rxQueue) {
         ESP_LOGE(TAG, "Callback invoked without a valid instance or RX queue!");
         return;

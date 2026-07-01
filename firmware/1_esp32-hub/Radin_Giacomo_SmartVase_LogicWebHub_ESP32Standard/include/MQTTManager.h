@@ -1,7 +1,7 @@
 /*! @file MQTTManager.h
  *  @ingroup HubNetworking
- *  @brief Client MQTT verso HiveMQ Cloud: pubblica telemetria/log/alarm/ack e
- *  riceve i comandi sottoscritti su `smartvase/{device_id}/command/#`.
+ *  @brief MQTT client towards HiveMQ Cloud: publishes telemetry/log/alarm/ack
+ *  and receives the commands subscribed on `smartvase/{device_id}/command/#`.
  *  @author Giacomo Radin
  *  @date 2025-10-28
  */
@@ -14,12 +14,12 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include <WiFi.h>             // WiFiClient (plaintext)
-#include <WiFiClientSecure.h> // Per connessione TLS
-#include <PubSubClient.h>     // Libreria MQTT
+#include <WiFiClientSecure.h> // For the TLS connection
+#include <PubSubClient.h>     // MQTT library
 
-// Include le definizioni necessarie
-#include "ConfigManager.h" // Per accedere alla configurazione MQTT
-#include "MainLogic.h"     // Per la struct MqttMessage (definita lì)
+// Include the required definitions
+#include "ConfigManager.h" // To access the MQTT configuration
+#include "MainLogic.h"     // For the MqttMessage struct (defined there)
 
 /*! @addtogroup HubNetworking
  *  @{
@@ -27,106 +27,108 @@
 
 /*!
  * @def MQTT_BUFFER_SIZE
- * @brief Dimensione del buffer interno di PubSubClient per i messaggi
- * MQTT in ingresso/uscita.
- * @note Deve restare >= MAX_JSON_MESSAGE_LENGTH + overhead del topic, altrimenti
- * PubSubClient tronca silenziosamente i payload piu' grandi.
+ * @brief Size of the internal PubSubClient buffer for the inbound/outbound
+ * MQTT messages.
+ * @note Must stay >= MAX_JSON_MESSAGE_LENGTH + topic overhead, otherwise
+ * PubSubClient silently truncates the larger payloads.
  */
 #define MQTT_BUFFER_SIZE (MAX_JSON_MESSAGE_LENGTH + 128)
 
 /*!
  * @class MqttManager
- * @brief Gestisce la connessione MQTT/TLS al broker HiveMQ Cloud: corpo del
- * task FreeRTOS `TaskMqttLink` (vedi taskRun()).
- * @details Consuma `_txQueue` (JSON pronti da pubblicare, prodotti da MainLogic)
- * e produce su `_rxQueue` i comandi ricevuti dalla sottoscrizione
- * `command/#` (consumati da MainLogic). Sceglie il transport (plaintext o TLS)
- * in base alla porta configurata: 8883/8884 = TLS con verifica CA HiveMQ e
- * NTP obbligatorio, 1883 = plaintext senza NTP (pensato per un broker locale
- * in laboratorio offline).
- * @note Le funzioni isConfigured()/isConnected() sono lette anche dalla CLI
- * seriale (task Arduino principale) senza sincronizzazione esplicita con
- * TaskMqttLink: i valori restituiti sono quindi indicativi, va bene per il
- * solo scopo di debug/diagnostica.
+ * @brief Manages the MQTT/TLS connection to the HiveMQ Cloud broker: body of
+ * the FreeRTOS task `TaskMqttLink` (see taskRun()).
+ * @details Consumes `_txQueue` (JSON ready to publish, produced by MainLogic)
+ * and produces on `_rxQueue` the commands received from the `command/#`
+ * subscription (consumed by MainLogic). It chooses the transport (plaintext or
+ * TLS) based on the configured port: 8883/8884 = TLS with HiveMQ CA
+ * verification and mandatory NTP, 1883 = plaintext without NTP (intended for a
+ * local broker in an offline lab).
+ * @note The isConfigured()/isConnected() functions are also read from the
+ * serial CLI (main Arduino task) without explicit synchronization with
+ * TaskMqttLink: the returned values are therefore indicative, which is fine
+ * for the sole purpose of debug/diagnostics.
  */
 class MqttManager {
 public:
-    /*! @brief Costruttore.
-     *  @param[in] txQueue Coda FreeRTOS da cui questo task legge i JSON da pubblicare.
-     *  @param[in] rxQueue Coda FreeRTOS su cui questo task scrive i comandi ricevuti via MQTT.
-     *  @param[in] configManager Riferimento al ConfigManager per leggere broker/porta/credenziali. */
+    /*! @brief Constructor.
+     *  @param[in] txQueue FreeRTOS queue from which this task reads the JSON to publish.
+     *  @param[in] rxQueue FreeRTOS queue on which this task writes the commands received via MQTT.
+     *  @param[in] configManager Reference to the ConfigManager to read broker/port/credentials. */
     MqttManager(QueueHandle_t txQueue, QueueHandle_t rxQueue, ConfigManager& configManager);
 
-    /*! @brief Entry point statico per `xTaskCreatePinnedToCore`: inoltra alla taskRun() dell'istanza.
-     *  @param[in] pvParameters Puntatore alla MqttManager su cui girare il task. */
+    /*! @brief Static entry point for `xTaskCreatePinnedToCore`: forwards to the instance's taskRun().
+     *  @param[in] pvParameters Pointer to the MqttManager the task runs on. */
     static void taskEntry(void* pvParameters);
 
-    /*! @brief Inizializza client ID, topic, transport (TLS/plaintext) e parametri
-     *  di PubSubClient.
-     *  @details Genera il client ID MQTT dal MAC (`SmartVase_HUB_<MAC>`), calcola
-     *  i topic `command/#` e `status` da `HUB_DEVICE_ID`, e imposta il CA cert
-     *  HiveMQ solo se la porta configurata richiede TLS (8883/8884).
-     *  @note Va chiamata una sola volta da setup(), PRIMA della creazione del
-     *  task TaskMqttLink (taskEntry() non la richiama, per evitare doppia init). */
+    /*! @brief Initializes the client ID, topics, transport (TLS/plaintext) and
+     *  PubSubClient parameters.
+     *  @details Generates the MQTT client ID from the MAC (`SmartVase_HUB_<MAC>`),
+     *  computes the `command/#` and `status` topics from `HUB_DEVICE_ID`, and
+     *  sets the HiveMQ CA cert only if the configured port requires TLS (8883/8884).
+     *  @note To be called once from setup(), BEFORE the creation of the
+     *  TaskMqttLink task (taskEntry() does not call it, to avoid a double init). */
     void init();
 
-    // --- Stato per la CLI di debug ---
-    /*! @brief @return true se un broker MQTT non vuoto e' configurato in NVS.
-     *  @note Lettura non sincronizzata col task MQTT: valore indicativo, solo per debug/CLI. */
+    // --- State for the debug CLI ---
+    /*! @brief @return true if a non-empty MQTT broker is configured in NVS.
+     *  @note Read not synchronized with the MQTT task: indicative value, for debug/CLI only. */
     bool isConfigured() {
         const char* b = _configManager.getMqttBroker();
         return b != nullptr && strlen(b) > 0;
     }
-    /*! @brief @return true se il client PubSubClient risulta connesso al broker.
-     *  @note Lettura non sincronizzata col task MQTT: valore indicativo, solo per debug/CLI. */
+    /*! @brief @return true if the PubSubClient client appears connected to the broker.
+     *  @note Read not synchronized with the MQTT task: indicative value, for debug/CLI only. */
     bool isConnected() { return _mqttClient.connected(); }
 
 private:
-    QueueHandle_t _txQueue; /**< Coda per ricevere JSON da pubblicare (prodotta da MainLogic). */
-    QueueHandle_t _rxQueue; /**< Coda per inoltrare a MainLogic i comandi ricevuti via MQTT. */
+    QueueHandle_t _txQueue; /**< Queue to receive the JSON to publish (produced by MainLogic). */
+    QueueHandle_t _rxQueue; /**< Queue to forward to MainLogic the commands received via MQTT. */
 
-    ConfigManager& _configManager; /**< Riferimento al gestore configurazioni (broker, credenziali). */
+    ConfigManager& _configManager; /**< Reference to the configuration manager (broker, credentials). */
 
-    // Transport WiFi: plaintext per broker su porta 1883, TLS per 8883/8884.
-    WiFiClient       _wifiClient;       /**< Transport plaintext, usato se la porta configurata e' 1883. */
-    WiFiClientSecure _wifiClientSecure; /**< Transport TLS (CA HiveMQ), usato per le porte 8883/8884. */
-    PubSubClient     _mqttClient;       /**< Client MQTT (libreria PubSubClient) sopra uno dei due transport. */
+    // WiFi transport: plaintext for a broker on port 1883, TLS for 8883/8884.
+    WiFiClient       _wifiClient;       /**< Plaintext transport, used if the configured port is 1883. */
+    WiFiClientSecure _wifiClientSecure; /**< TLS transport (HiveMQ CA), used for ports 8883/8884. */
+    PubSubClient     _mqttClient;       /**< MQTT client (PubSubClient library) on top of one of the two transports. */
 
-    char _mqttBuffer[MQTT_BUFFER_SIZE]; /**< Buffer interno di PubSubClient per i frame MQTT. */
+    char _mqttBuffer[MQTT_BUFFER_SIZE]; /**< Internal PubSubClient buffer for the MQTT frames. */
 
-    String _mqttClientId; /**< ID univoco del client MQTT, derivato dal MAC Wi-Fi STA. */
-    String _topicCommand; /**< Topic di sottoscrizione comandi, es. smartvase/HUB_123456/command/#. */
-    String _topicStatus;  /**< Topic di stato/LWT, es. smartvase/HUB_123456/status. */
+    String _mqttClientId; /**< Unique MQTT client ID, derived from the STA Wi-Fi MAC. */
+    String _topicCommand; /**< Command subscription topic, e.g. smartvase/HUB_123456/command/#. */
+    String _topicStatus;  /**< Status/LWT topic, e.g. smartvase/HUB_123456/status. */
 
-    /*! @brief Corpo del task FreeRTOS `TaskMqttLink`: loop infinito che gestisce
-     *  connessione, mantenimento (PubSubClient::loop()) e pubblicazione/ricezione messaggi.
-     *  @details Se il broker non e' configurato, drena e scarta la coda TX senza
-     *  tentare connessioni. Se disconnesso, tenta reconnect() e nel frattempo
-     *  scarta dalla coda TX solo i messaggi di telemetria (perdono valore se
-     *  vecchi), mantenendo invece alarm/log/ack per quando torna online. */
+    /*! @brief Body of the FreeRTOS task `TaskMqttLink`: infinite loop that
+     *  handles connection, keep-alive (PubSubClient::loop()) and message
+     *  publishing/reception.
+     *  @details If the broker is not configured, it drains and discards the TX
+     *  queue without attempting any connection. If disconnected, it attempts
+     *  reconnect() and meanwhile discards from the TX queue only the telemetry
+     *  messages (they lose value if stale), while keeping alarm/log/ack for when
+     *  it comes back online. */
     void taskRun();
 
-    /*! @brief Tenta la (ri)connessione al broker MQTT, NON bloccante.
-     *  @details Se serve TLS (porta 8883/8884) e l'ora di sistema non e' ancora
-     *  valida (NTP non sincronizzato), rimanda il connect e forza un nuovo
-     *  tentativo SNTP ogni 30 s anziche' attendere il retry orario di default
-     *  della libreria SNTP. Applica poi un backoff esponenziale (5->10->20->30 s)
-     *  con jitter tra i tentativi di connect veri e propri.
-     *  @return true se la connessione (o riconnessione) e' andata a buon fine.
-     *  @note "Non bloccante" qui significa che ritorna subito se il backoff non
-     *  e' ancora scaduto: la cadenza delle chiamate la da' il vTaskDelay in taskRun(). */
+    /*! @brief Attempts the (re)connection to the MQTT broker, NON-blocking.
+     *  @details If TLS is required (port 8883/8884) and the system time is not
+     *  valid yet (NTP not synchronized), it postpones the connect and forces a
+     *  new SNTP attempt every 30 s instead of waiting for the SNTP library's
+     *  default hourly retry. It then applies an exponential backoff
+     *  (5->10->20->30 s) with jitter between the actual connect attempts.
+     *  @return true if the connection (or reconnection) succeeded.
+     *  @note "Non-blocking" here means it returns immediately if the backoff has
+     *  not elapsed yet: the call cadence is set by the vTaskDelay in taskRun(). */
     bool reconnect();
 
-    /*! @brief Callback di PubSubClient invocata per ogni messaggio in arrivo sui topic sottoscritti.
-     *  @param[in] topic Topic MQTT del messaggio ricevuto.
-     *  @param[in] payload Buffer del payload (non NUL-terminated).
-     *  @param[in] length Lunghezza del payload in byte.
-     *  @note Deve essere statica (vincolo della libreria PubSubClient): usa
-     *  `_instance` per risalire allo stato dell'oggetto. Payload >= sizeof(MqttCommand::payload)
-     *  vengono scartati con un log di errore. */
+    /*! @brief PubSubClient callback invoked for every message arriving on the subscribed topics.
+     *  @param[in] topic MQTT topic of the received message.
+     *  @param[in] payload Payload buffer (not NUL-terminated).
+     *  @param[in] length Payload length in bytes.
+     *  @note Must be static (PubSubClient library constraint): it uses
+     *  `_instance` to reach the object state. Payloads >= sizeof(MqttCommand::payload)
+     *  are discarded with an error log. */
     static void mqttCallback(char* topic, byte* payload, unsigned int length);
 
-    static MqttManager* _instance; /**< Puntatore statico all'unica istanza, usato dal callback statico mqttCallback(). */
+    static MqttManager* _instance; /**< Static pointer to the single instance, used by the static callback mqttCallback(). */
 };
 
 /*! @} */ // end of HubNetworking group

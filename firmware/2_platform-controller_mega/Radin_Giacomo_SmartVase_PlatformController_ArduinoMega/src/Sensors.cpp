@@ -1,7 +1,7 @@
 /*!
  * @file Sensors.cpp
  * @ingroup MegaSensors
- * @brief Implementazione del modulo Sensors: pin map, costanti di campionamento, filtri EMA, costruzione telemetria.
+ * @brief Implementation of the Sensors module: pin map, sampling constants, EMA filters, telemetry building.
  * @date 2026-04-29
  * @author Giacomo Radin
  */
@@ -10,49 +10,57 @@
 #include <Wire.h>
 
 // =================================================================
-// PIN MAP — fonte autoritativa: docs/PINS - Sheet1.csv (2026-05-19)
+// PIN MAP — authoritative source: docs/PINS - Sheet1.csv (2026-05-19)
 // =================================================================
 
-// Sensori HC-SR04 (trigger, echo)
-#define US1_TOP_TRIG          33
-#define US1_TOP_ECHO          35
-#define US2_FRONT_RIGHT_TRIG  26
-#define US2_FRONT_RIGHT_ECHO  27
-#define US3_FRONT_LEFT_TRIG   36
-#define US3_FRONT_LEFT_ECHO   37
-#define US4_WATER_TRIG        50
-#define US4_WATER_ECHO        51
-#define US5_LEFT_TRIG          4
-#define US5_LEFT_ECHO          5
-#define US6_RIGHT_TRIG        28
-#define US6_RIGHT_ECHO        29
+/*! @name HC-SR04 pins (TRIG/ECHO) — authoritative source: docs/PINS - Sheet1.csv
+ *  @{ */
+#define US1_TOP_TRIG          33  ///< US1 front top, TRIG.
+#define US1_TOP_ECHO          35  ///< US1 front top, ECHO.
+#define US2_FRONT_RIGHT_TRIG  27  ///< US2 front right, TRIG.
+#define US2_FRONT_RIGHT_ECHO  26  ///< US2 front right, ECHO.
+#define US3_FRONT_LEFT_TRIG   37  ///< US3 front left, TRIG.
+#define US3_FRONT_LEFT_ECHO   36  ///< US3 front left, ECHO.
+#define US4_WATER_TRIG        50  ///< US4 tank level, TRIG.
+#define US4_WATER_ECHO        51  ///< US4 tank level, ECHO.
+#define US5_LEFT_TRIG          4  ///< US5 side left, TRIG.
+#define US5_LEFT_ECHO          5  ///< US5 side left, ECHO.
+#define US6_RIGHT_TRIG        28  ///< US6 side right, TRIG.
+#define US6_RIGHT_ECHO        29  ///< US6 side right, ECHO.
+/*! @} */
 
-// Portata massima per sonda: limita il timeout del pulseIn e quindi il tempo
-// di blocco del main loop per ogni campionamento (~14 ms a 200 cm).
-// La tanica e' profonda al massimo qualche decina di cm: timeout piu' corto.
-#define US_NAV_MAX_CM        200
-#define US_WATER_MAX_CM      120
+/*! @name Maximum range per probe (cm)
+ *  @details Limits the `pulseIn` timeout and therefore the main loop's blocking
+ *           time for each sample (~14 ms at 200 cm). The tank is at most a few
+ *           tens of cm deep, so it uses a shorter timeout.
+ *  @{ */
+#define US_NAV_MAX_CM        200  ///< Range of the navigation probes (US1/2/3/5/6).
+#define US_WATER_MAX_CM      120  ///< Range of the tank probe (US4).
+/*! @} */
 
-// ADC analogici
-#define SOIL_MOISTURE_PIN     A0   // Forcella umidita' suolo
-#define PHOTORESISTOR_PIN     A1   // Spostato da A0 per liberare la forcella
+// Analog ADC channels
+#define SOIL_MOISTURE_PIN     A0   ///< Soil moisture fork (ADC).
+#define PHOTORESISTOR_PIN     A1   ///< LDR photoresistor (ADC), moved from A0 to free up the fork.
 
 #if BATTERY_MONITORING_ENABLED
-// TODO: confermare a banco quando il partitore resistivo viene cablato.
-#define BATTERY_PIN           A2
-#define ADC_REFERENCE_VOLTAGE 5.0f
-#define VOLTAGE_DIVIDER_R1    30000.0f
-#define VOLTAGE_DIVIDER_R2     7500.0f
+// TODO: confirm on the bench once the resistive voltage divider is wired.
+#define BATTERY_PIN           A2        ///< Battery voltage divider (ADC).
+#define ADC_REFERENCE_VOLTAGE 5.0f      ///< ADC reference voltage, in V.
+#define VOLTAGE_DIVIDER_R1    30000.0f  ///< High-side resistor of the battery divider, in Ω.
+#define VOLTAGE_DIVIDER_R2     7500.0f  ///< Low-side resistor of the battery divider, in Ω.
 #endif
 
 #if BME680_ENABLED
-// Indirizzi I2C
-#define BME680_I2C_ADDRESS    0x76
+#define BME680_I2C_ADDRESS    0x76  ///< I2C address of the BME680 environmental sensor.
 #endif
 
-// Throttling lettura ultrasuoni: una sonda ogni N ms (round-robin sui 6).
-// 6 sonde × 30 ms => refresh completo ~180 ms.
+/*! @brief Ultrasonic reading throttling: one probe every N ms (round-robin over 6 -> full refresh ~180 ms). */
 #define US_SAMPLE_INTERVAL_MS 30
+
+/*! @brief Default hour (0-23) used in init() when no time source is available
+ *         (RTC absent or time invalid): inside GrowLight's daylight window (06:00-20:00),
+ *         so the system starts in a plausible "daytime" state instead of being stuck at night. */
+#define DEFAULT_BOOT_HOUR 8
 
 Sensors::Sensors() :
     us1_top         (US1_TOP_TRIG,         US1_TOP_ECHO,         US_NAV_MAX_CM),
@@ -79,7 +87,10 @@ Sensors::Sensors() :
     cached_soil_moisture(-1),
     cached_battery_voltage(NAN),
     bme_status(false),
-    rtc_status(false)
+    rtc_status(false),
+    fake_clock_active(false),
+    fake_clock_base_epoch(0),
+    fake_clock_set_millis(0)
 {
 }
 
@@ -98,21 +109,37 @@ void Sensors::init() {
     us6_right.begin();
 
     Wire.begin();
+#if defined(ARDUINO_ARCH_AVR)
+    Wire.setWireTimeout(25000, true); // 25ms timeout, reset bus on timeout
+#endif
 
 #if BME680_ENABLED
-    // BME680 (T / RH / pressione / VOC)
+    // BME680 (T / RH / pressure / VOC)
     if (bme.begin(BME680_I2C_ADDRESS)) {
         bme.setTemperatureOversampling(BME680_OS_8X);
         bme.setHumidityOversampling(BME680_OS_2X);
         bme.setPressureOversampling(BME680_OS_4X);
         bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
-        bme.setGasHeater(320, 150); // 320 C per 150 ms
+        bme.setGasHeater(320, 150); // 320 C for 150 ms
         bme_status = true;
     }
 #endif
 
     // RTC DS3232 (I2C 0x68)
     rtc_status = rtc.begin();
+
+    // No real time available (chip absent from the bus, or present but with a
+    // stopped oscillator due to a low/absent backup battery): we still start
+    // from a plausible default time (8:00, inside GrowLight's 06:00-20:00
+    // daylight window) instead of staying stuck waiting for a manual
+    // 'rtc set' on every boot. The day is arbitrary: only the hour extracted
+    // from hour(epoch) matters, see getEpoch()/timeIsValid().
+    // setEpoch() still tries to write to the real chip if reachable
+    // (it can "self-heal" a stopped oscillator as long as the Mega stays
+    // powered on VCC); otherwise it activates the software fallback clock.
+    if (!rtc_status || rtc.oscillatorStopped()) {
+        setEpoch(DEFAULT_BOOT_HOUR * 3600UL);
+    }
 }
 
 float Sensors::applyEmaFilter(float raw_value, float last_value,
@@ -121,7 +148,7 @@ float Sensors::applyEmaFilter(float raw_value, float last_value,
     const float alpha = 0.4f;
     if (isnan(raw_value) || raw_value < min_valid || raw_value > max_valid) {
         invalid_streak++;
-        // Dopo 10 letture invalide consecutive il valore diventa NAN.
+        // After 10 consecutive invalid readings, the value becomes NAN.
         return (invalid_streak >= 10) ? NAN : last_value;
     }
     invalid_streak = 0;
@@ -130,7 +157,7 @@ float Sensors::applyEmaFilter(float raw_value, float last_value,
 }
 
 void Sensors::sampleNextUltrasonic() {
-    // Range valido HC-SR04: sotto i 2 cm le letture non sono affidabili.
+    // Valid HC-SR04 range: below 2 cm readings are not reliable.
     const float MIN_DIST  = 2.0f;
     const float MAX_NAV   = (float)US_NAV_MAX_CM;
     const float MAX_WATER = (float)US_WATER_MAX_CM;
@@ -172,9 +199,9 @@ void Sensors::sampleNextUltrasonic() {
 }
 
 void Sensors::sampleAdcChannels() {
-    // EMA leggera (alpha=0.3) su lux e soil: gli ADC di LDR e forcella sono
-    // rumorosi; il filtro stabilizza i valori usati da seeking, telemetria e
-    // dal comando readSoil senza ritardi percepibili. Seed sulla prima lettura.
+    // Light EMA (alpha=0.3) on lux and soil: the LDR and fork ADCs are
+    // noisy; the filter stabilizes the values used by seeking, telemetry and
+    // the readSoil command without perceptible delay. Seeded on the first reading.
     const int rawLux  = analogRead(PHOTORESISTOR_PIN);
     const int rawSoil = analogRead(SOIL_MOISTURE_PIN);
     cached_lux           = (cached_lux < 0)
@@ -197,19 +224,38 @@ void Sensors::sampleSensors() {
         sampleNextUltrasonic();
         last_us_sample_ms = now;
     }
-    // ADC veloci: ogni chiamata.
+    // Fast ADCs: on every call.
     sampleAdcChannels();
 }
 
 uint32_t Sensors::getEpoch() {
-    if (!rtc_status) return 0;
-    time_t t = rtc.get();
-    return (t == 0) ? 0 : (uint32_t)t;
+    if (rtc_status) {
+        time_t t = rtc.get();
+        if (t != 0) return (uint32_t)t;
+    }
+    if (fake_clock_active) {
+        unsigned long elapsed_s = (millis() - fake_clock_set_millis) / 1000UL;
+        return fake_clock_base_epoch + (uint32_t)elapsed_s;
+    }
+    return 0;
 }
 
 bool Sensors::setEpoch(uint32_t epoch_s) {
-    if (!rtc_status) return false;
-    return rtc.set((time_t)epoch_s);
+    if (rtc_status && rtc.set((time_t)epoch_s)) {
+        fake_clock_active = false; // real chip OK: the software fallback is no longer needed
+        return true;
+    }
+    // Chip absent or I2C write failed (e.g. dead backup battery and the chip
+    // not responding even on VCC): software fallback, see Sensors.h.
+    fake_clock_base_epoch = epoch_s;
+    fake_clock_set_millis = millis();
+    fake_clock_active     = true;
+    return true;
+}
+
+bool Sensors::timeIsValid() {
+    if (rtc_status && !rtc.oscillatorStopped()) return true;
+    return fake_clock_active;
 }
 
 TelemetryFast Sensors::buildFastTelemetry(CppMovementState movState, const char* deviceId) {
@@ -231,14 +277,14 @@ TelemetryFast Sensors::buildFastTelemetry(CppMovementState movState, const char*
     return tf;
 }
 
-extern int freeRam(); // definito in main.cpp
+extern int freeRam(); // defined in main.cpp
 
 TelemetryDeep Sensors::buildDeepTelemetry(CumulativeStats& stats, const char* deviceId) {
     TelemetryDeep td = TelemetryDeep_init_zero;
 
-    // BME680 assente sul prototipo: marca i campi ambientali come "non misurati"
-    // (NaN) cosi' l'Hub puo' ometterli dal JSON invece di pubblicare 0 come se
-    // fossero letture reali. Se il sensore c'e', vengono sovrascritti sotto.
+    // BME680 absent on the prototype: mark the ambient fields as "not measured"
+    // (NaN) so the Hub can omit them from the JSON instead of publishing 0 as if
+    // they were real readings. If the sensor is present, they are overwritten below.
     td.temperature_c    = NAN;
     td.humidity_percent = NAN;
     td.pressure_hpa     = NAN;

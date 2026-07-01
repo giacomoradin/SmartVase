@@ -3,7 +3,7 @@
 
     @ingroup MegaPump
 
-    @brief  Implementazione del driver relè pompa (vedi Pump.h).
+    @brief  Implementation of the pump relay driver (see Pump.h).
 
     @date   2026-05-20
 
@@ -12,19 +12,16 @@
 
 #include "Pump.h"
 
-// PIN map autoritativo: relay IN1 = D10 (pompa), IN2 = D11 (riservato).
+/*! @brief Pump relay pin (IN1 = D10). IN2 = D11 belongs to GrowLight (UVA lights) and must not be touched here. */
 #define PUMP_RELAY_PIN          10
-#define PUMP_RELAY_BACKUP_PIN   11
 
-// I moduli rele' tipici a 5V su Arduino sono attivi BASSI: GPIO LOW = relay ON.
-// Cambiare a 0 se il modulo in uso e' attivo alto.
+/*! @brief Relay module polarity: 1 = active low (GPIO LOW = pump ON), like typical 5V modules; 0 = active high. */
 #define PUMP_RELAY_ACTIVE_LOW   1
 
-// Durata massima ammessa per una singola sessione di irrigazione (safety).
-// Sopra questa soglia il comando viene rifiutato.
+/*! @brief Maximum duration of a single irrigation (ms): past this threshold the command is rejected (safety). */
 #define PUMP_MAX_DURATION_MS    60000UL  // 60 s
 
-/*! @brief Attiva il relè della pompa (gestisce la polarità via `PUMP_RELAY_ACTIVE_LOW`). */
+/*! @brief Activates the pump relay (handles polarity via `PUMP_RELAY_ACTIVE_LOW`). */
 static inline void pumpOn() {
 #if PUMP_RELAY_ACTIVE_LOW
     digitalWrite(PUMP_RELAY_PIN, LOW);
@@ -33,7 +30,7 @@ static inline void pumpOn() {
 #endif
 }
 
-/*! @brief Disattiva il relè della pompa (gestisce la polarità via `PUMP_RELAY_ACTIVE_LOW`). */
+/*! @brief Deactivates the pump relay (handles polarity via `PUMP_RELAY_ACTIVE_LOW`). */
 static inline void pumpOff() {
 #if PUMP_RELAY_ACTIVE_LOW
     digitalWrite(PUMP_RELAY_PIN, HIGH);
@@ -45,18 +42,12 @@ static inline void pumpOff() {
 Pump::Pump() : active(false), start_ms(0), duration_ms_target(0) {}
 
 void Pump::init() {
-    // Prima il livello di riposo, poi pinMode: su AVR scrivere il PORT con il
-    // pin ancora INPUT pre-carica il latch, evitando il glitch LOW (= pompa
-    // accesa per qualche microsecondo con rele' attivo-basso) al passaggio
-    // a OUTPUT.
+    // Rest level first, then pinMode: on AVR, writing the PORT while the
+    // pin is still INPUT pre-charges the latch, avoiding the LOW glitch (=
+    // pump on for a few microseconds with an active-low relay) when switching
+    // to OUTPUT.
     pumpOff();
-#if PUMP_RELAY_ACTIVE_LOW
-    digitalWrite(PUMP_RELAY_BACKUP_PIN, HIGH);
-#else
-    digitalWrite(PUMP_RELAY_BACKUP_PIN, LOW);
-#endif
     pinMode(PUMP_RELAY_PIN, OUTPUT);
-    pinMode(PUMP_RELAY_BACKUP_PIN, OUTPUT);
 }
 
 bool Pump::start(uint32_t duration_ms, CumulativeStats& stats) {

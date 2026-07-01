@@ -1,14 +1,14 @@
 /*! @file WifiManager.h
  *  @ingroup HubNetworking
- *  @brief Gestione della connessione Wi-Fi STA e del provisioning via Access
+ *  @brief Wi-Fi STA connection management and provisioning via Access
  *  Point + Captive Portal.
  *  @author Giacomo Radin
  *  @date 2025-10-28
  */
 
-/*! @defgroup HubNetworking Networking (Wi-Fi e MQTT)
- *  @brief Connettivita' verso la rete locale (Wi-Fi, provisioning) e verso il
- *  cloud (MQTT/TLS su HiveMQ).
+/*! @defgroup HubNetworking Networking (Wi-Fi and MQTT)
+ *  @brief Connectivity to the local network (Wi-Fi, provisioning) and to the
+ *  cloud (MQTT/TLS over HiveMQ).
  */
 
 #ifndef WIFIMANAGER_H
@@ -16,81 +16,81 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
-#include <ESPAsyncWebServer.h> // Libreria per il server web di provisioning
-#include <DNSServer.h>          // Libreria per il Captive Portal DNS
-#include "ConfigManager.h"     // Includi ConfigManager per accedere ai dati
+#include <ESPAsyncWebServer.h> // Library for the provisioning web server
+#include <DNSServer.h>          // Library for the Captive Portal DNS
+#include "ConfigManager.h"     // Include ConfigManager to access the data
 
 /*! @addtogroup HubNetworking
  *  @{
  */
 
-#define SSID_MAX_LENGTH         32  /**< Lunghezza massima SSID (standard WiFi) */
-#define PASSWORD_MAX_LENGTH     64  /**< Lunghezza massima Password WiFi (standard WiFi) */
-#define WIFI_CONNECT_TIMEOUT_MS 15000 /**< Timeout connessione WiFi (15 secondi) */
+#define SSID_MAX_LENGTH         32  /**< Maximum SSID length (Wi-Fi standard) */
+#define PASSWORD_MAX_LENGTH     64  /**< Maximum Wi-Fi password length (Wi-Fi standard) */
+#define WIFI_CONNECT_TIMEOUT_MS 15000 /**< Wi-Fi connection timeout (15 seconds) */
 
 /**
  * @class WifiManager
- * @brief Gestore della connettività Wi-Fi e del Captive Portal per il provisioning dell'ESP32 Hub.
+ * @brief Manager for Wi-Fi connectivity and the Captive Portal used to provision the ESP32 Hub.
  *
- * Tenta di connettersi in modalità Station (STA) a partire dalle credenziali memorizzate in NVS.
- * Se la connessione fallisce o mancano le credenziali, avvia automaticamente un Access Point (AP)
- * protetto e un DNS Server che reindirizza tutte le richieste HTTP (Captive Portal) a una pagina di setup
- * web premium in glassmorphism (per inserire SSID e Password).
+ * Attempts to connect in Station (STA) mode using the credentials stored in NVS.
+ * If the connection fails or credentials are missing, it automatically starts a protected
+ * Access Point (AP) and a DNS Server that redirects all HTTP requests (Captive Portal) to a
+ * premium glassmorphism setup web page (to enter SSID and Password).
  *
- * @note Questo comportamento (avvio AP automatico su timeout/credenziali mancanti)
- * e' attivo dalla v1.3; in precedenza (v1.2) il fallimento di connessione NON
- * avviava l'AP e il provisioning si faceva solo da CLI seriale (vedi commento
- * storico su connect() in WifiManager.cpp).
+ * @note This behavior (automatic AP startup on timeout/missing credentials)
+ * has been active since v1.3; previously (v1.2) a connection failure did NOT
+ * start the AP and provisioning was only done via the serial CLI (see the
+ * historical comment on connect() in WifiManager.cpp).
  */
 class WifiManager {
 public:
     /**
-     * @brief Costruttore della classe WifiManager.
-     * @param configMgr Riferimento all'istanza di ConfigManager per leggere/scrivere la configurazione.
+     * @brief Constructor of the WifiManager class.
+     * @param configMgr Reference to the ConfigManager instance used to read/write the configuration.
      */
     WifiManager(ConfigManager& configMgr);
 
     /**
-     * @brief Tenta la connessione al Wi-Fi.
-     * 
-     * Se non riesce entro WIFI_CONNECT_TIMEOUT_MS o le credenziali non sono presenti, avvia l'AP di provisioning.
+     * @brief Attempts to connect to Wi-Fi.
+     *
+     * If it fails to connect within WIFI_CONNECT_TIMEOUT_MS or credentials are missing, starts the provisioning AP.
      */
     void connect();
 
     /**
-     * @brief Ritorna se il dispositivo è connesso alla rete Wi-Fi (in modalità STA).
-     * @return true se connesso con IP valido, false altrimenti.
+     * @brief Returns whether the device is connected to the Wi-Fi network (in STA mode).
+     * @return true if connected with a valid IP, false otherwise.
      */
     bool isConnected() const;
 
     /**
-     * @brief Gestisce le richieste del server DNS durante il Captive Portal.
-     * 
-     * Da chiamare ciclicamente nel loop del main o in un task dedicato se l'AP di provisioning è attivo.
+     * @brief Handles DNS server requests during the Captive Portal.
+     *
+     * To be called periodically in the main loop or in a dedicated task while the provisioning AP is active.
      */
     void handleProvisioning();
 
 private:
-    ConfigManager& _configMgr;                /**< Riferimento al gestore della configurazione NVS */
-    bool _isConnected;                        /**< Flag di connessione STA attiva */
-    AsyncWebServer _provisioningServer;       /**< Server web asincrono per l'interfaccia HTML di configurazione */
-    DNSServer _dnsServer;                     /**< Server DNS per intercettare il traffico e forzare il redirect */
+    ConfigManager& _configMgr;                /**< Reference to the NVS configuration manager */
+    bool _isConnected;                        /**< Active STA connection flag */
+    AsyncWebServer _provisioningServer;       /**< Asynchronous web server for the configuration HTML interface */
+    DNSServer _dnsServer;                     /**< DNS server used to intercept traffic and force the redirect */
 
-    char _tempSsid[SSID_MAX_LENGTH];          /**< Buffer temporaneo per SSID */
-    char _tempPassword[PASSWORD_MAX_LENGTH];  /**< Buffer temporaneo per password */
+    char _tempSsid[SSID_MAX_LENGTH];          /**< Temporary buffer for SSID */
+    char _tempPassword[PASSWORD_MAX_LENGTH];  /**< Temporary buffer for password */
 
     /**
-     * @brief Avvia l'Access Point locale "SmartVase_Setup_XXXX".
+     * @brief Starts the local "SmartVase_Setup_XXXX" Access Point.
      */
     void startProvisioningAP();
 
     /**
-     * @brief Registra le rotte HTTP del server di provisioning (HTML principale, salvataggio credenziali).
+     * @brief Registers the HTTP routes of the provisioning server (main HTML page, credential saving).
      */
     void setupProvisioningServer();
 
     /**
-     * @brief Salva le nuove credenziali in NVS tramite il ConfigManager e riavvia l'ESP32.
+     * @brief Saves the new credentials to NVS via the ConfigManager and restarts the ESP32.
      */
     void completeProvisioning();
 };

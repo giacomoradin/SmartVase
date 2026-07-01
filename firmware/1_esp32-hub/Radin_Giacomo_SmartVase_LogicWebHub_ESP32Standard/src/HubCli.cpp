@@ -1,7 +1,7 @@
 /*! @file HubCli.cpp
  *  @ingroup HubCli
- *  @brief Implementazione di HubCli: parsing comandi, comandi locali e
- *  passthrough verso il Mega.
+ *  @brief Implementation of HubCli: command parsing, local commands and
+ *  passthrough to the Mega.
  *  @author Giacomo Radin
  *  @date 2026-06-11
  */
@@ -16,6 +16,7 @@
 #include "MainLogic.h"
 #include "SerialManager.h"
 
+/*! @brief Versione firmware Hub mostrata dalla CLI (allineata a MainLogic.cpp). */
 #define HUB_FW_VERSION "1.3.0"
 
 HubCli::HubCli()
@@ -46,12 +47,21 @@ void HubCli::tick() {
             pos = 0;
             buf[0] = '\0';
             Serial.print(F("> "));
-        } else if (pos < BUF_SIZE - 1) {
-            buf[pos++] = c;
-        } else {
-            pos = 0;
-            buf[0] = '\0';
-            Serial.println(F("[CLI] riga troppo lunga, scartata"));
+        } else if (c == 8 || c == 127) { // Backspace handling
+            if (pos > 0) {
+                pos--;
+                buf[pos] = '\0';
+                Serial.print(F("\b \b")); // Erase character on terminal screen
+            }
+        } else if (c >= 32 && c <= 126) { // Printable ASCII only
+            if (pos < BUF_SIZE - 1) {
+                buf[pos++] = c;
+            } else {
+                pos = 0;
+                buf[0] = '\0';
+                Serial.println(F("\n[CLI] riga troppo lunga, scartata"));
+                Serial.print(F("> "));
+            }
         }
     }
 }
@@ -88,7 +98,7 @@ void HubCli::execute(char* line) {
         return;
     }
 
-    // --- Comandi passthrough verso il Mega ---
+    // --- Passthrough commands to the Mega ---
     if (strncmp(line, "water ", 6) == 0) {
         int ms = atoi(line + 6);
         if (ms <= 0) { Serial.println(F("[CLI] usage: water <ms>")); return; }
@@ -123,8 +133,8 @@ bool HubCli::handleSet(char* args) {
     const char* value = space + 1;
     if (strlen(value) == 0) return false;
 
-    // I setter del ConfigManager lavorano per gruppi: si rileggono i valori
-    // correnti e si riscrive il gruppo con il solo campo cambiato.
+    // ConfigManager's setters work on groups: the current values are read
+    // back and the group is rewritten with only the changed field.
     if (strcmp(key, "wifi_ssid") == 0) {
         _cfg->setWifiCredentials(value, _cfg->getWifiPassword());
     } else if (strcmp(key, "wifi_pass") == 0) {
@@ -178,11 +188,11 @@ void HubCli::sendMegaCommand(uint8_t which, uint32_t arg) {
     }
 }
 
-/*! @brief Stampa su Serial un'etichetta seguita da un valore mascherato
- *  (solo primo e ultimo carattere visibili, il resto sostituito da "***"),
- *  per non esporre per intero password/segreti nel monitor seriale.
- *  @param[in] label Testo da stampare prima del valore (es. "wifi_pass   = ").
- *  @param[in] value Stringa da mascherare; se vuota stampa "(vuoto)". */
+/*! @brief Prints a label to Serial followed by a masked value (only the
+ *  first and last character visible, the rest replaced by "***"), so that
+ *  passwords/secrets are never fully exposed on the serial monitor.
+ *  @param[in] label Text printed before the value (e.g. "wifi_pass   = ").
+ *  @param[in] value String to mask; if empty, prints "(vuoto)". */
 static void printMasked(const char* label, const char* value) {
     Serial.print(label);
     size_t n = strlen(value);

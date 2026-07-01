@@ -3,7 +3,7 @@
 
     @ingroup MegaPump
 
-    @brief  Controllo non bloccante del relè della pompa di irrigazione.
+    @brief  Non-blocking control of the irrigation pump relay.
 
     @date   2026-05-20
 
@@ -23,64 +23,64 @@
 
 /*!
     @class Pump
-    @brief Modulo non bloccante per il controllo del relè della pompa di irrigazione.
+    @brief Non-blocking module for controlling the irrigation pump relay.
 
-    @details Permette di avviare l'irrigazione per una durata programmata e spegne
-             automaticamente la pompa allo scadere del tempo tramite polling nel main
-             loop (`tick()`, niente `delay()`). Aggiorna le statistiche cumulative di
-             irrigazione (conteggio e durata totale). La gestione della polarità del
-             relè (attivo basso/alto) e il cap di sicurezza sulla durata sono
-             nell'implementazione (vedi Pump.cpp).
+    @details Lets irrigation be started for a programmed duration and turns the
+             pump off automatically when the time elapses, via polling in the main
+             loop (`tick()`, no `delay()`). Updates the cumulative irrigation
+             statistics (count and total duration). The relay polarity handling
+             (active low/high) and the safety cap on the duration live in the
+             implementation (see Pump.cpp).
 */
 class Pump {
 public:
     /**
-     * @brief Costruttore della classe Pump.
+     * @brief Constructs the Pump object.
      */
     Pump();
 
     /**
-     * @brief Inizializza il pin del relè della pompa impostandolo come output spento.
+     * @brief Initializes the pump relay pin, setting it as an output in the off state.
      */
     void init();
 
     /**
-     * @brief Avvia l'irrigazione della pianta per una durata specificata.
-     * 
-     * @param duration_ms Durata dell'irrigazione in millisecondi.
-     * @param stats Riferimento alle statistiche cumulative per registrare l'attivazione.
-     * @return true se l'irrigazione è stata avviata con successo, false se la pompa era già attiva.
+     * @brief Starts watering the plant for the specified duration.
+     *
+     * @param duration_ms Irrigation duration in milliseconds.
+     * @param stats Reference to the cumulative statistics, to record the activation.
+     * @return true if irrigation was started successfully, false if the pump was already active.
      */
     bool start(uint32_t duration_ms, CumulativeStats& stats);
 
     /**
-     * @brief Forza l'arresto immediato della pompa.
-     * 
-     * Da chiamare anche in caso di emergenza o degraded mode.
-     * 
-     * @param stats Riferimento alle statistiche cumulative per aggiornare i contatori.
+     * @brief Forces an immediate pump stop.
+     *
+     * Also to be called on emergency or in degraded mode.
+     *
+     * @param stats Reference to the cumulative statistics, to update the counters.
      */
     void stop(CumulativeStats& stats);
 
     /**
-     * @brief Gestisce il timer dell'irrigazione ed esegue l'arresto automatico allo scadere.
-     * 
-     * Da chiamare ad alta frequenza nel loop principale.
-     * 
-     * @param stats Riferimento alle statistiche cumulative.
+     * @brief Manages the irrigation timer and performs the automatic stop when it expires.
+     *
+     * To be called at high frequency in the main loop.
+     *
+     * @param stats Reference to the cumulative statistics.
      */
     void tick(CumulativeStats& stats);
 
     /**
-     * @brief Ritorna se la pompa è attualmente attiva.
-     * @return true se attiva, false altrimenti.
+     * @brief Returns whether the pump is currently active.
+     * @return true if active, false otherwise.
      */
     bool isActive() const { return active; }
 
 private:
-    bool          active;             /**< Stato di attività del relè */
-    unsigned long start_ms;           /**< Timestamp (in ms) dell'avvio della pompa */
-    uint32_t      duration_ms_target; /**< Durata target dell'irrigazione corrente (in ms) */
+    bool          active;             /**< Relay activity state. */
+    unsigned long start_ms;           /**< Timestamp (in ms) of the pump start. */
+    uint32_t      duration_ms_target; /**< Target duration of the current irrigation (in ms). */
 };
 
 /*! @} */ // MegaPump

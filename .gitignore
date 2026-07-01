@@ -23,5 +23,7 @@ __pycache__/
 venv/
 .venv/
 
-# Doxygen
+# Doxygen: output HTML generato (rigenerato dalla CI, mai committato)
 docs/doxygen/
+# Tema terze parti: vendorizzato in CI alla versione pinnata (vedi docs/doxygen-theme/README.md)
+docs/doxygen-theme/doxygen-awesome.css

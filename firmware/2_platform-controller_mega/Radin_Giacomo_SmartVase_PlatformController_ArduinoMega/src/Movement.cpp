@@ -1,8 +1,8 @@
 /*!
  * @file Movement.cpp
  * @ingroup MegaMovement
- * @brief Implementazione della classe Movement: driver motori H-bridge, FSM di navigazione,
- *        seeking luce/ombra con anti-circling, obstacle avoidance e stato "stuck" con backoff.
+ * @brief Implementation of the Movement class: H-bridge motor driver, navigation FSM,
+ *        light/shadow seeking with anti-circling, obstacle avoidance and "stuck" state with backoff.
  * @date 2026-04-29
  * @author Giacomo Radin
  */
@@ -12,24 +12,48 @@
 #include <avr/wdt.h>
 
 // =================================================================
-// Driver motori (PIN map autoritativo docs/PINS - Sheet1.csv)
-// H-bridge canale A (sinistra) + canale B (destra).
+// Motor driver — Pololu Dual VNH5019 Shield (PIN map: docs/PINS - Sheet1.csv)
 // =================================================================
-#define MOTOR_LEFT_ENA   6   // PWM
-#define MOTOR_LEFT_IN1   43
-#define MOTOR_LEFT_IN2   45
-#define MOTOR_RIGHT_ENB  7   // PWM
-#define MOTOR_RIGHT_IN3  47
-#define MOTOR_RIGHT_IN4  49
+// VNH5019 interface per motor (4 signals + 1 optional diagnostic):
+//   INA, INB  -> direction (digitalWrite HIGH/LOW)
+//   PWM       -> speed (analogWrite); must be a PWM pin
+//   EN/DIAG   -> enable + fault diagnostics. Open-drain with a pull-up on the
+//                shield (R1/R10 4.7k -> VDD): at rest HIGH = driver ENABLED;
+//                the chip pulls it LOW on a fault (overtemp/overcurrent/under-
+//                voltage). Must NOT be driven by the Mega (would disable it): we
+//                only read it, as INPUT, to report the fault in 'diag'.
+// The shield ties the chip's ENA and ENB together per motor ("EN A=B" jumper):
+// hence a single EN line per motor.
+//
+// Pin mapping confirmed 2026-06-30 via multimeter continuity test (Mega pin ->
+// shield connector), superseding the earlier best-guess mapping which had
+// PWM/INA/INB from different shield channels paired together (the actual
+// cause of the 0V-outputs bug seen on the bench):
+//   D7  -> M1PWM   D41 -> M1INA   D43 -> M1INB
+//   D6  -> M2PWM   D45 -> M2INA   D47 -> M2INB
+#define MOTOR_LEFT_PWM   7   ///< Left motor -> M1PWM (speed, PWM pin). Continuity-confirmed 2026-06-30.
+#define MOTOR_LEFT_INA   41  ///< Left motor -> M1INA (direction). Continuity-confirmed 2026-06-30.
+#define MOTOR_LEFT_INB   43  ///< Left motor -> M1INB (direction). Continuity-confirmed 2026-06-30.
+#define MOTOR_RIGHT_PWM  6   ///< Right motor -> M2PWM (speed, PWM pin). Continuity-confirmed 2026-06-30.
+#define MOTOR_RIGHT_INA  45  ///< Right motor -> M2INA (direction). Continuity-confirmed 2026-06-30.
+#define MOTOR_RIGHT_INB  47  ///< Right motor -> M2INB (direction). Continuity-confirmed 2026-06-30.
 
-// Soglia di "ostacolo vicino" sulle sonde frontali (cm)
-#define FRONT_OBSTACLE_CM  20.0f
-// Soglia per le sonde laterali (cm) — meno restrittiva
-#define SIDE_OBSTACLE_CM   12.0f
-// Timeout safety motori sempre attivi (ms)
-#define MOTOR_SAFETY_TIMEOUT_MS  20000UL
+// EN/DIAG (M1EN/M2EN) are NOT wired to the Mega yet (confirmed 2026-06-30):
+// fault reading is disabled below instead of guessing pins. The driver still
+// works fine without it (the shield enables it via its own pull-up); this
+// only disables the optional fault diagnostics in 'diag'. Flip to 1 and set
+// the real pins once EN/DIAG is wired.
+#define MOTOR_EN_DIAG_WIRED 0
+#if MOTOR_EN_DIAG_WIRED
+#define MOTOR_LEFT_EN    -1  ///< TODO: set once M1EN/DIAG is wired to the Mega.
+#define MOTOR_RIGHT_EN   -1  ///< TODO: set once M2EN/DIAG is wired to the Mega.
+#endif
 
-// Inizializza i valori predefiniti della state machine (vedi Movement.h per il dettaglio dei campi).
+#define FRONT_OBSTACLE_CM  20.0f    ///< "Nearby obstacle" threshold on the front probes (cm).
+#define SIDE_OBSTACLE_CM   12.0f    ///< "Nearby obstacle" threshold on the side probes (cm), less restrictive.
+#define MOTOR_SAFETY_TIMEOUT_MS  20000UL  ///< Maximum uninterrupted movement time before the safety stop (ms).
+
+// Initializes the state machine's default values (see Movement.h for field details).
 Movement::Movement() :
     currentMovementState(CPP_M_IDLE),
     targetMode(CPP_IDLE),
@@ -44,70 +68,98 @@ Movement::Movement() :
 }
 
 void Movement::init() {
-    pinMode(MOTOR_LEFT_ENA, OUTPUT);
-    pinMode(MOTOR_LEFT_IN1, OUTPUT);
-    pinMode(MOTOR_LEFT_IN2, OUTPUT);
-    pinMode(MOTOR_RIGHT_ENB, OUTPUT);
-    pinMode(MOTOR_RIGHT_IN3, OUTPUT);
-    pinMode(MOTOR_RIGHT_IN4, OUTPUT);
-    analogWrite(MOTOR_LEFT_ENA, 0);
-    analogWrite(MOTOR_RIGHT_ENB, 0);
-    digitalWrite(MOTOR_LEFT_IN1, LOW);
-    digitalWrite(MOTOR_LEFT_IN2, LOW);
-    digitalWrite(MOTOR_RIGHT_IN3, LOW);
-    digitalWrite(MOTOR_RIGHT_IN4, LOW);
+    pinMode(MOTOR_LEFT_PWM, OUTPUT);
+    pinMode(MOTOR_LEFT_INA, OUTPUT);
+    pinMode(MOTOR_LEFT_INB, OUTPUT);
+    pinMode(MOTOR_RIGHT_PWM, OUTPUT);
+    pinMode(MOTOR_RIGHT_INA, OUTPUT);
+    pinMode(MOTOR_RIGHT_INB, OUTPUT);
+#if MOTOR_EN_DIAG_WIRED
+    // EN/DIAG as INPUT_PULLUP: we NEVER drive these pins (the shield enables
+    // the driver via its own external pull-up to VDD; driving them LOW
+    // would disable the driver). The internal pull-up avoids false faults if the pin
+    // is not wired (reads HIGH = "ok"). Read by faultLeft()/faultRight().
+    pinMode(MOTOR_LEFT_EN, INPUT_PULLUP);
+    pinMode(MOTOR_RIGHT_EN, INPUT_PULLUP);
+#endif
+    analogWrite(MOTOR_LEFT_PWM, 0);
+    analogWrite(MOTOR_RIGHT_PWM, 0);
+    digitalWrite(MOTOR_LEFT_INA, LOW);
+    digitalWrite(MOTOR_LEFT_INB, LOW);
+    digitalWrite(MOTOR_RIGHT_INA, LOW);
+    digitalWrite(MOTOR_RIGHT_INB, LOW);
 }
 
 void Movement::stopMotors(CumulativeStats& stats) {
-    analogWrite(MOTOR_LEFT_ENA, 0);
-    analogWrite(MOTOR_RIGHT_ENB, 0);
-    digitalWrite(MOTOR_LEFT_IN1, LOW);
-    digitalWrite(MOTOR_LEFT_IN2, LOW);
-    digitalWrite(MOTOR_RIGHT_IN3, LOW);
-    digitalWrite(MOTOR_RIGHT_IN4, LOW);
+    analogWrite(MOTOR_LEFT_PWM, 0);
+    analogWrite(MOTOR_RIGHT_PWM, 0);
+    digitalWrite(MOTOR_LEFT_INA, LOW);
+    digitalWrite(MOTOR_LEFT_INB, LOW);
+    digitalWrite(MOTOR_RIGHT_INA, LOW);
+    digitalWrite(MOTOR_RIGHT_INB, LOW);
     if (motorActiveStartTime > 0) {
         stats.total_motor_active_time_s += (millis() - motorActiveStartTime) / 1000UL;
         motorActiveStartTime = 0;
     }
 }
 
+bool Movement::faultLeft() const {
+#if MOTOR_EN_DIAG_WIRED
+    // EN/DIAG low while the driver should be enabled = VNH5019 fault.
+    return digitalRead(MOTOR_LEFT_EN) == LOW;
+#else
+    // EN/DIAG not wired to the Mega yet (confirmed 2026-06-30): no fault
+    // reporting available. The driver still runs fine (enabled via the
+    // shield's own pull-up); this only disables the diagnostic in 'diag'.
+    return false;
+#endif
+}
+
+bool Movement::faultRight() const {
+#if MOTOR_EN_DIAG_WIRED
+    return digitalRead(MOTOR_RIGHT_EN) == LOW;
+#else
+    return false;
+#endif
+}
+
 void Movement::moveForward(const DeviceConfig& config) {
-    analogWrite(MOTOR_LEFT_ENA,  config.motorCalibLeft);
-    digitalWrite(MOTOR_LEFT_IN1, HIGH);
-    digitalWrite(MOTOR_LEFT_IN2, LOW);
-    analogWrite(MOTOR_RIGHT_ENB, config.motorCalibRight);
-    digitalWrite(MOTOR_RIGHT_IN3, HIGH);
-    digitalWrite(MOTOR_RIGHT_IN4, LOW);
+    analogWrite(MOTOR_LEFT_PWM,  config.motorCalibLeft);
+    digitalWrite(MOTOR_LEFT_INA, HIGH);
+    digitalWrite(MOTOR_LEFT_INB, LOW);
+    analogWrite(MOTOR_RIGHT_PWM, config.motorCalibRight);
+    digitalWrite(MOTOR_RIGHT_INA, HIGH);
+    digitalWrite(MOTOR_RIGHT_INB, LOW);
     if (motorActiveStartTime == 0) motorActiveStartTime = millis();
 }
 
 void Movement::moveBackward(const DeviceConfig& config) {
-    analogWrite(MOTOR_LEFT_ENA,  config.motorCalibLeft);
-    digitalWrite(MOTOR_LEFT_IN1, LOW);
-    digitalWrite(MOTOR_LEFT_IN2, HIGH);
-    analogWrite(MOTOR_RIGHT_ENB, config.motorCalibRight);
-    digitalWrite(MOTOR_RIGHT_IN3, LOW);
-    digitalWrite(MOTOR_RIGHT_IN4, HIGH);
+    analogWrite(MOTOR_LEFT_PWM,  config.motorCalibLeft);
+    digitalWrite(MOTOR_LEFT_INA, LOW);
+    digitalWrite(MOTOR_LEFT_INB, HIGH);
+    analogWrite(MOTOR_RIGHT_PWM, config.motorCalibRight);
+    digitalWrite(MOTOR_RIGHT_INA, LOW);
+    digitalWrite(MOTOR_RIGHT_INB, HIGH);
     if (motorActiveStartTime == 0) motorActiveStartTime = millis();
 }
 
 void Movement::turnRight(const DeviceConfig& config) {
-    analogWrite(MOTOR_LEFT_ENA,  config.motorCalibLeft);
-    digitalWrite(MOTOR_LEFT_IN1, HIGH);
-    digitalWrite(MOTOR_LEFT_IN2, LOW);
-    analogWrite(MOTOR_RIGHT_ENB, config.motorCalibRight);
-    digitalWrite(MOTOR_RIGHT_IN3, LOW);
-    digitalWrite(MOTOR_RIGHT_IN4, HIGH);
+    analogWrite(MOTOR_LEFT_PWM,  config.motorCalibLeft);
+    digitalWrite(MOTOR_LEFT_INA, HIGH);
+    digitalWrite(MOTOR_LEFT_INB, LOW);
+    analogWrite(MOTOR_RIGHT_PWM, config.motorCalibRight);
+    digitalWrite(MOTOR_RIGHT_INA, LOW);
+    digitalWrite(MOTOR_RIGHT_INB, HIGH);
     if (motorActiveStartTime == 0) motorActiveStartTime = millis();
 }
 
 void Movement::turnLeft(const DeviceConfig& config) {
-    analogWrite(MOTOR_LEFT_ENA,  config.motorCalibLeft);
-    digitalWrite(MOTOR_LEFT_IN1, LOW);
-    digitalWrite(MOTOR_LEFT_IN2, HIGH);
-    analogWrite(MOTOR_RIGHT_ENB, config.motorCalibRight);
-    digitalWrite(MOTOR_RIGHT_IN3, HIGH);
-    digitalWrite(MOTOR_RIGHT_IN4, LOW);
+    analogWrite(MOTOR_LEFT_PWM,  config.motorCalibLeft);
+    digitalWrite(MOTOR_LEFT_INA, LOW);
+    digitalWrite(MOTOR_LEFT_INB, HIGH);
+    analogWrite(MOTOR_RIGHT_PWM, config.motorCalibRight);
+    digitalWrite(MOTOR_RIGHT_INA, HIGH);
+    digitalWrite(MOTOR_RIGHT_INB, LOW);
     if (motorActiveStartTime == 0) motorActiveStartTime = millis();
 }
 
@@ -119,7 +171,7 @@ bool Movement::frontBlocked(const ObstacleView& v) const {
 void Movement::handleMovementSM(const ObstacleView& v, int cached_lux,
                                 const DeviceConfig& config, CumulativeStats& stats,
                                 bool degradedModeActive) {
-    // In degraded mode il motore va fermo e la SM resta in IDLE.
+    // In degraded mode the motors must stay off and the SM remains in IDLE.
     if (degradedModeActive) {
         if (currentMovementState != CPP_M_IDLE) {
             stopMotors(stats);
@@ -128,7 +180,7 @@ void Movement::handleMovementSM(const ObstacleView& v, int cached_lux,
         return;
     }
 
-    // Safety: nessun movimento puo' durare ininterrotto > MOTOR_SAFETY_TIMEOUT_MS.
+    // Safety: no movement can last uninterrupted for > MOTOR_SAFETY_TIMEOUT_MS.
     if (motorActiveStartTime > 0 && millis() - motorActiveStartTime > MOTOR_SAFETY_TIMEOUT_MS) {
         stopMotors(stats);
         currentMovementState = CPP_M_IDLE;
@@ -155,9 +207,9 @@ void Movement::handleMovementSM(const ObstacleView& v, int cached_lux,
             break;
 
         case CPP_M_MOVING:
-            // Dopo 60 s di marcia senza ostacoli il backoff anti-stuck torna
-            // al valore base: gli stuck passati non devono penalizzare per
-            // sempre i recovery futuri.
+            // After 60 s of driving without obstacles, the anti-stuck backoff
+            // resets to the base value: past stuck events must not permanently
+            // penalize future recoveries.
             if (millis() - stateStartTime > 60000UL) {
                 stateStartTime        = millis();
                 avoidance_attempts    = 0;
@@ -165,24 +217,24 @@ void Movement::handleMovementSM(const ObstacleView& v, int cached_lux,
             }
             if (front_obs) {
                 stats.obstacles_avoided++;
-                seekTurnStartMs     = 0;   // reset anti-circling prima dell'avoidance
+                seekTurnStartMs     = 0;   // reset anti-circling before avoidance
                 seekRelocateUntilMs = 0;
                 currentMovementState = CPP_M_AVOID_START;
             } else {
-                // Seeking luce/ombra con ANTI-CIRCLING: se la rotazione verso la
-                // sorgente dura troppo senza raggiungere la soglia (es. luce
-                // uniforme), invece di girare in tondo all'infinito il robot si
-                // "rilocalizza" avanzando un istante e poi riprova. Mai piu'
-                // rischioso di moveForward (che parte solo a fronte libero).
-                // Tempi tarabili a banco.
-                const unsigned long SEEK_TURN_MAX_MS = 8000UL;  // ~1 giro lento
+                // Light/shadow seeking with ANTI-CIRCLING: if the rotation towards
+                // the source lasts too long without reaching the threshold (e.g.
+                // uniform light), instead of spinning in circles forever the robot
+                // "relocates" by driving forward for a moment and then retries. Never
+                // riskier than moveForward (which only starts with a clear front).
+                // Timings tunable on the bench.
+                const unsigned long SEEK_TURN_MAX_MS = 8000UL;  // ~1 slow turn
                 const unsigned long SEEK_RELOCATE_MS = 2000UL;
                 const bool wantTurn = seekWantsTurn(targetMode == CPP_LIGHT,
                                                     targetMode == CPP_SHADOW,
                                                     cached_lux, lightThr);
 
                 if (millis() < seekRelocateUntilMs) {
-                    moveForward(config);                  // fase di rilocazione
+                    moveForward(config);                  // relocation phase
                 } else if (wantTurn) {
                     if (seekTurnStartMs == 0) seekTurnStartMs = millis();
                     if (millis() - seekTurnStartMs > SEEK_TURN_MAX_MS) {
@@ -190,12 +242,12 @@ void Movement::handleMovementSM(const ObstacleView& v, int cached_lux,
                         seekRelocateUntilMs = millis() + SEEK_RELOCATE_MS;
                         moveForward(config);
                     } else if (targetMode == CPP_LIGHT) {
-                        turnRight(config);                // troppo buio -> cerca luce
+                        turnRight(config);                // too dark -> seek light
                     } else {
-                        turnLeft(config);                 // troppa luce -> cerca ombra
+                        turnLeft(config);                 // too bright -> seek shadow
                     }
                 } else {
-                    seekTurnStartMs = 0;                  // soglia raggiunta / IDLE
+                    seekTurnStartMs = 0;                  // threshold reached / IDLE
                     moveForward(config);
                 }
             }
@@ -218,7 +270,7 @@ void Movement::handleMovementSM(const ObstacleView& v, int cached_lux,
 
         case CPP_M_AVOID_TURNING: {
             if (millis() - stateStartTime > config.avoid_turn_ms) {
-                // Verifica se siamo riusciti a liberare il fronte.
+                // Check whether we managed to clear the front.
                 if (front_obs) {
                     avoidance_attempts++;
                     if (avoidance_attempts >= 3) {
@@ -230,12 +282,12 @@ void Movement::handleMovementSM(const ObstacleView& v, int cached_lux,
                     }
                 } else {
                     currentMovementState = CPP_M_MOVING;
-                    stateStartTime       = millis(); // riparte la finestra dei 60 s
+                    stateStartTime       = millis(); // restarts the 60 s window
                 }
                 break;
             }
-            // Direzione di rotazione: preferisci il lato libero.
-            // Se entrambi liberi/occupati allo stesso modo, scegli random.
+            // Rotation direction: prefer the free side.
+            // If both are equally free/occupied, pick randomly.
             if (!right_obs && left_obs)       turnRight(config);
             else if (!left_obs && right_obs)  turnLeft(config);
             else if (random(0, 2) == 0)       turnLeft(config);
@@ -247,7 +299,7 @@ void Movement::handleMovementSM(const ObstacleView& v, int cached_lux,
             stopMotors(stats);
             if (millis() - stuck_cooldown_start_time > current_stuck_backoff) {
                 currentMovementState   = CPP_M_IDLE;
-                current_stuck_backoff += 10000UL; // backoff esponenziale (incremento lineare di 10s)
+                current_stuck_backoff += 10000UL; // exponential backoff (linear 10 s increment)
             }
             break;
     }
@@ -258,10 +310,12 @@ void Movement::setTargetMode(CppMode mode) {
 }
 
 void Movement::testMove(char dir, uint16_t ms, const DeviceConfig& config) {
-    // Helper bloccante per CLI manuale. Tetto duro a MAX_TEST_MS per
-    // restare ben sotto MOTOR_SAFETY_TIMEOUT_MS, e wdt_reset() periodico
-    // per non far scattare il watchdog (4 s) durante l'attesa.
-    const uint16_t MAX_TEST_MS = 5000;
+    // Blocking helper for manual CLI use (wheels lifted off the ground). Hard cap
+    // at MAX_TEST_MS (aligned with the pump's cap, Pump.cpp) to allow an
+    // extended continuous test without being unbounded; periodic wdt_reset()
+    // in the loop below prevents the watchdog (4 s) from tripping during
+    // the blocking wait.
+    const uint16_t MAX_TEST_MS = 60000;
     if (ms > MAX_TEST_MS) ms = MAX_TEST_MS;
 
     switch (dir) {
@@ -278,10 +332,10 @@ void Movement::testMove(char dir, uint16_t ms, const DeviceConfig& config) {
         delay(50);
     }
 
-    analogWrite(MOTOR_LEFT_ENA, 0);
-    analogWrite(MOTOR_RIGHT_ENB, 0);
-    digitalWrite(MOTOR_LEFT_IN1, LOW);
-    digitalWrite(MOTOR_LEFT_IN2, LOW);
-    digitalWrite(MOTOR_RIGHT_IN3, LOW);
-    digitalWrite(MOTOR_RIGHT_IN4, LOW);
+    analogWrite(MOTOR_LEFT_PWM, 0);
+    analogWrite(MOTOR_RIGHT_PWM, 0);
+    digitalWrite(MOTOR_LEFT_INA, LOW);
+    digitalWrite(MOTOR_LEFT_INB, LOW);
+    digitalWrite(MOTOR_RIGHT_INA, LOW);
+    digitalWrite(MOTOR_RIGHT_INB, LOW);
 }

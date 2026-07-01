@@ -1,14 +1,14 @@
 /*! @file crc_utils.cpp
  *  @ingroup HubSerial
- *  @brief Implementazione bit-a-bit (no lookup table) dei due CRC16 condivisi
- *  dell'Hub.
+ *  @brief Bitwise implementation (no lookup table) of the two shared Hub CRC16
+ *  routines.
  *  @author Giacomo Radin
  *  @date 2026-06-30
  */
 
 #include "crc_utils.h"
 
-// CCITT poly 0x1021, MSB-first (identico al Mega).
+// CCITT poly 0x1021, MSB-first (identical to the Mega).
 uint16_t crc16_ccitt(const uint8_t* data, size_t length) {
     uint16_t crc = 0x0000;
     for (size_t i = 0; i < length; ++i) {
@@ -21,7 +21,7 @@ uint16_t crc16_ccitt(const uint8_t* data, size_t length) {
     return crc;
 }
 
-// IBM/ARC poly 0xA001, LSB-first (uso NVS interno Hub).
+// IBM/ARC poly 0xA001, LSB-first (Hub-internal NVS use).
 uint16_t crc16_ibm(const uint8_t* data, size_t length) {
     uint16_t crc = 0x0000;
     for (size_t i = 0; i < length; ++i) {

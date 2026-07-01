@@ -1,41 +1,41 @@
 /*! @file WifiManager.cpp
  *  @ingroup HubNetworking
- *  @brief Implementazione di WifiManager: connessione STA, sync NTP, AP di
- *  provisioning con Captive Portal.
+ *  @brief Implementation of WifiManager: STA connection, NTP sync,
+ *  provisioning AP with Captive Portal.
  *  @author Giacomo Radin
  *  @date 2025-10-28
  */
 
 #include "WifiManager.h"
-#include "ConfigManager.h" // Necessario per accedere alle credenziali
+#include "ConfigManager.h" // Needed to access the credentials
 #include <WiFi.h>
-#include <ESPAsyncWebServer.h> // Per il server di provisioning
+#include <ESPAsyncWebServer.h> // For the provisioning server
 #include "esp_log.h"
-#include <esp_wifi.h> // Per leggere l'indirizzo MAC
-#include <time.h>     // configTime/NTP: serve alla validazione del cert TLS
+#include <esp_wifi.h> // To read the MAC address
+#include <time.h>     // configTime/NTP: needed for TLS cert validation
 
-// Tag per i log specifici di questo modulo
+// Tag for this module's log messages
 static const char *TAG = "WifiManager";
 
-// Sotto questo epoch l'ora di sistema NON e' sincronizzata (NTP non riuscito).
+/*! @brief Epoch below which the system time is considered unsynchronized (NTP not achieved). */
 #define NTP_VALID_EPOCH 1700000000UL
 
-// Flag globale (interno al modulo .cpp) per indicare quando il provisioning è terminato
-// e bisogna riavviare. Usiamo un namespace anonimo per limitarne la visibilità.
+// Global flag (internal to the .cpp module) indicating that provisioning has
+// finished and a reboot is required. Using an anonymous namespace to limit its visibility.
 namespace {
-    volatile bool provisioningComplete = false; // volatile perché modificato in un handler
+    volatile bool provisioningComplete = false; // volatile because it's modified inside a handler
 }
 
-/*! @brief Avvia la sincronizzazione SNTP e attende (al massimo ~5 s, bloccante)
- *  che l'orologio di sistema raggiunga un epoch plausibile.
- *  @details NTP best-effort: senza ora reale la verifica di validita' del
- *  certificato TLS verso HiveMQ fallisce ("certificate not yet valid") e
- *  l'handshake non parte. L'attesa qui e' solo un primo tentativo al boot:
- *  se a 5 s l'ora non e' ancora valida, MqttManager::reconnect() forza
- *  comunque nuovi tentativi SNTP periodici prima di connettersi.
- *  @note Bloccante per `delay(100)` a step: accettabile solo perche' chiamata
- *  una tantum all'avvio (dopo connect() riuscita), mai dai task FreeRTOS a
- *  regime. */
+/*! @brief Starts SNTP synchronization and waits (at most ~5 s, blocking)
+ *  for the system clock to reach a plausible epoch.
+ *  @details Best-effort NTP: without a real time, TLS certificate validation
+ *  towards HiveMQ fails ("certificate not yet valid") and the handshake
+ *  never starts. The wait here is only a first attempt at boot: if by 5 s
+ *  the time is still not valid, MqttManager::reconnect() forces further
+ *  periodic SNTP retries before connecting anyway.
+ *  @note Blocking via `delay(100)` steps: acceptable only because it is
+ *  called once at startup (after a successful connect()), never from the
+ *  FreeRTOS tasks during normal operation. */
 static void syncTimeNtp() {
     configTime(0, 0, "pool.ntp.org", "time.google.com");
     unsigned long t0 = millis();
@@ -49,32 +49,32 @@ static void syncTimeNtp() {
     }
 }
 
-// --- Implementazione Metodi Classe WifiManager ---
+// --- WifiManager Class Method Implementation ---
 
-// Costruttore: inizializza i membri privati e il server web di provisioning
+// Constructor: initializes the private members and the provisioning web server
 WifiManager::WifiManager(ConfigManager& configMgr)
-    : _configMgr(configMgr),            // Inizializza il riferimento a ConfigManager
-      _isConnected(false),              // Inizializza lo stato della connessione
-      _provisioningServer(80)           // Inizializza il server sulla porta 80
+    : _configMgr(configMgr),            // Initialize the reference to ConfigManager
+      _isConnected(false),              // Initialize the connection state
+      _provisioningServer(80)           // Initialize the server on port 80
 {
-    // Pulisce i buffer temporanei all'inizio
+    // Clear the temporary buffers at the start
     memset(_tempSsid, 0, sizeof(_tempSsid));
     memset(_tempPassword, 0, sizeof(_tempPassword));
 }
 
-// Tenta la connessione al WiFi con timeout; in ogni caso il boot prosegue.
+// Attempts to connect to Wi-Fi with a timeout; the boot proceeds regardless.
 //
-// Se mancano le credenziali in NVS, o se la connessione STA non va a buon
-// fine entro WIFI_CONNECT_TIMEOUT_MS, avvia l'AP di provisioning
-// "SmartVase_Setup_XXXX" + Captive Portal (vedi startProvisioningAP()).
-// Le credenziali NVS non vengono mai cancellate in caso di fallimento: un
-// nuovo tentativo si puo' fare anche da CLI seriale (`wifi connect`).
+// If credentials are missing from NVS, or if the STA connection does not
+// succeed within WIFI_CONNECT_TIMEOUT_MS, starts the provisioning AP
+// "SmartVase_Setup_XXXX" + Captive Portal (see startProvisioningAP()).
+// NVS credentials are never cleared on failure: a new attempt can also be
+// made from the serial CLI (`wifi connect`).
 void WifiManager::connect() {
     const char* ssid = _configMgr.getWifiSsid();
     const char* password = _configMgr.getWifiPassword();
 
-    // Radio sempre in STA: serve anche per leggere il MAC (device_id, client
-    // id MQTT) e permette un retry successivo via CLI `wifi connect`.
+    // Radio always in STA: also needed to read the MAC (device_id, MQTT
+    // client id) and allows a later retry via CLI `wifi connect`.
     WiFi.mode(WIFI_STA);
 
     if (ssid == nullptr || strlen(ssid) == 0) {
@@ -91,7 +91,7 @@ void WifiManager::connect() {
     while (WiFi.status() != WL_CONNECTED &&
            millis() - startTime <= WIFI_CONNECT_TIMEOUT_MS) {
         delay(250);
-        Serial.print("."); // Feedback visivo sulla console
+        Serial.print("."); // Visual feedback on the console
     }
     Serial.println("");
 
@@ -106,68 +106,68 @@ void WifiManager::connect() {
     }
 }
 
-// Restituisce true se connesso alla rete WiFi principale, false altrimenti.
+// Returns true if connected to the main Wi-Fi network, false otherwise.
 bool WifiManager::isConnected() const {
-    // Controlla sia il nostro flag interno che lo stato reale del WiFi
+    // Check both our internal flag and the actual Wi-Fi state
     return _isConnected && (WiFi.status() == WL_CONNECTED);
 }
 
-// Avvia la modalità Access Point (AP) per il provisioning
+// Starts Access Point (AP) mode for provisioning
 void WifiManager::startProvisioningAP() {
-    _isConnected = false;           // Non siamo connessi alla rete principale
-    provisioningComplete = false;   // Resetta il flag di completamento
-    memset(_tempSsid, 0, sizeof(_tempSsid)); // Pulisci i buffer temporanei
+    _isConnected = false;           // We are not connected to the main network
+    provisioningComplete = false;   // Reset the completion flag
+    memset(_tempSsid, 0, sizeof(_tempSsid)); // Clear the temporary buffers
     memset(_tempPassword, 0, sizeof(_tempPassword));
 
-    // Genera un SSID univoco per l'AP basato sul MAC address dell'ESP32
+    // Generate a unique SSID for the AP based on the ESP32's MAC address
     uint8_t mac[6];
-    esp_wifi_get_mac(WIFI_IF_STA, mac); // Ottieni il MAC address
+    esp_wifi_get_mac(WIFI_IF_STA, mac); // Get the MAC address
     char ap_ssid[32];
-    // Crea SSID tipo "SmartVase_Setup_A1B2" usando le ultime due cifre del MAC
+    // Build an SSID like "SmartVase_Setup_A1B2" using the last two MAC bytes
     snprintf(ap_ssid, sizeof(ap_ssid), "SmartVase_Setup_%02X%02X", mac[4], mac[5]);
 
     ESP_LOGI(TAG, "Starting Access Point: %s", ap_ssid);
-    WiFi.disconnect(true); // Assicurati di essere disconnesso da qualsiasi rete STA precedente
-    delay(100);            // Pausa
-    WiFi.mode(WIFI_AP);    // Imposta la modalità Access Point
+    WiFi.disconnect(true); // Make sure we're disconnected from any previous STA network
+    delay(100);            // Small pause
+    WiFi.mode(WIFI_AP);    // Set Access Point mode
 
-    // Configura l'AP (SSID senza password per semplicità)
+    // Configure the AP (no password, for simplicity)
     WiFi.softAP(ap_ssid);
 
-    IPAddress apIP = WiFi.softAPIP(); // Ottieni l'IP dell'AP (di solito 192.168.4.1)
+    IPAddress apIP = WiFi.softAPIP(); // Get the AP's IP (usually 192.168.4.1)
     ESP_LOGI(TAG, "AP IP address: %s", apIP.toString().c_str());
     ESP_LOGI(TAG, "Connect to '%s' network and navigate to http://%s to configure WiFi.", ap_ssid, apIP.toString().c_str());
 
-    // Avvia il server DNS per il Captive Portal reindirizzando tutte le richieste all'AP
+    // Start the DNS server for the Captive Portal, redirecting all requests to the AP
     _dnsServer.start(53, "*", apIP);
 
-    // Configura gli endpoint del web server per la pagina di provisioning
+    // Configure the web server endpoints for the provisioning page
     setupProvisioningServer();
-    _provisioningServer.begin(); // Avvia il server web membro della classe
+    _provisioningServer.begin(); // Start the class's member web server
 }
 
-// Gestisce le operazioni necessarie durante la modalità AP (da chiamare nel loop/task).
+// Handles the operations required while in AP mode (to be called from the loop/task).
 void WifiManager::handleProvisioning() {
-    // Se non siamo in modalità AP, non c'è nulla da fare qui
+    // If we're not in AP mode, there's nothing to do here
     if (WiFi.getMode() != WIFI_AP) {
         return;
     }
 
-    // Processa le richieste DNS del Captive Portal
+    // Process the Captive Portal's DNS requests
     _dnsServer.processNextRequest();
 
-    // Controlla se il flag `provisioningComplete` è stato impostato dall'handler /save
+    // Check whether the `provisioningComplete` flag has been set by the /save handler
     if (provisioningComplete) {
-        // Usa una funzione helper per la logica di salvataggio e riavvio
+        // Use a helper function for the save-and-restart logic
         completeProvisioning();
-        // Nota: completeProvisioning() chiama ESP.restart(), quindi il codice qui sotto
-        // non verrà eseguito dopo il riavvio.
+        // Note: completeProvisioning() calls ESP.restart(), so the code below
+        // will not run after the reboot.
     }
 }
 
-// Configura gli endpoint (route) del server web di provisioning
+// Configures the endpoints (routes) of the provisioning web server
 void WifiManager::setupProvisioningServer() {
-    // Handler per la pagina principale (GET /) - Mostra il form HTML Premium
+    // Handler for the main page (GET /) - Shows the premium HTML form
     _provisioningServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         String html = R"raw(
 <!DOCTYPE html>
@@ -346,7 +346,7 @@ void WifiManager::setupProvisioningServer() {
         request->send(200, "text/html", html);
     });
 
-    // Handler per l'endpoint /save (POST) - Riceve le credenziali dal form
+    // Handler for the /save endpoint (POST) - Receives the credentials from the form
     _provisioningServer.on("/save", HTTP_POST, [this](AsyncWebServerRequest *request){
         bool success = false;
 
@@ -442,29 +442,29 @@ void WifiManager::setupProvisioningServer() {
         request->send(200, "text/html", htmlResponse);
     });
 
-    // Handler per Captive Portal (reindirizza qualsiasi altra richiesta non definita alla radice)
+    // Handler for the Captive Portal (redirects any other undefined request to the root)
     _provisioningServer.onNotFound([](AsyncWebServerRequest *request){
         ESP_LOGD(TAG, "Captive portal redirect: %s", request->url().c_str());
         request->redirect("http://192.168.4.1/");
     });
 }
 
-// Funzione helper chiamata internamente quando il provisioning è completato
+// Helper function called internally once provisioning is complete
 void WifiManager::completeProvisioning() {
     ESP_LOGI(TAG, "Provisioning complete flag detected. Saving credentials and rebooting...");
 
-    // Ferma il server DNS e il server web AP
+    // Stop the DNS server and the AP web server
     _dnsServer.stop();
     _provisioningServer.end();
 
-    // Disconnette e spegne l'Access Point
+    // Disconnect and shut down the Access Point
     WiFi.softAPdisconnect(true);
 
-    // Imposta la modalità WiFi su OFF per sicurezza prima di salvare/riavviare
+    // Set Wi-Fi mode to OFF, for safety, before saving/restarting
     WiFi.mode(WIFI_OFF);
-    delay(100); // Piccola pausa
+    delay(100); // Short pause
 
-    // Salva le nuove credenziali ricevute usando il ConfigManager
+    // Save the newly received credentials via the ConfigManager
     _configMgr.setWifiCredentials(_tempSsid, _tempPassword);
     if (_configMgr.saveConfig()) {
         ESP_LOGI(TAG, "Credentials saved successfully to NVS. Restarting ESP...");
@@ -472,7 +472,7 @@ void WifiManager::completeProvisioning() {
         ESP_LOGE(TAG, "CRITICAL: Failed to save credentials to NVS! Restarting anyway...");
     }
 
-    delay(1000); 
-    ESP.restart(); // Riavvia l'ESP32
+    delay(1000);
+    ESP.restart(); // Restart the ESP32
 }
 

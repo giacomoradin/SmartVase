@@ -1,14 +1,14 @@
 /*! @file MainLogic.h
  *  @ingroup HubCore
- *  @brief Core logico dell'Hub: bridge tra il protocollo Protobuf del Mega e
- *  il JSON MQTT del cloud, scheduling telemetria/heartbeat, deadman switch.
+ *  @brief Hub logic core: bridges the Mega's Protobuf protocol with the
+ *  cloud's MQTT JSON, schedules telemetry/heartbeat, and runs the deadman switch.
  *  @author Giacomo Radin
  *  @date 2025-10-28
  */
 
-/*! @defgroup HubCore Core logico e bootstrap
- *  @brief Bridge JSON<->Protobuf, scheduling dei task FreeRTOS e punto di
- *  ingresso del firmware (main.cpp).
+/*! @defgroup HubCore Logic core and bootstrap
+ *  @brief JSON<->Protobuf bridge, FreeRTOS task scheduling and firmware entry
+ *  point (main.cpp).
  */
 
 #ifndef MAINLOGIC_H
@@ -29,162 +29,162 @@
 
 /**
  * @def MQTT_TX_QUEUE_SIZE
- * @brief Dimensione della coda di trasmissione MQTT.
+ * @brief Size of the MQTT transmit queue.
  */
 #define MQTT_TX_QUEUE_SIZE       15
 
 /**
  * @def MAX_JSON_MESSAGE_LENGTH
- * @brief Lunghezza massima consentita per un messaggio JSON (MQTT).
+ * @brief Maximum allowed length of a JSON message (MQTT).
  */
 #define MAX_JSON_MESSAGE_LENGTH  1024
 
 /**
  * @struct MqttMessage
- * @brief Struttura dati per contenere un messaggio MQTT in uscita (Payload JSON).
+ * @brief Data structure holding an outgoing MQTT message (JSON payload).
  */
 typedef struct {
-    char topic[64];                           /**< Topic MQTT su cui pubblicare */
-    char payload[MAX_JSON_MESSAGE_LENGTH];    /**< Payload in formato JSON */
+    char topic[64];                           /**< MQTT topic to publish to */
+    char payload[MAX_JSON_MESSAGE_LENGTH];    /**< JSON-formatted payload */
 } MqttMessage;
 
 /**
  * @struct MqttCommand
- * @brief Struttura dati per rappresentare un comando MQTT ricevuto in ingresso.
+ * @brief Data structure representing an incoming MQTT command.
  */
 typedef struct {
-    uint32_t timestamp;                       /**< Timestamp di ricezione */
-    char     topic[64];                       /**< Topic MQTT di provenienza */
-    char     payload[MAX_JSON_MESSAGE_LENGTH];/**< Payload del comando JSON */
+    uint32_t timestamp;                       /**< Reception timestamp */
+    char     topic[64];                       /**< Source MQTT topic */
+    char     payload[MAX_JSON_MESSAGE_LENGTH];/**< JSON command payload */
 } MqttCommand;
 
 /**
  * @class MainLogic
- * @brief Core logico dell'ESP32 Hub. Coordina la seriale (con il Mega) e il Wi-Fi/MQTT (con il cloud).
+ * @brief Logic core of the ESP32 Hub. Coordinates the serial link (with the Mega) and Wi-Fi/MQTT (with the cloud).
  *
- * Gestisce l'instradamento dei messaggi Protobuf provenienti dalla seriale del Mega verso il server MQTT (in JSON),
- * e la serializzazione/invio dei comandi cloud MQTT (in JSON) in messaggi Protobuf da inoltrare al Mega.
- * Implementa inoltre un controllo di presenza "deadman switch" per rilevare la disconnessione fisica del Mega.
+ * Handles routing of Protobuf messages coming from the Mega's serial link to the MQTT server (as JSON),
+ * and the serialization/sending of cloud MQTT commands (JSON) into Protobuf messages forwarded to the Mega.
+ * It also implements a "deadman switch" presence check to detect the Mega's physical disconnection.
  *
- * @note E' il corpo del task FreeRTOS `TaskMainLogic` (Core 1, priorita' bassa,
- * isolato dai picchi di carico TLS di `TaskMqttLink` su Core 0). L'accesso
- * concorrente alle telemetrie cache (`_lastFastTelemetry`/`_lastDeepTelemetry`)
- * da parte della CLI seriale e' protetto da `_telemetryMux` (vedi getTelemetrySnapshot()).
+ * @note This is the body of the `TaskMainLogic` FreeRTOS task (Core 1, low
+ * priority, isolated from the TLS load spikes of `TaskMqttLink` on Core 0).
+ * Concurrent access to the cached telemetry (`_lastFastTelemetry`/`_lastDeepTelemetry`)
+ * from the serial CLI is protected by `_telemetryMux` (see getTelemetrySnapshot()).
  */
 class MainLogic {
 public:
     /**
-     * @brief Costruttore di MainLogic.
-     * 
-     * @param serialRxQueue Coda FreeRTOS per i messaggi ricevuti dalla seriale (Mega -> Hub).
-     * @param serialTxQueue Coda FreeRTOS per i messaggi da trasmettere sulla seriale (Hub -> Mega).
-     * @param mqttTxQueue Coda FreeRTOS per i messaggi da pubblicare su MQTT.
-     * @param mqttRxQueue Coda FreeRTOS per i comandi ricevuti tramite sottoscrizione MQTT.
-     * @param configManager Riferimento al ConfigManager per la persistenza su NVS.
+     * @brief MainLogic constructor.
+     *
+     * @param serialRxQueue FreeRTOS queue for messages received over serial (Mega -> Hub).
+     * @param serialTxQueue FreeRTOS queue for messages to transmit over serial (Hub -> Mega).
+     * @param mqttTxQueue FreeRTOS queue for messages to publish on MQTT.
+     * @param mqttRxQueue FreeRTOS queue for commands received via MQTT subscription.
+     * @param configManager Reference to the ConfigManager for NVS persistence.
      */
     MainLogic(QueueHandle_t serialRxQueue, QueueHandle_t serialTxQueue,
               QueueHandle_t mqttTxQueue,   QueueHandle_t mqttRxQueue,
               ConfigManager& configManager);
 
     /**
-     * @brief Entry point statico per il task FreeRTOS.
-     * @param pvParameters Puntatore all'istanza di MainLogic.
+     * @brief Static entry point for the FreeRTOS task.
+     * @param pvParameters Pointer to the MainLogic instance.
      */
     static void taskEntry(void* pvParameters);
 
     /**
-     * @brief Inizializza gli stati interni e carica le configurazioni di base.
+     * @brief Initializes internal state and loads the base configuration.
      */
     void init();
 
-    // --- Accessor per la CLI di debug (chiamati dal task loop()) ---
+    // --- Accessors for the debug CLI (called from the task loop()) ---
     /**
-     * @brief Verifica se la connessione seriale attiva con l'Arduino Mega è stabilita.
-     * @return true se il Mega risponde agli heartbeat, false altrimenti.
+     * @brief Checks whether the active serial connection with the Arduino Mega is established.
+     * @return true if the Mega responds to heartbeats, false otherwise.
      */
     bool isMegaConnected() const { return _isMegaConnected; }
 
     /**
-     * @brief Restituisce il tempo trascorso dall'ultimo messaggio valido ricevuto dall'Arduino Mega.
-     * @return uint32_t Tempo in millisecondi.
+     * @brief Returns the time elapsed since the last valid message received from the Arduino Mega.
+     * @return uint32_t Time in milliseconds.
      */
     uint32_t megaLastMessageAgeMs() const { return millis() - _lastMegaHeartbeatMs; }
 
     /**
-     * @brief Restituisce l'ID univoco del dispositivo Hub.
-     * @return const char* Stringa identificativa (es. "HUB_XXXXXX").
+     * @brief Returns the Hub device's unique ID.
+     * @return const char* Identifier string (e.g. "HUB_XXXXXX").
      */
     const char* deviceId() const { return _deviceId; }
 
     /**
-     * @brief Ottiene uno snapshot protetto da mutex delle ultime telemetrie ricevute dal Mega.
-     * 
-     * @param tf Output per la telemetria veloce (TelemetryFast).
-     * @param td Output per la telemetria profonda (TelemetryDeep).
+     * @brief Obtains a mutex-protected snapshot of the latest telemetry received from the Mega.
+     *
+     * @param tf Output for the fast telemetry (TelemetryFast).
+     * @param td Output for the deep telemetry (TelemetryDeep).
      */
     void getTelemetrySnapshot(TelemetryFast& tf, TelemetryDeep& td);
 
 private:
-    QueueHandle_t _serialRxQueue;             /**< Handle della coda RX seriale */
-    QueueHandle_t _serialTxQueue;             /**< Handle della coda TX seriale */
-    QueueHandle_t _mqttTxQueue;               /**< Handle della coda TX MQTT */
-    QueueHandle_t _mqttRxQueue;               /**< Handle della coda RX MQTT */
-    ConfigManager& _configManager;             /**< Riferimento al gestore configurazioni */
+    QueueHandle_t _serialRxQueue;             /**< Serial RX queue handle */
+    QueueHandle_t _serialTxQueue;             /**< Serial TX queue handle */
+    QueueHandle_t _mqttTxQueue;               /**< MQTT TX queue handle */
+    QueueHandle_t _mqttRxQueue;               /**< MQTT RX queue handle */
+    ConfigManager& _configManager;             /**< Reference to the configuration manager */
 
-    uint32_t      _lastMegaHeartbeatMs;       /**< Timestamp dell'ultimo heartbeat del Mega */
-    bool          _isMegaConnected;           /**< Stato connessione Mega */
+    uint32_t      _lastMegaHeartbeatMs;       /**< Timestamp of the last heartbeat from the Mega */
+    bool          _isMegaConnected;           /**< Mega connection state */
 
-    TelemetryFast _lastFastTelemetry;         /**< Cache dell'ultimo messaggio di telemetria veloce */
-    TelemetryDeep _lastDeepTelemetry;         /**< Cache dell'ultimo messaggio di telemetria profonda */
-    portMUX_TYPE  _telemetryMux = portMUX_INITIALIZER_UNLOCKED; /**< Mutex per la sincronizzazione dei dati di telemetria */
-    uint32_t      _lastTelemetryPublishMs;    /**< Timestamp dell'ultimo invio di telemetria al broker MQTT */
+    TelemetryFast _lastFastTelemetry;         /**< Cache of the last fast telemetry message */
+    TelemetryDeep _lastDeepTelemetry;         /**< Cache of the last deep telemetry message */
+    portMUX_TYPE  _telemetryMux = portMUX_INITIALIZER_UNLOCKED; /**< Mutex synchronizing telemetry data */
+    uint32_t      _lastTelemetryPublishMs;    /**< Timestamp of the last telemetry publish to the MQTT broker */
 
-    char _deviceId[16];                       /**< ID del dispositivo Hub */
+    char _deviceId[16];                       /**< Hub device ID */
 
     /**
-     * @brief Loop di esecuzione del task MainLogic.
+     * @brief Execution loop of the MainLogic task.
      */
     void taskRun();
 
     /**
-     * @brief Elabora un messaggio Protobuf ricevuto sulla seriale dal Mega.
-     * @param msg Messaggio Protobuf da elaborare.
+     * @brief Processes a Protobuf message received over serial from the Mega.
+     * @param msg Protobuf message to process.
      */
     void processSerialMessage(const WrapperMessage& msg);
 
     /**
-     * @brief Elabora un comando MQTT ricevuto in formato JSON.
-     * @param cmd Comando da elaborare.
+     * @brief Processes an MQTT command received as JSON.
+     * @param cmd Command to process.
      */
     void processMqttCommand(const MqttCommand& cmd);
 
     /**
-     * @brief Converte e pubblica in formato JSON le telemetrie sul broker MQTT.
+     * @brief Converts and publishes telemetry as JSON to the MQTT broker.
      */
     void publishTelemetryJson(const TelemetryFast& tf, const TelemetryDeep& td);
 
     /**
-     * @brief Converte e pubblica in formato JSON un log strutturato sul broker MQTT.
+     * @brief Converts and publishes a structured log as JSON to the MQTT broker.
      */
     void publishLogJson(const Log& log);
 
     /**
-     * @brief Genera e pubblica un messaggio di allarme sul broker MQTT.
+     * @brief Builds and publishes an alarm message to the MQTT broker.
      */
     void publishAlarmJson(const char* alarmType, const char* detail);
 
     /**
-     * @brief Genera e pubblica la risposta ad un comando (ACK) sul broker MQTT.
+     * @brief Builds and publishes the acknowledgment (ACK) for a command to the MQTT broker.
      */
     void publishCommandAckJson(const CommandResponse& r);
 
     /**
-     * @brief Invia un comando Protobuf all'Arduino Mega tramite la seriale.
+     * @brief Sends a Protobuf command to the Arduino Mega over serial.
      */
     void sendCommandToMega(const Command& cmd);
 
     /**
-     * @brief Controlla lo stato di connessione con il Mega (deadman switch).
+     * @brief Checks the connection state with the Mega (deadman switch).
      */
     void checkMegaConnection();
 };

@@ -44,10 +44,10 @@ typedef smartvase_Log                    Log;
 typedef smartvase_Heartbeat              Heartbeat;
 typedef smartvase_CommandResponse        CommandResponse;
 
-// --- Descrittori dei Messaggi ---
+// --- Message Descriptors ---
 #define WrapperMessage_fields smartvase_WrapperMessage_fields
 
-// --- Macro di Inizializzazione ---
+// --- Initialization Macros ---
 #define WrapperMessage_init_zero    smartvase_WrapperMessage_init_zero
 #define Log_init_zero               smartvase_Log_init_zero
 #define Command_init_zero           smartvase_Command_init_zero
@@ -56,7 +56,7 @@ typedef smartvase_CommandResponse        CommandResponse;
 #define TelemetryDeep_init_zero     smartvase_TelemetryDeep_init_zero
 #define Heartbeat_init_zero         smartvase_Heartbeat_init_zero
 
-// --- Tag dei Campi 'oneof' ---
+// --- 'oneof' Field Tags ---
 #define WrapperMessage_telemetry_fast_tag   smartvase_WrapperMessage_telemetry_fast_tag
 #define WrapperMessage_telemetry_deep_tag   smartvase_WrapperMessage_telemetry_deep_tag
 #define WrapperMessage_log_tag              smartvase_WrapperMessage_log_tag
@@ -72,7 +72,7 @@ typedef smartvase_CommandResponse        CommandResponse;
 #define Command_read_soil_tag             smartvase_Command_read_soil_tag
 #define Command_soft_reset_tag            smartvase_Command_soft_reset_tag
 
-// --- Valori degli Enum ---
+// --- Enum Values ---
 #define Log_LogLevel_INFO      smartvase_Log_LogLevel_INFO
 #define Log_LogLevel_WARN      smartvase_Log_LogLevel_WARN
 #define Log_LogLevel_ERROR     smartvase_Log_LogLevel_ERROR

@@ -3,7 +3,7 @@
 
     @ingroup MegaPersistence
 
-    @brief  Persistenza EEPROM dual-slot (wear-leveling) di config e statistiche.
+    @brief  Dual-slot (wear-leveling) EEPROM persistence of config and statistics.
 
     @date   2026-04-29
 
@@ -24,70 +24,70 @@
 
 /*!
     @class Persistence
-    @brief Gestore della persistenza dei dati di configurazione e statistiche su EEPROM per Arduino Mega.
+    @brief Manager for persisting configuration and statistics data to the Arduino Mega EEPROM.
 
-    @details Implementa un meccanismo a doppio slot per prevenire corruzioni di dati in caso di spegnimento
-             durante la scrittura (wear leveling e fail-safe), protetto da CRC16 (Crc16.h) e magic number.
-             Al load sceglie lo slot valido col `write_counter` più alto; al save scrive sempre sullo slot
-             opposto a quello corrente. Implementa inoltre un throttling temporale delle scritture
-             (`saveConfig`/`saveStats`, vedi le costanti `EEPROM_*_WRITE_INTERVAL` in Persistence.cpp) per
-             non usurare prematuramente la EEPROM, con possibilità di forzare la scrittura immediata.
+    @details Implements a dual-slot mechanism to prevent data corruption on power loss during a write
+             (wear-leveling and fail-safe), protected by CRC16 (Crc16.h) and a magic number.
+             On load it picks the valid slot with the highest `write_counter`; on save it always writes
+             to the slot opposite the current one. It also implements time-based write throttling
+             (`saveConfig`/`saveStats`, see the `EEPROM_*_WRITE_INTERVAL` constants in Persistence.cpp) to
+             avoid prematurely wearing out the EEPROM, with the option to force an immediate write.
 */
 class Persistence {
 public:
     /**
-     * @brief Costruttore della classe Persistence.
+     * @brief Constructor of the Persistence class.
      */
     Persistence();
 
     /**
-     * @brief Carica la configurazione del dispositivo (soglie, modalità, ecc.) dalla EEPROM.
-     * 
-     * Legge entrambi gli slot, convalida tramite CRC16 e sceglie lo slot con contatore di scrittura più alto.
+     * @brief Loads the device configuration (thresholds, modes, etc.) from EEPROM.
+     *
+     * Reads both slots, validates them via CRC16, and picks the slot with the higher write counter.
      */
     void loadConfig();
 
     /**
-     * @brief Salva la configurazione corrente in EEPROM.
-     * 
-     * Scrive nello slot alternativo rispetto all'ultimo caricato per distribuire l'usura.
-     * 
-     * @param force Se impostato a true, ignora il throttling temporale (default: false).
+     * @brief Saves the current configuration to EEPROM.
+     *
+     * Writes to the slot alternate to the last loaded one, to spread out wear.
+     *
+     * @param force If set to true, ignores the time-based throttling (default: false).
      */
     void saveConfig(bool force = false);
 
     /**
-     * @brief Carica le statistiche cumulative del dispositivo dalla EEPROM.
+     * @brief Loads the device's cumulative statistics from EEPROM.
      */
     void loadStats();
 
     /**
-     * @brief Salva le statistiche cumulative correnti in EEPROM.
-     * 
-     * @param force Se impostato a true, ignora il throttling temporale (default: false).
+     * @brief Saves the current cumulative statistics to EEPROM.
+     *
+     * @param force If set to true, ignores the time-based throttling (default: false).
      */
     void saveStats(bool force = false);
 
     /**
-     * @brief Restituisce il riferimento alla configurazione corrente.
-     * @return DeviceConfig& Configurazione del dispositivo.
+     * @brief Returns a reference to the current configuration.
+     * @return DeviceConfig& Device configuration.
      */
     DeviceConfig&    getConfig() { return config; }
 
     /**
-     * @brief Restituisce il riferimento alle statistiche cumulative correnti.
-     * @return CumulativeStats& Statistiche di utilizzo.
+     * @brief Returns a reference to the current cumulative statistics.
+     * @return CumulativeStats& Usage statistics.
      */
     CumulativeStats& getStats()  { return stats; }
 
 private:
-    DeviceConfig    config;             /**< Struttura dati per le configurazioni correnti */
-    CumulativeStats stats;              /**< Struttura dati per le statistiche correnti */
-    CumulativeStats lastSavedStats;     /**< Copia dell'ultimo salvataggio per verificare modifiche reali */
-    unsigned long   lastEepromConfigWrite; /**< Timestamp (in ms) dell'ultima scrittura di configurazione */
-    unsigned long   lastEepromStatsWrite;  /**< Timestamp (in ms) dell'ultima scrittura di statistiche */
-    uint8_t         current_config_slot;   /**< Slot di configurazione attivo (0 o 1) */
-    uint8_t         current_stats_slot;    /**< Slot di statistiche attivo (0 o 1) */
+    DeviceConfig    config;             /**< Data structure holding the current configuration */
+    CumulativeStats stats;              /**< Data structure holding the current statistics */
+    CumulativeStats lastSavedStats;     /**< Copy of the last save, used to check for real changes */
+    unsigned long   lastEepromConfigWrite; /**< Timestamp (in ms) of the last configuration write */
+    unsigned long   lastEepromStatsWrite;  /**< Timestamp (in ms) of the last statistics write */
+    uint8_t         current_config_slot;   /**< Active configuration slot (0 or 1) */
+    uint8_t         current_stats_slot;    /**< Active statistics slot (0 or 1) */
 };
 
 /*! @} */ // MegaPersistence

@@ -3,7 +3,7 @@
 
     @ingroup MegaPersistence
 
-    @brief  Implementazione della persistenza EEPROM dual-slot (config + stats).
+    @brief  Implementation of the dual-slot EEPROM persistence (config + stats).
 
     @date   2026-04-29
 
@@ -13,29 +13,36 @@
 #include "Persistence.h"
 #include "Crc16.h"
 
-// Guardie: se aggiungendo campi una struct supera lo spazio del proprio slot,
-// si sovrapporrebbe a quello successivo (bug silente). Falliscono in compilazione.
-static_assert(sizeof(DeviceConfig)    <= 64,  "DeviceConfig supera lo slot EEPROM (64 B)");
-static_assert(sizeof(CumulativeStats) <= 128, "CumulativeStats supera lo slot EEPROM (128 B)");
+// Guards: if adding fields makes a struct exceed its slot's space, it would
+// overlap with the next one (a silent bug). These fail at compile time.
+static_assert(sizeof(DeviceConfig)    <= 64,  "DeviceConfig exceeds the EEPROM slot (64 B)");
+static_assert(sizeof(CumulativeStats) <= 128, "CumulativeStats exceeds the EEPROM slot (128 B)");
 
 // =================================================================
-// Persistenza EEPROM dual-slot (wear leveling) con magic+CRC16.
+// Dual-slot EEPROM persistence (wear leveling) with magic+CRC16.
 // =================================================================
 
-// Magic numbers per riconoscere slot validi
-#define EEPROM_MAGIC_NUMBER_CONFIG 0xCF6BEEF6
-#define EEPROM_MAGIC_NUMBER_STATS  0x18BEEF18
+/*! @name Magic numbers to recognize a valid EEPROM slot
+ *  @{ */
+#define EEPROM_MAGIC_NUMBER_CONFIG 0xCF6BEEF6  ///< Magic for the configuration slots.
+#define EEPROM_MAGIC_NUMBER_STATS  0x18BEEF18  ///< Magic for the statistics slots.
+/*! @} */
 
-// Indirizzi dei due slot di config (sizeof(DeviceConfig) cresce con i nuovi campi,
-// quindi tengo abbondante margine).
-#define EEPROM_CONFIG_SLOT_0_ADDR    0
-#define EEPROM_CONFIG_SLOT_1_ADDR   64
-#define EEPROM_STATS_SLOT_0_ADDR   128
-#define EEPROM_STATS_SLOT_1_ADDR   256
+/*! @name Addresses of the two dual-slot pairs in EEPROM
+ *  @details Generous margin, since sizeof(DeviceConfig) grows with new fields
+ *           (see static_assert above).
+ *  @{ */
+#define EEPROM_CONFIG_SLOT_0_ADDR    0    ///< Configuration slot 0.
+#define EEPROM_CONFIG_SLOT_1_ADDR   64    ///< Configuration slot 1.
+#define EEPROM_STATS_SLOT_0_ADDR   128    ///< Statistics slot 0.
+#define EEPROM_STATS_SLOT_1_ADDR   256    ///< Statistics slot 1.
+/*! @} */
 
-// Throttling scritture
-#define EEPROM_CONFIG_WRITE_INTERVAL  60000UL    //  60 s
-#define EEPROM_STATS_WRITE_INTERVAL  300000UL    // 300 s
+/*! @name Throttling delle scritture EEPROM (anti-usura)
+ *  @{ */
+#define EEPROM_CONFIG_WRITE_INTERVAL  60000UL    ///< Intervallo minimo tra due scritture di config (ms).
+#define EEPROM_STATS_WRITE_INTERVAL  300000UL    ///< Intervallo minimo tra due scritture di stats (ms).
+/*! @} */
 
 /*!
     @brief    Calcola il CRC16 di una `DeviceConfig`, escludendo il proprio campo `crc16`.
@@ -110,9 +117,11 @@ void Persistence::loadConfig() {
         config.avoid_reverse_ms  = 1000;
         config.avoid_turn_ms     = 1200;
         config.soil_dry_threshold = 450;
-        config.light_threshold    = 600;
-        // Default prudente da tarare a banco con `tank <cm>` (CLI):
-        // distanza US4->acqua oltre la quale la pompa viene bloccata.
+        // Bench-calibrated 2026-06-30: LDR covered (dark) ADC~11, with lab
+        // fluorescent lights on ADC~539, on a real scale of ~0-800 (not 0-1023).
+        config.light_threshold    = 500;
+        // Conservative default, to be tuned on the bench with `tank <cm>` (CLI):
+        // US4->water distance beyond which the pump is blocked.
         config.tank_empty_cm      = 20;
         current_config_slot      = 0;
 

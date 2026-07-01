@@ -1,7 +1,7 @@
 /*!
  * @file RtcDs3232.cpp
  * @ingroup MegaSensors
- * @brief Implementazione del driver DS3232: transazioni I2C per lettura/scrittura ora e gestione flag OSF.
+ * @brief Implementation of the DS3232 driver: I2C transactions for reading/writing the time and handling the OSF flag.
  * @date 2026-06-11
  * @author Giacomo Radin
  */

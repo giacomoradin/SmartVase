@@ -1,7 +1,7 @@
 /*!
  * @file Ultrasonic.h
  * @ingroup MegaSensors
- * @brief Driver locale non bloccante per sensori ad ultrasuoni HC-SR04.
+ * @brief Local non-blocking driver for HC-SR04 ultrasonic sensors.
  * @date 2026-06-11
  * @author Giacomo Radin
  */
@@ -13,48 +13,48 @@
 
 /**
  * @class Ultrasonic
- * @brief Driver minimale per una singola sonda HC-SR04 (trigger/echo), con timeout configurabile.
+ * @brief Minimal driver for a single HC-SR04 probe (trigger/echo), with configurable timeout.
  *
- * Sostituisce la libreria enjoyneering/HCSR04, che inserisce un `delay(50)` bloccante dentro ogni
- * `getDistance()`: con 6 sonde in round-robin sarebbero ~300 ms di stallo del main loop per ciclo completo.
- * Qui l'unica attesa e' il `pulseIn` con timeout proporzionale a `maxDistanceCm`, cosi' il costo di una
- * lettura resta sotto ~12 ms per sonde con portata 200 cm.
+ * Replaces the enjoyneering/HCSR04 library, which inserts a blocking `delay(50)` inside every
+ * `getDistance()`: with 6 probes in round-robin that would be ~300 ms of main-loop stall per full cycle.
+ * Here the only wait is the `pulseIn` with a timeout proportional to `maxDistanceCm`, so the cost of one
+ * reading stays below ~12 ms for probes with a 200 cm range.
  *
- * @note Vincolo d'uso: non rileggere la stessa sonda prima di ~60 ms (l'eco residuo deve estinguersi).
- *       Il round-robin a 6 sonde con un campione ogni 30 ms (vedi Sensors.cpp) rispetta il vincolo con
- *       ampio margine (180 ms per sonda).
+ * @note Usage constraint: do not re-read the same probe before ~60 ms (the residual echo must die out).
+ *       The 6-probe round-robin with one sample every 30 ms (see Sensors.cpp) satisfies the constraint with
+ *       a wide margin (180 ms per probe).
  */
 class Ultrasonic {
 public:
     /**
-     * @brief Costruisce il driver per una sonda HC-SR04, calcolando il timeout di lettura dalla portata massima.
-     * @param[in] triggerPin   Pin digitale collegato al pin TRIG della sonda.
-     * @param[in] echoPin      Pin digitale collegato al pin ECHO della sonda.
-     * @param[in] maxDistanceCm Portata massima utile in cm; determina il timeout interno del `pulseIn`
-     *                          (default 200 cm se non specificato).
+     * @brief Builds the driver for an HC-SR04 probe, deriving the read timeout from the maximum range.
+     * @param[in] triggerPin   Digital pin wired to the probe TRIG pin.
+     * @param[in] echoPin      Digital pin wired to the probe ECHO pin.
+     * @param[in] maxDistanceCm Maximum useful range in cm; determines the internal `pulseIn` timeout
+     *                          (default 200 cm if unspecified).
      */
     Ultrasonic(uint8_t triggerPin, uint8_t echoPin, uint16_t maxDistanceCm = 200);
 
     /**
-     * @brief Configura i pin GPIO (TRIG come OUTPUT a LOW, ECHO come INPUT).
-     * @note Da chiamare una volta in fase di inizializzazione, dopo che i pin sono stati assegnati.
+     * @brief Configures the GPIO pins (TRIG as OUTPUT driven LOW, ECHO as INPUT).
+     * @note Call once during initialization, after the pins have been assigned.
      */
     void begin();
 
     /**
-     * @brief Esegue un ciclo trigger+misura e restituisce la distanza rilevata.
-     * @return Distanza in cm, oppure NAN se nessun eco viene ricevuto entro il timeout
-     *         (sonda fuori portata o scollegata).
-     * @note Bloccante per al piu' `_timeoutUs` microsecondi (il tempo del `pulseIn`); il chiamante
-     *       (Sensors::sampleNextUltrasonic) e' responsabile di non invocarla piu' spesso del vincolo
-     *       di ri-lettura della sonda.
+     * @brief Runs one trigger+measure cycle and returns the detected distance.
+     * @return Distance in cm, or NAN if no echo is received within the timeout
+     *         (probe out of range or disconnected).
+     * @note Blocks for at most `_timeoutUs` microseconds (the `pulseIn` time); the caller
+     *       (Sensors::sampleNextUltrasonic) is responsible for not invoking it more often than the
+     *       probe re-read constraint.
      */
     float readCm();
 
 private:
-    uint8_t       _triggerPin; /**< Pin digitale TRIG della sonda. */
-    uint8_t       _echoPin;    /**< Pin digitale ECHO della sonda. */
-    unsigned long _timeoutUs;  /**< Timeout del pulseIn in microsecondi, derivato da maxDistanceCm. */
+    uint8_t       _triggerPin; /**< Probe TRIG digital pin. */
+    uint8_t       _echoPin;    /**< Probe ECHO digital pin. */
+    unsigned long _timeoutUs;  /**< pulseIn timeout in microseconds, derived from maxDistanceCm. */
 };
 
 #endif // ULTRASONIC_H

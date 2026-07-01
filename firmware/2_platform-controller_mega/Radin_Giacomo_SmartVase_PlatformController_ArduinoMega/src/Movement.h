@@ -1,14 +1,14 @@
 /*!
  * @file Movement.h
  * @ingroup MegaMovement
- * @brief Interfaccia della FSM di movimento autonomo (seeking luce/ombra, obstacle avoidance, stuck recovery).
+ * @brief Interface of the autonomous movement FSM (light/shadow seeking, obstacle avoidance, stuck recovery).
  * @date 2026-04-29
  * @author Giacomo Radin
  */
 
 /**
- * @defgroup MegaMovement Movimento e navigazione (Mega)
- * @brief State machine motori, seeking luce/ombra, obstacle avoidance, anti-circling e gestione stato "stuck".
+ * @defgroup MegaMovement Movement and navigation (Mega)
+ * @brief Motor state machine, light/shadow seeking, obstacle avoidance, anti-circling and "stuck" state handling.
  * @{
  */
 
@@ -22,132 +22,154 @@ class Sensors;
 
 /**
  * @struct ObstacleView
- * @brief Snapshot delle distanze rilevate dai sensori ad ultrasuoni (in cm).
+ * @brief Snapshot of the distances measured by the ultrasonic sensors (in cm).
  *
- * I valori sono impostati a NAN se la lettura del sensore corrispondente non è valida o è in errore.
+ * Values are set to NAN if the corresponding sensor reading is invalid or faulty.
  */
 struct ObstacleView {
-    float top;          /**< US1: Frontale alto (anti-collisione superiore) */
-    float front_right;  /**< US2: Frontale destro */
-    float front_left;   /**< US3: Frontale sinistro */
-    float left;         /**< US5: Laterale sinistro */
-    float right;        /**< US6: Laterale destro */
+    float top;          /**< US1: Front top (upper anti-collision) */
+    float front_right;  /**< US2: Front right */
+    float front_left;   /**< US3: Front left */
+    float left;         /**< US5: Side left */
+    float right;        /**< US6: Side right */
 };
 
 /**
  * @class Movement
- * @brief FSM (Finite State Machine) per il movimento autonomo e la ricerca delle condizioni ottimali.
+ * @brief FSM (Finite State Machine) for autonomous movement and seeking optimal conditions.
  *
- * La classe si occupa di pilotare i motori per seguire la luce o l'ombra (seeking) e per evitare
- * gli ostacoli rilevati dai sensori ad ultrasuoni (obstacle avoidance). Gestisce inoltre lo stato
- * di "stuck" (bloccato) con backoff esponenziale.
+ * The class drives the motors to follow light or shadow (seeking) and to avoid
+ * obstacles detected by the ultrasonic sensors (obstacle avoidance). It also manages the
+ * "stuck" state with exponential backoff.
+ *
+ * @note Motor driver: **Pololu Dual VNH5019 Shield**. Per-motor interface: `INA`/`INB`
+ *       (direction), `PWM` (speed), `EN/DIAG` (enable + fault reporting, read via
+ *       faultLeft()/faultRight()). Pin mapping in Movement.cpp and in `docs/PINS - Sheet1.csv`.
  */
 class Movement {
 public:
     /**
-     * @brief Costruttore della classe Movement.
+     * @brief Constructor of the Movement class.
      */
     Movement();
 
     /**
-     * @brief Inizializza i pin del driver dei motori.
+     * @brief Initializes the motor driver pins.
      */
     void init();
 
     /**
-     * @brief Gestisce lo stato e la logica di movimento ad ogni ciclo.
-     * 
-     * Da chiamare ad alta frequenza nel main loop. Coordina la state machine di movimento
-     * (M_IDLE, M_MOVING, M_AVOID_*, M_STUCK) in base alle letture dei sensori, alla luminosità
-     * e alla modalità target desiderata.
-     * 
-     * @param v Struttura contenente le distanze attuali dagli ostacoli.
-     * @param cached_lux Valore di luminosità attuale filtrato (lux).
-     * @param config Configurazione corrente salvata in EEPROM.
-     * @param stats Statistiche cumulative di utilizzo (per contare sessioni di seeking ed evitare circling).
-     * @param degradedModeActive Flag che indica se il sistema è in modalità degradata (RAM insufficiente, ecc.).
+     * @brief Handles the movement state and logic on every cycle.
+     *
+     * To be called at high frequency in the main loop. Drives the movement state machine
+     * (M_IDLE, M_MOVING, M_AVOID_*, M_STUCK) based on the sensor readings, the ambient light
+     * and the desired target mode.
+     *
+     * @param v Structure holding the current obstacle distances.
+     * @param cached_lux Current filtered light level (lux).
+     * @param config Current configuration stored in EEPROM.
+     * @param stats Cumulative usage statistics (used to count seeking sessions and avoid circling).
+     * @param degradedModeActive Flag indicating whether the system is in degraded mode (insufficient RAM, etc.).
      */
     void handleMovementSM(const ObstacleView& v, int cached_lux,
                           const DeviceConfig& config, CumulativeStats& stats,
                           bool degradedModeActive);
 
     /**
-     * @brief Arresta immediatamente i motori del robot.
-     * 
-     * @param stats Riferimento alle statistiche per aggiornare lo stato di attività.
+     * @brief Immediately stops the robot's motors.
+     *
+     * @param stats Reference to the statistics, to update the activity state.
      */
     void stopMotors(CumulativeStats& stats);
 
     /**
-     * @brief Imposta la modalità target del robot.
-     * 
-     * @param mode Nuova modalità di funzionamento (LIGHT, SHADOW, IDLE).
+     * @brief Sets the robot's target mode.
+     *
+     * @param mode New operating mode (LIGHT, SHADOW, IDLE).
      */
     void setTargetMode(CppMode mode);
 
     /**
-     * @brief Restituisce la modalità target impostata.
-     * @return CppMode Modalità target corrente.
+     * @brief Returns the currently set target mode.
+     * @return CppMode Current target mode.
      */
     CppMode getTargetMode() const { return targetMode; }
 
     /**
-     * @brief Restituisce lo stato di movimento corrente della state machine.
-     * @return CppMovementState Stato di movimento corrente.
+     * @brief Returns the state machine's current movement state.
+     * @return CppMovementState Current movement state.
      */
     CppMovementState getCurrentState() const { return currentMovementState; }
 
     /**
-     * @brief Esegue un movimento di test (avanti, indietro, sinistra, destra) per un tempo determinato.
-     * 
-     * Usato principalmente per debug da interfaccia CLI seriale.
-     * 
-     * @param dir Carattere indicante la direzione ('F'=Avanti, 'B'=Indietro, 'L'=Sinistra, 'R'=Destra).
-     * @param ms Durata del movimento di test in millisecondi.
-     * @param config Configurazione contenente i parametri di velocità/potenza dei motori.
+     * @brief Indicates whether the left motor's VNH5019 driver is reporting a fault.
+     * @details Reads the EN/DIAG pin (VNH5019 open-drain line): at rest it is held high by
+     *          the shield's pull-up (driver enabled), and the chip pulls it low on a fault
+     *          (overtemperature, overcurrent, undervoltage). EN/DIAG is **not wired** to the
+     *          Mega as of 2026-06-30 (`MOTOR_EN_DIAG_WIRED 0` in Movement.cpp): this always
+     *          returns false until it is physically wired and the flag/pins are updated.
+     * @return true if a fault is currently active on the left motor.
+     */
+    bool faultLeft() const;
+
+    /**
+     * @brief Indicates whether the right motor's VNH5019 driver is reporting a fault. See faultLeft().
+     * @return true if a fault is currently active on the right motor.
+     */
+    bool faultRight() const;
+
+    /**
+     * @brief Performs a test movement (forward, backward, left, right) for a given duration.
+     *
+     * Mainly used for debugging from the serial CLI interface (`motor` command). Blocking
+     * (with periodic `wdt_reset()`), meant for bench testing with the wheels lifted off the ground.
+     *
+     * @param dir Character indicating the direction ('F'=Forward, 'B'=Backward, 'L'=Left, 'R'=Right).
+     * @param ms Duration of the test movement in milliseconds, clamped to 60000 ms (60 s).
+     * @param config Configuration holding the motor speed/power parameters.
      */
     void testMove(char dir, uint16_t ms, const DeviceConfig& config);
 
 private:
     /**
-     * @brief Attiva i motori per muovere il robot in avanti.
+     * @brief Activates the motors to move the robot forward.
      */
     void moveForward(const DeviceConfig& config);
 
     /**
-     * @brief Attiva i motori per muovere il robot all'indietro.
+     * @brief Activates the motors to move the robot backward.
      */
     void moveBackward(const DeviceConfig& config);
 
     /**
-     * @brief Ruota il robot verso destra sul proprio asse.
+     * @brief Rotates the robot to the right in place.
      */
     void turnRight(const DeviceConfig& config);
 
     /**
-     * @brief Ruota il robot verso sinistra sul proprio asse.
+     * @brief Rotates the robot to the left in place.
      */
     void turnLeft(const DeviceConfig& config);
 
     /**
-     * @brief Verifica se la traiettoria frontale è bloccata da ostacoli.
-     * 
-     * Combina i dati dei sensori US1 (frontale alto), US2 (frontale destro) e US3 (frontale sinistro).
-     * 
-     * @param v Vista degli ostacoli correnti.
-     * @return true se c'è un ostacolo vicino sul fronte, false altrimenti.
+     * @brief Checks whether the front trajectory is blocked by obstacles.
+     *
+     * Combines the data from sensors US1 (front top), US2 (front right) and US3 (front left).
+     *
+     * @param v Current obstacle view.
+     * @return true if there is a nearby obstacle in front, false otherwise.
      */
     bool frontBlocked(const ObstacleView& v) const;
 
-    CppMovementState currentMovementState;    /**< Stato corrente della FSM dei motori */
-    CppMode          targetMode;              /**< Modalità target impostata dall'utente o dal cloud */
-    unsigned long    motorActiveStartTime;    /**< Timestamp di inizio dell'attività dei motori */
-    unsigned long    stateStartTime;           /**< Timestamp di ingresso nello stato FSM corrente */
-    uint8_t          avoidance_attempts;      /**< Numero di tentativi consecutivi di evitamento ostacolo falliti */
-    unsigned long    stuck_cooldown_start_time;/**< Inizio del cooldown di attesa nello stato M_STUCK */
-    uint32_t         current_stuck_backoff;   /**< Durata del backoff attuale per lo stato stuck (in ms) */
-    unsigned long    seekTurnStartMs;         /**< Timestamp di inizio rotazione nella ricerca (per evitare circling) */
-    unsigned long    seekRelocateUntilMs;     /**< Limite temporale entro il quale completare la rilocazione */
+    CppMovementState currentMovementState;    /**< Current state of the motor FSM */
+    CppMode          targetMode;              /**< Target mode set by the user or the cloud */
+    unsigned long    motorActiveStartTime;    /**< Timestamp when motor activity started */
+    unsigned long    stateStartTime;           /**< Timestamp of entry into the current FSM state */
+    uint8_t          avoidance_attempts;      /**< Number of consecutive failed obstacle-avoidance attempts */
+    unsigned long    stuck_cooldown_start_time;/**< Start of the wait cooldown in the M_STUCK state */
+    uint32_t         current_stuck_backoff;   /**< Current backoff duration for the stuck state (in ms) */
+    unsigned long    seekTurnStartMs;         /**< Timestamp of the start of seeking rotation (to avoid circling) */
+    unsigned long    seekRelocateUntilMs;     /**< Time limit within which to complete the relocation */
 };
 
 #endif // MOVEMENT_H

@@ -1,14 +1,14 @@
 /*!
  * @file Sensors.h
  * @ingroup MegaSensors
- * @brief Modulo unificato di lettura sensori del Platform Controller (ultrasuoni, ADC, RTC, BME680).
+ * @brief Unified sensor-reading module of the Platform Controller (ultrasonic, ADC, RTC, BME680).
  * @date 2026-04-29
  * @author Giacomo Radin
  */
 
 /**
- * @defgroup MegaSensors Sensori e RTC (Mega)
- * @brief Lettura sensori ultrasuoni round-robin con EMA, ADC suolo/luce/batteria, BME680 opzionale, RTC DS3232, policy pure di interpretazione sensori.
+ * @defgroup MegaSensors Sensors and RTC (Mega)
+ * @brief Round-robin ultrasonic sensor reading with EMA, soil/light/battery ADC, optional BME680, DS3232 RTC, pure sensor-interpretation policies.
  * @{
  */
 
@@ -24,18 +24,18 @@
 // --- Feature flags ---
 /**
  * @def BME680_ENABLED
- * @brief Flag di abilitazione per il sensore di temperatura/pressione/umidità/gas BME680.
- * 
- * Il BME680 non è montato sul prototipo attuale (PIN map 2026-05-19, conferma 2026-06-11).
- * Tenere a 0 finché non viene cablato. Se impostato a 1, riattiva probe I2C, letture in TelemetryDeep e log.
+ * @brief Enable flag for the BME680 temperature/pressure/humidity/gas sensor.
+ *
+ * The BME680 is not fitted on the current prototype (PIN map 2026-05-19, confirmed 2026-06-11).
+ * Keep at 0 until it is wired. If set to 1, re-enables the I2C probe, readings in TelemetryDeep and logging.
  */
 #define BME680_ENABLED 0
 
 /**
  * @def BATTERY_MONITORING_ENABLED
- * @brief Flag di abilitazione per il monitoraggio della tensione di batteria.
- * 
- * La batteria non è ancora cablata sul nuovo prototipo. Se impostato a 1, riattiva le letture del partitore.
+ * @brief Enable flag for battery voltage monitoring.
+ *
+ * The battery is not yet wired on the new prototype. If set to 1, re-enables the voltage divider readings.
  */
 #define BATTERY_MONITORING_ENABLED 0
 
@@ -45,170 +45,197 @@
 
 /**
  * @class Sensors
- * @brief Modulo per la gestione unificata dei sensori di SmartVase (ultrasuoni, fotocellula, igrometro, RTC, BME680).
+ * @brief Module for unified management of SmartVase's sensors (ultrasonic, photoresistor, hygrometer, RTC, BME680).
  *
- * Esegue le letture dei 6 sensori ad ultrasuoni HC-SR04 in modalità round-robin non bloccante (una lettura ogni
- * `US_SAMPLE_INTERVAL_MS`, vedi Sensors.cpp), applica filtri EMA (Exponential Moving Average) per stabilizzare le
- * letture rumorose, e fornisce dati filtrati ed elaborati sia in locale (per Movement, comandi CLI/seriali) sia
- * per la costruzione dei pacchetti di telemetria Protobuf (`TelemetryFast`/`TelemetryDeep`).
+ * Performs the readings of the 6 HC-SR04 ultrasonic sensors in non-blocking round-robin mode (one reading every
+ * `US_SAMPLE_INTERVAL_MS`, see Sensors.cpp), applies EMA (Exponential Moving Average) filters to stabilize
+ * noisy readings, and provides filtered/processed data both locally (for Movement, CLI/serial commands) and
+ * for building the Protobuf telemetry packets (`TelemetryFast`/`TelemetryDeep`).
  *
- * @note Nessuna chiamata bloccante nel polling: `sampleSensors()` va richiamata ad alta frequenza dal main loop
- *       non bloccante (niente `delay()`), coerentemente con le convenzioni del firmware Mega.
+ * @note No blocking calls in the polling: `sampleSensors()` must be called at high frequency from the non-blocking
+ *       main loop (no `delay()`), consistent with the Mega firmware conventions.
  */
 class Sensors {
 public:
     /**
-     * @brief Costruttore della classe Sensors.
+     * @brief Constructor of the Sensors class.
      */
     Sensors();
 
     /**
-     * @brief Inizializza i pin dei sensori e i bus di comunicazione (I2C/Wire per RTC e BME).
+     * @brief Initializes the sensor pins and the communication buses (I2C/Wire for RTC and BME).
      */
     void init();
 
     /**
-     * @brief Esegue il polling non bloccante round-robin dei 6 sensori ad ultrasuoni e degli input analogici.
-     * 
-     * Da chiamare ad alta frequenza all'interno del main loop.
+     * @brief Performs the non-blocking round-robin polling of the 6 ultrasonic sensors and the analog inputs.
+     *
+     * To be called at high frequency inside the main loop.
      */
     void sampleSensors();
 
-    // --- Letture filtrate (cm) ---
-    /** @brief Restituisce la distanza dal sensore US1 (Frontale Alto) in cm. */
+    // --- Filtered readings (cm) ---
+    /** @brief Returns the distance from sensor US1 (Front Top) in cm. */
     float getTopDist()        const { return cached_top_dist_cm; }
-    /** @brief Restituisce la distanza dal sensore US2 (Frontale Destro) in cm. */
+    /** @brief Returns the distance from sensor US2 (Front Right) in cm. */
     float getFrontRightDist() const { return cached_front_right_dist_cm; }
-    /** @brief Restituisce la distanza dal sensore US3 (Frontale Sinistro) in cm. */
+    /** @brief Returns the distance from sensor US3 (Front Left) in cm. */
     float getFrontLeftDist()  const { return cached_front_left_dist_cm; }
-    /** @brief Restituisce la lettura del livello dell'acqua della tanica US4 in cm. */
+    /** @brief Returns the water level reading from the tank sensor US4, in cm. */
     float getWaterLevel()     const { return cached_water_level_cm; }
-    /** @brief Restituisce la distanza dal sensore US5 (Laterale Sinistro) in cm. */
+    /** @brief Returns the distance from sensor US5 (Side Left) in cm. */
     float getLeftDist()       const { return cached_left_dist_cm; }
-    /** @brief Restituisce la distanza dal sensore US6 (Laterale Destro) in cm. */
+    /** @brief Returns the distance from sensor US6 (Side Right) in cm. */
     float getRightDist()      const { return cached_right_dist_cm; }
 
     /**
-     * @brief Verifica se la tanica dell'acqua è vuota.
-     * 
-     * Esegue un controllo fail-safe: se la lettura di US4 non è valida o supera la soglia di serbatoio vuoto.
-     * 
-     * @param thresholdCm Soglia limite di livello acqua in cm (distanza sensore-acqua).
-     * @return true se la tanica è considerata vuota o la lettura non è valida.
+     * @brief Checks whether the water tank is empty.
+     *
+     * Performs a fail-safe check: whether the US4 reading is invalid or exceeds the empty-tank threshold.
+     *
+     * @param thresholdCm Water level limit threshold in cm (sensor-to-water distance).
+     * @return true if the tank is considered empty or the reading is invalid.
      */
     bool tankLooksEmpty(uint16_t thresholdCm) const {
         return tankConsideredEmpty(cached_water_level_cm, thresholdCm);
     }
 
     // --- ADC ---
-    /** @brief Restituisce il valore letto dall'LDR (luminosità, 0-1023). */
+    /** @brief Returns the value read from the LDR (light level, 0-1023). */
     int getLux()           const { return cached_lux; }
-    /** @brief Restituisce il valore di umidità del terreno dall'igrometro (0-1023). */
+    /** @brief Returns the soil moisture value from the hygrometer (0-1023). */
     int getSoilMoisture()  const { return cached_soil_moisture; }
-    /** @brief Restituisce la tensione stimata della batteria in Volt. */
+    /** @brief Returns the estimated battery voltage in Volts. */
     float getBatteryVoltage() const { return cached_battery_voltage; }
 
     // --- RTC ---
-    /** @brief Legge e restituisce l'epoca UNIX corrente dall'RTC DS3232. */
+    /**
+     * @brief Reads and returns the current UNIX epoch.
+     * @details Uses the real RTC chip if present and reachable; otherwise, if a
+     *          software fallback clock has been set (see setEpoch()), returns
+     *          that (based on `millis()`, keeps advancing realistically).
+     * @return UNIX epoch in seconds, or 0 if no time source is available.
+     */
     uint32_t getEpoch();
     /**
-     * @brief Imposta l'epoca UNIX corrente dell'RTC.
-     * @param epoch_s Timestamp UNIX da impostare (in secondi).
-     * @return true se l'operazione ha avuto successo.
+     * @brief Sets the current UNIX epoch.
+     * @details First attempts to write to the real RTC chip; if the chip is not detected or
+     *          the I2C write fails, falls back to a software clock (`millis()`-based) that
+     *          starts from `epoch_s` and keeps advancing as long as the Mega stays powered — useful
+     *          for bring-up when the CR2032 backup battery is low/absent and the chip
+     *          does not respond, without having to wait for a hardware replacement. The software clock is
+     *          lost on every reset/power-off and must be set again.
+     * @param epoch_s UNIX timestamp to set (in seconds).
+     * @return true (the operation is always taken on, real or software; use
+     *         isUsingFakeClock() to find out which of the two was used).
      */
     bool setEpoch(uint32_t epoch_s);
-    /** @brief Restituisce lo stato di funzionamento dell'RTC. */
+    /** @brief Returns the operating status of the real RTC chip (does not account for the software clock). */
     bool getRTCStatus() const { return rtc_status; }
-    /** @brief Verifica se l'oscillatore dell'RTC si è fermato (es. batteria tampone scarica). */
+    /** @brief Checks whether the real RTC chip's oscillator has stopped (e.g. dead backup battery). */
     bool rtcOscStopped() { return rtc_status ? rtc.oscillatorStopped() : true; }
+    /**
+     * @brief Checks whether a reliable time is available, from the real chip or from the software fallback clock.
+     * @details To be used instead of `getRTCStatus() && !rtcOscStopped()` when only interested in
+     *          knowing whether `getEpoch()` will return a plausible value, regardless of the
+     *          source (see setEpoch() for the software fallback).
+     * @return true if the real chip has a valid time or the software clock is active.
+     */
+    bool timeIsValid();
+    /** @brief true if the current time comes from the software fallback clock rather than the real RTC chip. */
+    bool isUsingFakeClock() const { return fake_clock_active; }
 
     // --- BME680 ---
-    /** @brief Restituisce lo stato di funzionamento/rilevamento del sensore BME680. */
+    /** @brief Returns the operating/detection status of the BME680 sensor. */
     bool getBMEStatus() const { return bme_status; }
 
     /**
-     * @brief Costruisce il messaggio Protobuf TelemetryFast.
-     * 
-     * @param movState Stato corrente della state machine dei motori.
-     * @param deviceId ID del dispositivo Mega.
-     * @return TelemetryFast Struttura compilata con le telemetrie rapide.
+     * @brief Builds the TelemetryFast Protobuf message.
+     *
+     * @param movState Current state of the motor state machine.
+     * @param deviceId Mega device ID.
+     * @return TelemetryFast Structure populated with the fast telemetry.
      */
     TelemetryFast buildFastTelemetry(CppMovementState movState, const char* deviceId);
 
     /**
-     * @brief Costruisce il messaggio Protobuf TelemetryDeep.
-     * 
-     * @param stats Statistiche cumulative da inviare al cloud.
-     * @param deviceId ID del dispositivo Mega.
-     * @return TelemetryDeep Struttura compilata con le telemetrie profonde.
+     * @brief Builds the TelemetryDeep Protobuf message.
+     *
+     * @param stats Cumulative statistics to send to the cloud.
+     * @param deviceId Mega device ID.
+     * @return TelemetryDeep Structure populated with the deep telemetry.
      */
     TelemetryDeep buildDeepTelemetry(CumulativeStats& stats, const char* deviceId);
 
 private:
     /**
-     * @brief Applica un filtro Exponential Moving Average (EMA) ad una lettura grezza, con scarto dei valori
-     *        fuori range e fallback a NAN dopo letture invalide consecutive.
+     * @brief Applies an Exponential Moving Average (EMA) filter to a raw reading, discarding values
+     *        outside the valid range and falling back to NAN after consecutive invalid readings.
      *
-     * @param[in] raw_value     Ultima lettura grezza dal sensore (puo' essere NAN se il sensore ha avuto timeout).
-     * @param[in] last_value    Valore filtrato precedente (stato del filtro), usato come base della media mobile.
-     * @param[in,out] invalid_streak Contatore di letture invalide consecutive; azzerato alla prima lettura valida,
-     *                          incrementato altrimenti. Oltre una soglia interna il filtro "dimentica" lo stato
-     *                          e restituisce NAN (vedi Sensors.cpp per il valore esatto della soglia).
-     * @param[in] min_valid     Limite inferiore del range plausibile per la lettura (cm).
-     * @param[in] max_valid     Limite superiore del range plausibile per la lettura (cm), tipicamente la portata
-     *                          massima configurata per la sonda HC-SR04.
-     * @return Valore filtrato (EMA) oppure NAN se il sensore e' considerato non affidabile.
+     * @param[in] raw_value     Latest raw sensor reading (can be NAN if the sensor timed out).
+     * @param[in] last_value    Previous filtered value (filter state), used as the base of the moving average.
+     * @param[in,out] invalid_streak Counter of consecutive invalid readings; reset on the first valid reading,
+     *                          incremented otherwise. Past an internal threshold, the filter "forgets" its state
+     *                          and returns NAN (see Sensors.cpp for the exact threshold value).
+     * @param[in] min_valid     Lower bound of the plausible range for the reading (cm).
+     * @param[in] max_valid     Upper bound of the plausible range for the reading (cm), typically the maximum
+     *                          range configured for the HC-SR04 probe.
+     * @return Filtered value (EMA), or NAN if the sensor is considered unreliable.
      */
     float applyEmaFilter(float raw_value, float last_value, unsigned int& invalid_streak,
                          float min_valid, float max_valid);
     /**
-     * @brief Esegue il trigger e la lettura del successivo sensore ad ultrasuoni nella sequenza round-robin.
-     * @note Avanza internamente l'indice di ciclo (`us_cycle_idx`) sulle 6 sonde; aggiorna la relativa cache
-     *       filtrata (EMA) e il relativo contatore di letture invalide consecutive.
+     * @brief Triggers and reads the next ultrasonic sensor in the round-robin sequence.
+     * @note Internally advances the cycle index (`us_cycle_idx`) over the 6 probes; updates the
+     *       corresponding filtered (EMA) cache and its consecutive invalid-reading counter.
      */
     void  sampleNextUltrasonic();
     /**
-     * @brief Campiona i canali analogici dell'ADC (lux, igrometro, tensione di batteria se abilitata).
-     * @note Applica un filtro EMA leggero su lux e umidita' suolo per stabilizzare letture rumorose; la lettura
-     *       della batteria e' condizionata al flag #BATTERY_MONITORING_ENABLED.
+     * @brief Samples the analog ADC channels (lux, hygrometer, battery voltage if enabled).
+     * @note Applies a light EMA filter on lux and soil moisture to stabilize noisy readings; the
+     *       battery reading is gated by the #BATTERY_MONITORING_ENABLED flag.
      */
     void  sampleAdcChannels();
 
 #if BME680_ENABLED
-    Adafruit_BME680 bme; /**< Driver del sensore ambientale BME680 (attivo solo se #BME680_ENABLED == 1). */
+    Adafruit_BME680 bme; /**< Driver for the BME680 environmental sensor (active only if #BME680_ENABLED == 1). */
 #endif
-    RtcDs3232 rtc; /**< Driver locale dell'RTC DS3232 (I2C 0x68). */
+    RtcDs3232 rtc; /**< Local driver for the DS3232 RTC (I2C 0x68). */
 
-    Ultrasonic us1_top;          /**< Sensore ultrasuoni Frontale Alto (US1) */
-    Ultrasonic us2_front_right;  /**< Sensore ultrasuoni Frontale Destro (US2) */
-    Ultrasonic us3_front_left;   /**< Sensore ultrasuoni Frontale Sinistro (US3) */
-    Ultrasonic us4_water;        /**< Sensore ultrasuoni Livello Acqua Tanica (US4) */
-    Ultrasonic us5_left;         /**< Sensore ultrasuoni Laterale Sinistro (US5) */
-    Ultrasonic us6_right;        /**< Sensore ultrasuoni Laterale Destro (US6) */
+    Ultrasonic us1_top;          /**< Front Top ultrasonic sensor (US1) */
+    Ultrasonic us2_front_right;  /**< Front Right ultrasonic sensor (US2) */
+    Ultrasonic us3_front_left;   /**< Front Left ultrasonic sensor (US3) */
+    Ultrasonic us4_water;        /**< Tank Water Level ultrasonic sensor (US4) */
+    Ultrasonic us5_left;         /**< Side Left ultrasonic sensor (US5) */
+    Ultrasonic us6_right;        /**< Side Right ultrasonic sensor (US6) */
 
-    uint8_t us_cycle_idx;        /**< Indice per la gestione del polling sequenziale (0..5) */
-    unsigned long last_us_sample_ms;/**< Timestamp dell'ultimo campionamento di un sensore ad ultrasuoni */
+    uint8_t us_cycle_idx;        /**< Index for managing sequential polling (0..5) */
+    unsigned long last_us_sample_ms;/**< Timestamp of the last ultrasonic sensor sample */
 
-    float cached_top_dist_cm;          /**< Ultima distanza filtrata (EMA) di US1, in cm; NAN se non valida. */
-    float cached_front_right_dist_cm;  /**< Ultima distanza filtrata (EMA) di US2, in cm; NAN se non valida. */
-    float cached_front_left_dist_cm;   /**< Ultima distanza filtrata (EMA) di US3, in cm; NAN se non valida. */
-    float cached_water_level_cm;       /**< Ultima distanza filtrata (EMA) di US4 (tanica), in cm; NAN se non valida. */
-    float cached_left_dist_cm;         /**< Ultima distanza filtrata (EMA) di US5, in cm; NAN se non valida. */
-    float cached_right_dist_cm;        /**< Ultima distanza filtrata (EMA) di US6, in cm; NAN se non valida. */
+    float cached_top_dist_cm;          /**< Latest filtered (EMA) US1 distance, in cm; NAN if invalid. */
+    float cached_front_right_dist_cm;  /**< Latest filtered (EMA) US2 distance, in cm; NAN if invalid. */
+    float cached_front_left_dist_cm;   /**< Latest filtered (EMA) US3 distance, in cm; NAN if invalid. */
+    float cached_water_level_cm;       /**< Latest filtered (EMA) US4 distance (tank), in cm; NAN if invalid. */
+    float cached_left_dist_cm;         /**< Latest filtered (EMA) US5 distance, in cm; NAN if invalid. */
+    float cached_right_dist_cm;        /**< Latest filtered (EMA) US6 distance, in cm; NAN if invalid. */
 
-    unsigned int invalid_streak_top;    /**< Letture consecutive fuori range/invalide per US1. */
-    unsigned int invalid_streak_fr;     /**< Letture consecutive fuori range/invalide per US2. */
-    unsigned int invalid_streak_fl;     /**< Letture consecutive fuori range/invalide per US3. */
-    unsigned int invalid_streak_water;  /**< Letture consecutive fuori range/invalide per US4. */
-    unsigned int invalid_streak_left;   /**< Letture consecutive fuori range/invalide per US5. */
-    unsigned int invalid_streak_right;  /**< Letture consecutive fuori range/invalide per US6. */
+    unsigned int invalid_streak_top;    /**< Consecutive out-of-range/invalid readings for US1. */
+    unsigned int invalid_streak_fr;     /**< Consecutive out-of-range/invalid readings for US2. */
+    unsigned int invalid_streak_fl;     /**< Consecutive out-of-range/invalid readings for US3. */
+    unsigned int invalid_streak_water;  /**< Consecutive out-of-range/invalid readings for US4. */
+    unsigned int invalid_streak_left;   /**< Consecutive out-of-range/invalid readings for US5. */
+    unsigned int invalid_streak_right;  /**< Consecutive out-of-range/invalid readings for US6. */
 
-    int   cached_lux;             /**< Ultimo valore ADC filtrato dell'LDR (0-1023); -1 se non ancora campionato. */
-    int   cached_soil_moisture;   /**< Ultimo valore ADC filtrato della forcella umidita' suolo (0-1023); -1 se non ancora campionato. */
-    float cached_battery_voltage; /**< Ultima tensione di batteria stimata (V); NAN se monitoraggio disabilitato o non letta. */
+    int   cached_lux;             /**< Latest filtered LDR ADC value (0-1023); -1 if not sampled yet. */
+    int   cached_soil_moisture;   /**< Latest filtered soil-moisture fork ADC value (0-1023); -1 if not sampled yet. */
+    float cached_battery_voltage; /**< Latest estimated battery voltage (V); NAN if monitoring is disabled or not read. */
 
-    bool bme_status; /**< true se il BME680 e' stato rilevato e inizializzato correttamente in init(). */
-    bool rtc_status;  /**< true se l'RTC DS3232 ha risposto su I2C in init(). */
+    bool bme_status; /**< true if the BME680 was detected and successfully initialized in init(). */
+    bool rtc_status;  /**< true if the DS3232 RTC responded on I2C in init(). */
+
+    bool          fake_clock_active;     /**< true if the software fallback clock is in use (see setEpoch()). */
+    uint32_t      fake_clock_base_epoch; /**< Epoch set by the user when the software clock was activated. */
+    unsigned long fake_clock_set_millis; /**< millis() at activation time, used to compute elapsed time. */
 };
 
 #endif // SENSORS_H

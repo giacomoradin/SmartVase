@@ -1,158 +1,158 @@
 /*! @file ConfigManager.h
  *  @ingroup HubConfig
- *  @brief Gestione della configurazione persistente dell'Hub (NVS/Preferences).
- *  @details Definisce la struct `DeviceConfig` (credenziali Wi-Fi, broker MQTT,
- *  webhook) salvata come blob in NVS con magic number + CRC16-IBM per
- *  rilevare corruzione, e la classe `ConfigManager` che la carica/salva e ne
- *  espone getter/setter. E' la fonte di verita' usata da `WifiManager`,
- *  `MqttManager`, `MainLogic` e `HubCli`.
+ *  @brief Management of the Hub's persistent configuration (NVS/Preferences).
+ *  @details Defines the `DeviceConfig` struct (Wi-Fi credentials, MQTT broker,
+ *  webhook) stored as a blob in NVS with a magic number + CRC16-IBM to detect
+ *  corruption, and the `ConfigManager` class that loads/saves it and exposes
+ *  getters/setters for it. It is the source of truth used by `WifiManager`,
+ *  `MqttManager`, `MainLogic` and `HubCli`.
  *  @author Giacomo Radin
  *  @date 2025-10-28
  */
 
-/*! @defgroup HubConfig Configurazione (NVS)
- *  @brief Persistenza della configurazione del dispositivo (Wi-Fi, MQTT, webhook)
- *  su NVS, con validazione tramite magic number e CRC16.
+/*! @defgroup HubConfig Configuration (NVS)
+ *  @brief Persistence of the device configuration (Wi-Fi, MQTT, webhook) on
+ *  NVS, with validation via magic number and CRC16.
  */
 
 #ifndef CONFIGMANAGER_H
 #define CONFIGMANAGER_H
 
-#include <Arduino.h> // Per tipi standard come uint16_t, size_t
-#include <stdint.h>  // Per uint32_t etc.
+#include <Arduino.h> // For standard types such as uint16_t, size_t
+#include <stdint.h>  // For uint32_t etc.
 
 /*! @addtogroup HubConfig
  *  @{
  */
 
-/*! @name Lunghezze massime dei campi di configurazione (incluso terminatore NUL)
+/*! @name Maximum lengths of the configuration fields (including the NUL terminator)
  *  @{
  */
-#define WIFI_SSID_MAX_LENGTH     32  /**< Lunghezza massima SSID Wi-Fi. */
-#define WIFI_PASSWORD_MAX_LENGTH 64  /**< Lunghezza massima password Wi-Fi. */
-#define MQTT_BROKER_MAX_LENGTH   64  /**< Lunghezza massima hostname/URL broker MQTT. */
-#define MQTT_USER_MAX_LENGTH     32  /**< Lunghezza massima username MQTT. */
-#define MQTT_PASSWORD_MAX_LENGTH 32  /**< Lunghezza massima password MQTT. */
-#define WEBHOOK_URL_MAX_LENGTH   128 /**< Lunghezza massima URL webhook opzionale. */
+#define WIFI_SSID_MAX_LENGTH     32  /**< Maximum length of the Wi-Fi SSID. */
+#define WIFI_PASSWORD_MAX_LENGTH 64  /**< Maximum length of the Wi-Fi password. */
+#define MQTT_BROKER_MAX_LENGTH   64  /**< Maximum length of the MQTT broker hostname/URL. */
+#define MQTT_USER_MAX_LENGTH     32  /**< Maximum length of the MQTT username. */
+#define MQTT_PASSWORD_MAX_LENGTH 32  /**< Maximum length of the MQTT password. */
+#define WEBHOOK_URL_MAX_LENGTH   128 /**< Maximum length of the optional webhook URL. */
 /*! @} */
 
 /*!
  * @def HUB_DEVICE_ID
- * @brief ID statico del dispositivo Hub, usato in tutti i topic MQTT e nei
- * messaggi protobuf verso il Mega.
- * @note Scelta del team (allineamento con Firebase): NON va derivato dal MAC
- * address, a differenza del client ID MQTT (vedi `MqttManager::init`).
+ * @brief Static Hub device ID, used in all MQTT topics and in the protobuf
+ * messages towards the Mega.
+ * @note Team decision (alignment with Firebase): it must NOT be derived from
+ * the MAC address, unlike the MQTT client ID (see `MqttManager::init`).
  */
 #define HUB_DEVICE_ID "HUB_123456"
 
 /*!
  * @struct DeviceConfig
- * @brief Layout binario di TUTTI i dati di configurazione persistiti come
- * singolo blob in NVS (namespace `smartvase_cfg`, chiave `device_config`).
- * @note La struct viene scritta/letta per intero con `nvs_set_blob`/`nvs_get_blob`:
- * qualsiasi modifica ai campi invalida i blob gia' salvati (vince comunque il
- * controllo magic+CRC, che fa ripartire da default puliti).
+ * @brief Binary layout of ALL the configuration data persisted as a single
+ * blob in NVS (namespace `smartvase_cfg`, key `device_config`).
+ * @note The struct is written/read in full with `nvs_set_blob`/`nvs_get_blob`:
+ * any change to the fields invalidates the already-saved blobs (the magic+CRC
+ * check wins anyway, restarting from clean defaults).
  */
 struct DeviceConfig {
-    uint32_t magic_number;            /**< Magic number per riconoscere un blob valido (vedi CONFIG_MAGIC_NUMBER in ConfigManager.cpp). */
-    uint16_t crc16;                   /**< CRC16-IBM calcolato sull'intera struct con questo campo azzerato (vedi config_crc()). */
+    uint32_t magic_number;            /**< Magic number to recognize a valid blob (see CONFIG_MAGIC_NUMBER in ConfigManager.cpp). */
+    uint16_t crc16;                   /**< CRC16-IBM computed over the whole struct with this field zeroed (see config_crc()). */
 
-    // Credenziali WiFi
-    char wifi_ssid[WIFI_SSID_MAX_LENGTH];         /**< SSID della rete Wi-Fi STA, stringa NUL-terminated. */
-    char wifi_password[WIFI_PASSWORD_MAX_LENGTH]; /**< Password della rete Wi-Fi STA, stringa NUL-terminated. */
+    // WiFi credentials
+    char wifi_ssid[WIFI_SSID_MAX_LENGTH];         /**< SSID of the STA Wi-Fi network, NUL-terminated string. */
+    char wifi_password[WIFI_PASSWORD_MAX_LENGTH]; /**< Password of the STA Wi-Fi network, NUL-terminated string. */
 
-    // Configurazione MQTT
-    char mqtt_broker[MQTT_BROKER_MAX_LENGTH];     /**< Hostname o IP del broker MQTT. */
-    uint16_t mqtt_port;                           /**< Porta del broker: 8883/8884 = TLS, 1883 = plaintext (vedi MqttManager::init). */
-    char mqtt_user[MQTT_USER_MAX_LENGTH];         /**< Username per l'autenticazione MQTT. */
-    char mqtt_password[MQTT_PASSWORD_MAX_LENGTH]; /**< Password per l'autenticazione MQTT. */
+    // MQTT configuration
+    char mqtt_broker[MQTT_BROKER_MAX_LENGTH];     /**< Hostname or IP of the MQTT broker. */
+    uint16_t mqtt_port;                           /**< Broker port: 8883/8884 = TLS, 1883 = plaintext (see MqttManager::init). */
+    char mqtt_user[MQTT_USER_MAX_LENGTH];         /**< Username for MQTT authentication. */
+    char mqtt_password[MQTT_PASSWORD_MAX_LENGTH]; /**< Password for MQTT authentication. */
 
-    // Altre configurazioni
-    char webhook_url[WEBHOOK_URL_MAX_LENGTH];     /**< URL webhook opzionale (non ancora utilizzato dal resto del firmware). */
+    // Other configuration
+    char webhook_url[WEBHOOK_URL_MAX_LENGTH];     /**< Optional webhook URL (not yet used by the rest of the firmware). */
 };
 
 /*!
  * @class ConfigManager
- * @brief Carica e salva `DeviceConfig` su NVS, espone i valori correnti
- * tramite getter/setter alle altre classi (WifiManager, MqttManager, HubCli).
- * @note Non e' thread-safe: e' usato solo dal task Arduino principale
- * (setup()/loop(), inclusa la CLI) e mai da TaskMqttLink/TaskMainLogic
- * direttamente (quei task leggono solo riferimenti/copie passate al costruttore).
+ * @brief Loads and saves `DeviceConfig` to NVS, exposes the current values via
+ * getters/setters to the other classes (WifiManager, MqttManager, HubCli).
+ * @note Not thread-safe: it is used only by the main Arduino task
+ * (setup()/loop(), including the CLI) and never by TaskMqttLink/TaskMainLogic
+ * directly (those tasks only read references/copies passed to the constructor).
  */
 class ConfigManager {
 public:
-    /*! @brief Costruttore: inizializza `_config` con valori di default sicuri
-     *  (stringhe vuote, porta MQTT 1883) finche' loadConfig() non viene chiamato. */
+    /*! @brief Constructor: initializes `_config` with safe default values
+     *  (empty strings, MQTT port 1883) until loadConfig() is called. */
     ConfigManager();
 
-    /*! @brief Inizializza il sottosistema NVS sottostante (`nvs_flash_init`).
-     *  @details Se la partizione NVS risulta corrotta o di una vecchia versione
-     *  la cancella e la reinizializza automaticamente.
-     *  @return true se la NVS e' pronta all'uso, false in caso di errore irreversibile.
-     *  @note Da chiamare una sola volta in setup(), prima di loadConfig(). */
+    /*! @brief Initializes the underlying NVS subsystem (`nvs_flash_init`).
+     *  @details If the NVS partition turns out to be corrupted or from an old
+     *  version, it is automatically erased and reinitialized.
+     *  @return true if NVS is ready for use, false on an unrecoverable error.
+     *  @note To be called once in setup(), before loadConfig(). */
     bool init();
 
-    /*! @brief Carica la configurazione dalla NVS in memoria (`_config`).
-     *  @details Verifica magic number, dimensione e CRC16 del blob letto. Se il
-     *  blob e' valido e contiene un SSID Wi-Fi non vuoto ("provisioned"), lo usa
-     *  cosi' com'e' (NVS-first). Altrimenti riparte da default puliti e, se
-     *  compilato con `SV_BENCH_MODE`, popola le credenziali da `secrets.h`
-     *  SOLO in RAM (non salvate su NVS) per consentire il collaudo a banco senza
-     *  provisioning manuale.
-     *  @return true se la configurazione finale (NVS o fallback bench) e' utilizzabile,
-     *  false solo in caso di errore di accesso NVS.
-     *  @note In assenza di `SV_BENCH_MODE` e di credenziali valide, scrive comunque
-     *  i default su NVS (saveConfig()) cosi' che il provisioning successivo trovi
-     *  un blob con magic/CRC coerenti. */
+    /*! @brief Loads the configuration from NVS into memory (`_config`).
+     *  @details Verifies the magic number, size and CRC16 of the read blob. If
+     *  the blob is valid and contains a non-empty Wi-Fi SSID ("provisioned"),
+     *  it is used as-is (NVS-first). Otherwise it restarts from clean defaults
+     *  and, if compiled with `SV_BENCH_MODE`, populates the credentials from
+     *  `secrets.h` IN RAM ONLY (not saved to NVS) to allow bench testing
+     *  without manual provisioning.
+     *  @return true if the final configuration (NVS or bench fallback) is usable,
+     *  false only on an NVS access error.
+     *  @note In the absence of `SV_BENCH_MODE` and of valid credentials, it
+     *  still writes the defaults to NVS (saveConfig()) so that the subsequent
+     *  provisioning finds a blob with consistent magic/CRC. */
     bool loadConfig();
 
-    /*! @brief Salva la configurazione corrente in memoria (`_config`) sulla NVS.
-     *  @details Ricalcola magic number e CRC16 prima della scrittura del blob.
-     *  @return true se scrittura e commit su NVS sono andati a buon fine.
-     *  @note Operazione bloccante (accesso flash); va chiamata solo da contesti
-     *  non time-critical (CLI `save`, fine provisioning AP). */
+    /*! @brief Saves the current in-memory configuration (`_config`) to NVS.
+     *  @details Recomputes the magic number and CRC16 before writing the blob.
+     *  @return true if the NVS write and commit succeeded.
+     *  @note Blocking operation (flash access); it must be called only from
+     *  non-time-critical contexts (CLI `save`, end of AP provisioning). */
     bool saveConfig();
 
-    // --- Metodi Getter per accedere ai valori di configurazione ---
-    /*! @brief @return SSID Wi-Fi corrente (stringa vuota se non configurato). */
+    // --- Getter methods to access the configuration values ---
+    /*! @brief @return Current Wi-Fi SSID (empty string if not configured). */
     const char* getWifiSsid() const;
-    /*! @brief @return Password Wi-Fi corrente. */
+    /*! @brief @return Current Wi-Fi password. */
     const char* getWifiPassword() const;
-    /*! @brief @return Hostname/IP del broker MQTT corrente. */
+    /*! @brief @return Current MQTT broker hostname/IP. */
     const char* getMqttBroker() const;
-    /*! @brief @return Porta del broker MQTT corrente. */
+    /*! @brief @return Current MQTT broker port. */
     uint16_t    getMqttPort() const;
-    /*! @brief @return Username MQTT corrente. */
+    /*! @brief @return Current MQTT username. */
     const char* getMqttUser() const;
-    /*! @brief @return Password MQTT corrente. */
+    /*! @brief @return Current MQTT password. */
     const char* getMqttPassword() const;
-    /*! @brief @return URL webhook corrente (non ancora utilizzato). */
+    /*! @brief @return Current webhook URL (not yet used). */
     const char* getWebhookUrl() const;
 
-    // --- Metodi Setter per modificare la configurazione in memoria ---
-    /*! @brief Imposta le credenziali Wi-Fi in memoria.
-     *  @param[in] ssid SSID da impostare; se nullptr la stringa viene svuotata.
-     *  @param[in] password Password da impostare; se nullptr la stringa viene svuotata.
-     *  @note Non persiste su NVS: chiamare saveConfig() per rendere la modifica
-     *  sopravvivente al reboot. I valori sono troncati alla lunghezza massima
-     *  del campo (WIFI_SSID_MAX_LENGTH/WIFI_PASSWORD_MAX_LENGTH - 1). */
+    // --- Setter methods to modify the in-memory configuration ---
+    /*! @brief Sets the Wi-Fi credentials in memory.
+     *  @param[in] ssid SSID to set; if nullptr the string is emptied.
+     *  @param[in] password Password to set; if nullptr the string is emptied.
+     *  @note Does not persist to NVS: call saveConfig() to make the change
+     *  survive a reboot. The values are truncated to the maximum length of the
+     *  field (WIFI_SSID_MAX_LENGTH/WIFI_PASSWORD_MAX_LENGTH - 1). */
     void setWifiCredentials(const char* ssid, const char* password);
-    /*! @brief Imposta in blocco la configurazione MQTT in memoria (broker, porta, utente, password).
-     *  @param[in] broker Hostname/IP del broker; nullptr svuota il campo.
-     *  @param[in] port Porta del broker (8883/8884 = TLS, 1883 = plaintext).
-     *  @param[in] user Username MQTT; nullptr svuota il campo.
-     *  @param[in] password Password MQTT; nullptr svuota il campo.
-     *  @note Non persiste su NVS: chiamare saveConfig() per rendere la modifica
-     *  sopravvivente al reboot. */
+    /*! @brief Sets the MQTT configuration in memory in one shot (broker, port, user, password).
+     *  @param[in] broker Broker hostname/IP; nullptr empties the field.
+     *  @param[in] port Broker port (8883/8884 = TLS, 1883 = plaintext).
+     *  @param[in] user MQTT username; nullptr empties the field.
+     *  @param[in] password MQTT password; nullptr empties the field.
+     *  @note Does not persist to NVS: call saveConfig() to make the change
+     *  survive a reboot. */
     void setMqttConfig(const char* broker, uint16_t port, const char* user, const char* password);
-    /*! @brief Imposta l'URL webhook in memoria.
-     *  @param[in] url URL da impostare; se nullptr la stringa viene svuotata.
-     *  @note Non persiste su NVS: chiamare saveConfig() per rendere la modifica
-     *  sopravvivente al reboot. */
+    /*! @brief Sets the webhook URL in memory.
+     *  @param[in] url URL to set; if nullptr the string is emptied.
+     *  @note Does not persist to NVS: call saveConfig() to make the change
+     *  survive a reboot. */
     void setWebhookUrl(const char* url);
 
 private:
-    DeviceConfig _config; /**< Configurazione corrente in RAM, sincronizzata su NVS da loadConfig()/saveConfig(). */
+    DeviceConfig _config; /**< Current configuration in RAM, synced to NVS by loadConfig()/saveConfig(). */
 };
 
 /*! @} */ // end of HubConfig group

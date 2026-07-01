@@ -20,10 +20,11 @@
              | `diag`                      | Diagnostica guidata: per ogni sensore/motore, stato + cosa controllare se non funziona |
              | `tank`                      | Stato tanica (livello, soglia, verdetto) |
              | `tank <cm>`                 | Imposta soglia tanica-vuota (persistita) |
-             | `rtc`                       | Epoch corrente + validità oscillatore |
-             | `rtc set <epoch>`           | Imposta l'ora del DS3232 (epoch Unix in s) |
+             | `light <adc>`               | Imposta soglia luminosità 0..1023 (persistita): usata sia dal seeking LIGHT/SHADOW sia dalle luci UVA |
+             | `rtc`                       | Epoch corrente + validità oscillatore (chip reale o clock software) |
+             | `rtc set <epoch>`           | Imposta l'ora (epoch Unix in s); se il chip DS3232 non risponde, attiva un clock software di fallback (`millis()`-based, si perde al reset) |
              | `mode <idle\|light\|shadow>` | Cambio modalità operativa |
-             | `motor <f\|b\|l\|r> <ms>`    | Test motori (max 5000 ms) |
+             | `motor <f\|b\|l\|r> <ms>`    | Test motori (max 60000 ms, ruote sollevate) |
              | `motortest`                 | Sequenza guidata f/b/l/r per verificare versi/mapping |
              | `calib <left> <right>`      | Calibrazione PWM motori 0..255 (persistita) |
              | `pump <ms>`                 | Test pompa (max 60000 ms, blocco se tanica vuota) |
@@ -43,6 +44,7 @@
 class Movement;
 class Sensors;
 class Pump;
+class GrowLight;
 class Persistence;
 struct SystemStatus;
 
@@ -68,34 +70,35 @@ public:
         @param[in,out] mv  Stato/comandi del modulo Movement.
         @param[in,out] sn  Stato/letture del modulo Sensors.
         @param[in,out] pp  Stato/comandi del modulo Pump.
+        @param[in,out] gl  Stato del relè luci di coltivazione (GrowLight).
         @param[in,out] ps  Configurazione/statistiche persistite (Persistence).
         @param[in,out] sys Stato di sistema condiviso (SystemStatus).
     */
-    void tick(Movement& mv, Sensors& sn, Pump& pp,
+    void tick(Movement& mv, Sensors& sn, Pump& pp, GrowLight& gl,
               Persistence& ps, SystemStatus& sys);
 
 private:
     /*! @brief Effettua il parsing di una linea di comando completa e ne esegue l'azione. */
-    void execute(const char* line, Movement& mv, Sensors& sn, Pump& pp,
+    void execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLight& gl,
                  Persistence& ps, SystemStatus& sys);
-    /*! @brief Stampa l'elenco dei comandi disponibili (comando `help`/`?`). */
+    /*! @brief Prints the list of available commands (`help`/`?` command). */
     void printHelp();
-    /*! @brief Stampa modalità operativa, stato runtime e RAM libera (comando `status`). */
-    void printStatus(Movement& mv, Pump& pp, SystemStatus& sys);
-    /*! @brief Stampa le statistiche cumulative lette dalla EEPROM (comando `stats`). */
+    /*! @brief Prints operating mode, runtime state and free RAM (`status` command). */
+    void printStatus(Movement& mv, Pump& pp, GrowLight& gl, SystemStatus& sys);
+    /*! @brief Prints the cumulative statistics read from EEPROM (`stats` command). */
     void printStats(Persistence& ps);
-    /*! @brief Stampa la configurazione corrente letta dalla EEPROM (comando `config`). */
+    /*! @brief Prints the current configuration read from EEPROM (`config` command). */
     void printConfig(Persistence& ps);
-    /*! @brief Stampa le ultime letture dei sensori (comando `sensors`). */
+    /*! @brief Prints the latest sensor readings (`sensors` command). */
     void printSensors(Sensors& sn);
-    /*! @brief Esegue la diagnostica guidata sensori/motori, con suggerimenti in caso di anomalia (comando `diag`). */
-    void printDiag(Sensors& sn, Movement& mv, Pump& pp, Persistence& ps, SystemStatus& sys);
-    /*! @brief Stampa lo stato della tanica (livello, soglia, verdetto vuota/piena) (comando `tank`). */
+    /*! @brief Runs the guided sensor/motor diagnostics, with troubleshooting hints (`diag` command). */
+    void printDiag(Sensors& sn, Movement& mv, Pump& pp, GrowLight& gl, Persistence& ps, SystemStatus& sys);
+    /*! @brief Prints the tank status (level, threshold, empty/full verdict) (`tank` command). */
     void printTank(Sensors& sn, Pump& pp, Persistence& ps);
 
-    static const size_t BUF_SIZE = 64;  /**< Dimensione del buffer di accumulo linea CLI. */
-    char  buf[BUF_SIZE];                /**< Buffer dei caratteri ricevuti, in attesa del terminatore. */
-    size_t pos;                         /**< Posizione corrente di scrittura in buf. */
+    static const size_t BUF_SIZE = 64;  /**< Size of the CLI line accumulation buffer. */
+    char  buf[BUF_SIZE];                /**< Buffer of received characters, waiting for the terminator. */
+    size_t pos;                         /**< Current write position in buf. */
 };
 
 /*! @} */ // MegaCli

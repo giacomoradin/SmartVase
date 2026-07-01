@@ -1,7 +1,7 @@
 /*!
  * @file RtcDs3232.h
  * @ingroup MegaSensors
- * @brief Driver locale I2C per RTC DS3232/DS3231 (lettura/scrittura epoch UNIX, flag oscillatore fermo).
+ * @brief Local I2C driver for the DS3232/DS3231 RTC (UNIX epoch read/write, oscillator-stopped flag).
  * @date 2026-06-11
  * @author Giacomo Radin
  */
@@ -14,48 +14,48 @@
 
 /**
  * @class RtcDs3232
- * @brief Driver minimale per RTC DS3232/DS3231 su I2C (indirizzo 0x68).
+ * @brief Minimal driver for the DS3232/DS3231 RTC over I2C (address 0x68).
  *
- * Implementato in locale al posto della libreria jchristensen/DS3232RTC per eliminare la dipendenza dal
- * registry PlatformIO (macchina di sviluppo offline): espone solo le operazioni usate dal firmware
- * (lettura/scrittura epoch UNIX + flag Oscillator-Stop).
+ * Implemented locally instead of the jchristensen/DS3232RTC library to remove the dependency on the
+ * PlatformIO registry (offline development machine): it exposes only the operations used by the firmware
+ * (UNIX epoch read/write + Oscillator-Stop flag).
  */
 class RtcDs3232 {
 public:
     /**
-     * @brief Verifica la presenza del chip sul bus I2C.
-     * @return true se il device risponde all'indirizzo 0x68.
-     * @note Richiede che `Wire.begin()` sia gia' stato chiamato dal chiamante (Sensors::init).
+     * @brief Checks for the chip's presence on the I2C bus.
+     * @return true if the device answers at address 0x68.
+     * @note Requires that `Wire.begin()` has already been called by the caller (Sensors::init).
      */
     bool begin();
 
     /**
-     * @brief Legge l'ora corrente dal chip e la converte in epoch UNIX.
-     * @return Timestamp UNIX in secondi, oppure 0 se il chip non risponde sul bus I2C.
-     * @note L'anno e' memorizzato sul chip come 0-99 (offset 2000); la conversione assume sempre il
-     *       secolo 2000-2099.
+     * @brief Reads the current time from the chip and converts it to a UNIX epoch.
+     * @return UNIX timestamp in seconds, or 0 if the chip does not answer on the I2C bus.
+     * @note The year is stored on the chip as 0-99 (offset 2000); the conversion always assumes the
+     *       2000-2099 century.
      */
     time_t get();
 
     /**
-     * @brief Scrive l'epoch UNIX indicato sul chip e azzera il flag Oscillator-Stop (OSF).
-     * @param[in] t Timestamp UNIX in secondi da impostare.
-     * @return true se entrambe le transazioni I2C (scrittura ora + azzeramento OSF) sono andate a buon fine,
-     *         false su qualunque errore I2C.
+     * @brief Writes the given UNIX epoch to the chip and clears the Oscillator-Stop flag (OSF).
+     * @param[in] t UNIX timestamp in seconds to set.
+     * @return true if both I2C transactions (time write + OSF clear) succeeded,
+     *         false on any I2C error.
      */
     bool set(time_t t);
 
     /**
-     * @brief Verifica se l'oscillatore del chip si e' fermato dall'ultimo `set()`.
-     * @return true se l'oscillatore risulta fermo (batteria tampone scarica o assente: l'ora letta da
-     *         `get()` non e' affidabile) oppure se la lettura I2C dello status fallisce (fail-safe).
+     * @brief Checks whether the chip's oscillator has stopped since the last `set()`.
+     * @return true if the oscillator is found stopped (backup battery flat or absent: the time read by
+     *         `get()` is not reliable) or if the I2C read of the status register fails (fail-safe).
      */
     bool oscillatorStopped();
 
 private:
-    /** @brief Converte un byte BCD (Binary-Coded Decimal) in valore decimale. */
+    /** @brief Converts a BCD (Binary-Coded Decimal) byte to its decimal value. */
     uint8_t bcd2dec(uint8_t v) { return (v >> 4) * 10 + (v & 0x0F); }
-    /** @brief Converte un valore decimale (0-99) nel formato BCD usato dai registri del DS3232. */
+    /** @brief Converts a decimal value (0-99) into the BCD format used by the DS3232 registers. */
     uint8_t dec2bcd(uint8_t v) { return ((v / 10) << 4) | (v % 10); }
 };
 

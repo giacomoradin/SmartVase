@@ -1,15 +1,15 @@
 /*! @file HubCli.h
  *  @ingroup HubCli
- *  @brief CLI seriale di debug/provisioning/diagnostica per l'Hub, esposta su
+ *  @brief Serial debug/provisioning/diagnostics CLI for the Hub, exposed over
  *  USB (115200 baud).
  *  @author Giacomo Radin
  *  @date 2026-06-11
  */
 
-/*! @defgroup HubCli CLI seriale di debug
- *  @brief Interfaccia testuale su USB per ispezionare lo stato dell'Hub,
- *  fare il provisioning di Wi-Fi/MQTT e inviare comandi di test al Mega anche
- *  in laboratorio senza rete.
+/*! @defgroup HubCli Serial debug CLI
+ *  @brief Textual interface over USB to inspect the Hub state, provision
+ *  Wi-Fi/MQTT and send test commands to the Mega, even in the lab without a
+ *  network.
  */
 
 #ifndef HUBCLI_H
@@ -30,103 +30,104 @@ class MainLogic;
 
 /*!
  * @class HubCli
- * @brief CLI seriale di debug e provisioning sulla porta USB (115200 baud,
- * terminatore '\\n').
- * @details Gira interamente nel loop() Arduino (priorita' minima): tick()
- * legge i caratteri disponibili senza bloccare e accumula una riga in `buf`
- * fino al terminatore. Comandi gestiti localmente:
+ * @brief Serial debug and provisioning CLI on the USB port (115200 baud,
+ * '\\n' terminator).
+ * @details Runs entirely in the Arduino loop() (lowest priority): tick()
+ * reads the available characters without blocking and accumulates a line in
+ * `buf` until the terminator. Locally handled commands:
  *
- *   help / ?                  lista comandi
- *   version                   versione firmware
- *   status                    Wi-Fi, MQTT, link Mega, heap, uptime
- *   show                      configurazione NVS (password mascherate)
- *   set <chiave> <valore>     wifi_ssid|wifi_pass|mqtt_broker|mqtt_port|
+ *   help / ?                  command list
+ *   version                   firmware version
+ *   status                    Wi-Fi, MQTT, Mega link, heap, uptime
+ *   show                      NVS configuration (passwords masked)
+ *   set <key> <value>         wifi_ssid|wifi_pass|mqtt_broker|mqtt_port|
  *                             mqtt_user|mqtt_pass
- *   save                      persiste la configurazione su NVS
- *   wifi connect              ritenta la connessione STA
- *   reboot                    riavvia l'ESP32
+ *   save                      persists the configuration to NVS
+ *   wifi connect              retries the STA connection
+ *   reboot                    reboots the ESP32
  *
- * Comandi passthrough verso il Mega (testano l'intera catena seriale
- * Protobuf anche senza rete; l'esito arriva come [ACK Mega] sul monitor,
- * stampato da MainLogic::processSerialMessage()):
+ * Passthrough commands towards the Mega (they exercise the whole Protobuf
+ * serial chain even without a network; the result comes back as [ACK Mega] on
+ * the monitor, printed by MainLogic::processSerialMessage()):
  *
- *   telemetry                 ultima TelemetryFast/Deep ricevuta dal Mega
- *   water <ms>                avvia irrigazione (protezione tanica sul Mega)
- *   mode <idle|light|shadow>  cambia modalita' movimento
- *   stop                      ferma motori e pompa
- *   soil                      legge umidita' suolo
- *   megadiag                  richiede una TelemetryDeep immediata
- *   megareset                 soft reset del Mega
+ *   telemetry                 last TelemetryFast/Deep received from the Mega
+ *   water <ms>                starts irrigation (tank protection on the Mega)
+ *   mode <idle|light|shadow>  changes the movement mode
+ *   stop                      stops motors and pump
+ *   soil                      reads the soil moisture
+ *   megadiag                  requests an immediate TelemetryDeep
+ *   megareset                 soft reset of the Mega
  *
- * @note Tutti i puntatori (`_cfg`, `_wifi`, `_mqtt`, `_logic`) sono passati per
- * riferimento da `begin()` e devono restare validi per tutta la vita
- * dell'oggetto: in main.cpp sono istanze/puntatori globali con lifetime pari
- * al programma.
+ * @note All the pointers (`_cfg`, `_wifi`, `_mqtt`, `_logic`) are passed by
+ * reference from `begin()` and must stay valid for the whole lifetime of the
+ * object: in main.cpp they are global instances/pointers with a lifetime equal
+ * to the program's.
  */
 class HubCli {
 public:
-    /*! @brief Costruttore: azzera i puntatori ai moduli e il buffer di riga
-     *  (oggetto non operativo finche' begin() non viene chiamato). */
+    /*! @brief Constructor: clears the module pointers and the line buffer
+     *  (object not operational until begin() is called). */
     HubCli();
 
-    /*! @brief Collega la CLI ai moduli dell'Hub e abilita tick().
-     *  @param[in] cfg Gestore configurazione NVS, per i comandi `show`/`set`/`save`.
-     *  @param[in] wifi Gestore Wi-Fi, per `wifi connect`.
-     *  @param[in] mqtt Gestore MQTT, per `status`/`diag`.
-     *  @param[in] logic Core logico, per leggere telemetria/stato link Mega e
-     *  il device ID.
-     *  @param[in] serialTxQueue Coda verso il Mega, usata da sendMegaCommand()
-     *  per i comandi passthrough.
-     *  @note Da chiamare una sola volta in setup(), dopo l'inizializzazione di
-     *  tutti i moduli passati. */
+    /*! @brief Connects the CLI to the Hub modules and enables tick().
+     *  @param[in] cfg NVS configuration manager, for the `show`/`set`/`save` commands.
+     *  @param[in] wifi Wi-Fi manager, for `wifi connect`.
+     *  @param[in] mqtt MQTT manager, for `status`/`diag`.
+     *  @param[in] logic Core logic, to read telemetry/Mega link state and the
+     *  device ID.
+     *  @param[in] serialTxQueue Queue towards the Mega, used by sendMegaCommand()
+     *  for the passthrough commands.
+     *  @note To be called once in setup(), after the initialization of all the
+     *  passed modules. */
     void begin(ConfigManager* cfg, WifiManager* wifi, MqttManager* mqtt,
                MainLogic* logic, QueueHandle_t serialTxQueue);
 
-    /*! @brief Da chiamare ad ogni giro di loop(): legge i caratteri disponibili
-     *  su `Serial` senza bloccare, accumula una riga e la esegue al terminatore '\\n'.
-     *  @note No-op se begin() non e' ancora stato chiamato (`_cfg == nullptr`).
-     *  Una riga piu' lunga di BUF_SIZE-1 viene scartata con un messaggio di errore. */
+    /*! @brief To be called on every loop() iteration: reads the available
+     *  characters on `Serial` without blocking, accumulates a line and executes
+     *  it at the '\\n' terminator.
+     *  @note No-op if begin() has not been called yet (`_cfg == nullptr`).
+     *  A line longer than BUF_SIZE-1 is discarded with an error message. */
     void tick();
 
 private:
-    /*! @brief Effettua il dispatch di una riga di comando completa (NUL-terminated, senza '\\n').
-     *  @param[in] line Buffer mutabile (alcuni comandi tokenizzano in-place con strtok/strchr). */
+    /*! @brief Dispatches a complete command line (NUL-terminated, without '\\n').
+     *  @param[in] line Mutable buffer (some commands tokenize in-place with strtok/strchr). */
     void execute(char* line);
-    /*! @brief Stampa l'elenco dei comandi disponibili (comando `help`/`?`). */
+    /*! @brief Prints the list of available commands (`help`/`?` command). */
     void printHelp();
-    /*! @brief Stampa un riepilogo rapido di stato: Wi-Fi, MQTT, link Mega, heap, uptime (comando `status`). */
+    /*! @brief Prints a quick status summary: Wi-Fi, MQTT, Mega link, heap, uptime (`status` command). */
     void printStatus();
-    /*! @brief Stampa una diagnostica guidata (con suggerimenti) di Wi-Fi/NTP/MQTT/link Mega (comando `diag`). */
+    /*! @brief Prints a guided diagnostic (with hints) of Wi-Fi/NTP/MQTT/Mega link (`diag` command). */
     void printDiag();
-    /*! @brief Stampa la configurazione NVS corrente, con le password mascherate (comando `show`). */
+    /*! @brief Prints the current NVS configuration, with the passwords masked (`show` command). */
     void printShow();
-    /*! @brief Stampa l'ultima TelemetryFast/Deep ricevuta dal Mega, o un avviso se non ancora arrivata (comando `telemetry`). */
+    /*! @brief Prints the last TelemetryFast/Deep received from the Mega, or a warning if none has arrived yet (`telemetry` command). */
     void printTelemetry();
-    /*! @brief Implementa il comando `set <chiave> <valore>`: aggiorna in memoria
-     *  il campo di configurazione richiesto (richiede poi `save` per persisterlo).
-     *  @param[in,out] args Stringa "<chiave> <valore>"; viene modificata in-place
-     *  (il primo spazio e' sostituito con '\\0' per separare chiave e valore).
-     *  @return true se la chiave e' riconosciuta e il valore sintatticamente valido,
-     *  false altrimenti (il chiamante stampa l'usage). */
+    /*! @brief Implements the `set <key> <value>` command: updates in memory the
+     *  requested configuration field (then requires `save` to persist it).
+     *  @param[in,out] args String "<key> <value>"; it is modified in-place
+     *  (the first space is replaced with '\\0' to separate key and value).
+     *  @return true if the key is recognized and the value is syntactically valid,
+     *  false otherwise (the caller prints the usage). */
     bool handleSet(char* args);
-    /*! @brief Costruisce un `Command` Protobuf e lo accoda su `_serialTxQueue` per il Mega.
-     *  @param[in] which Tag del campo oneof `command_type` (es. Command_water_tag).
-     *  @param[in] arg Argomento del comando (interpretato in base a `which`: durata
-     *  in ms per water, valore enum per set_mode, ignorato per i comandi senza payload).
-     *  @note Usa un cmd_id auto-incrementante a partire da 9000 (`_nextCmdId`) per
-     *  distinguere le risposte dei comandi originati da CLI da quelli MQTT. */
+    /*! @brief Builds a Protobuf `Command` and enqueues it on `_serialTxQueue` for the Mega.
+     *  @param[in] which Tag of the `command_type` oneof field (e.g. Command_water_tag).
+     *  @param[in] arg Command argument (interpreted based on `which`: duration in
+     *  ms for water, enum value for set_mode, ignored for commands without payload).
+     *  @note Uses an auto-incrementing cmd_id starting from 9000 (`_nextCmdId`) to
+     *  distinguish the responses of CLI-originated commands from the MQTT ones. */
     void sendMegaCommand(uint8_t which, uint32_t arg);
 
-    ConfigManager* _cfg;   /**< Gestore configurazione NVS (non posseduto). */
-    WifiManager*   _wifi;  /**< Gestore Wi-Fi (non posseduto). */
-    MqttManager*   _mqtt;  /**< Gestore MQTT (non posseduto). */
-    MainLogic*     _logic; /**< Core logico (non posseduto). */
-    QueueHandle_t  _serialTxQueue; /**< Coda verso il Mega per i comandi passthrough. */
-    uint32_t       _nextCmdId;     /**< Prossimo cmd_id da assegnare ai comandi inviati da CLI (parte da 9000). */
+    ConfigManager* _cfg;   /**< NVS configuration manager (not owned). */
+    WifiManager*   _wifi;  /**< Wi-Fi manager (not owned). */
+    MqttManager*   _mqtt;  /**< MQTT manager (not owned). */
+    MainLogic*     _logic; /**< Core logic (not owned). */
+    QueueHandle_t  _serialTxQueue; /**< Queue towards the Mega for the passthrough commands. */
+    uint32_t       _nextCmdId;     /**< Next cmd_id to assign to the commands sent from the CLI (starts at 9000). */
 
-    static const size_t BUF_SIZE = 192; /**< Capacita' massima di una riga di comando, incluso il terminatore. */
-    char   buf[BUF_SIZE]; /**< Buffer di accumulo della riga corrente. */
-    size_t pos;            /**< Numero di caratteri attualmente accumulati in buf. */
+    static const size_t BUF_SIZE = 192; /**< Maximum capacity of a command line, including the terminator. */
+    char   buf[BUF_SIZE]; /**< Accumulation buffer for the current line. */
+    size_t pos;            /**< Number of characters currently accumulated in buf. */
 };
 
 /*! @} */ // end of HubCli group

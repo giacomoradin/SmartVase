@@ -1,28 +1,28 @@
 # Cloud Function — upload-image
 
-> ⚠️ Stub: questa è una bozza da rifinire con **Fia** (Cloud Architect).
-> Coerente con la decisione del 2026-05-19 (HiveMQ + Cloud Functions + Firestore).
+> ⚠️ Stub: this is a draft to be refined with **Fia** (Cloud Architect).
+> Consistent with the 2026-05-19 decision (HiveMQ + Cloud Functions + Firestore).
 
-## Scopo
+## Purpose
 
-Endpoint HTTP che riceve un upload `multipart/form-data` dalla ESP32-CAM e:
+HTTP endpoint that receives a `multipart/form-data` upload from the ESP32-CAM and:
 
-1. Valida `device_id` e `image` (file JPEG).
-2. Carica il blob su **Firebase Storage** sotto `smartvase/{device_id}/images/{ts}.jpg`.
-3. Restituisce JSON `{ "image_url": "<signed_url>", "ok": true }`.
+1. Validates `device_id` and `image` (JPEG file).
+2. Uploads the blob to **Firebase Storage** under `smartvase/{device_id}/images/{ts}.jpg`.
+3. Returns JSON `{ "image_url": "<signed_url>", "ok": true }`.
 
-La CAM poi pubblica autonomamente su MQTT `smartvase/{device_id}/vision/image`
-con la `image_url`. Una **seconda** Cloud Function (out-of-scope qui) legge
-quel topic da HiveMQ, scarica l'immagine, invoca la pipeline Python in
-`vision/` e pubblica il risultato su `smartvase/{device_id}/vision/result`.
+The CAM then autonomously publishes to MQTT `smartvase/{device_id}/vision/image`
+with the `image_url`. A **second** Cloud Function (out of scope here) reads
+that topic from HiveMQ, downloads the image, invokes the Python pipeline in
+`vision/` and publishes the result to `smartvase/{device_id}/vision/result`.
 
-## Contratto API
+## API contract
 
-**Request** (`POST` con `Content-Type: multipart/form-data`):
+**Request** (`POST` with `Content-Type: multipart/form-data`):
 
-| Campo       | Tipo   | Note                                |
-|-------------|--------|-------------------------------------|
-| `device_id` | string | Es. `CAM_A1B2C3`                    |
+| Field       | Type   | Notes                                |
+|-------------|--------|-----------------------------------------|
+| `device_id` | string | E.g. `CAM_A1B2C3`                    |
 | `image`     | file   | JPEG, max 200 KB                    |
 
 **Response 200**:
@@ -36,14 +36,14 @@ quel topic da HiveMQ, scarica l'immagine, invoca la pipeline Python in
 }
 ```
 
-**Errori**:
-- `400` payload non valido / device_id mancante.
+**Errors**:
+- `400` invalid payload / missing device_id.
 - `413` image > size limit.
-- `500` upload fallito.
+- `500` upload failed.
 
-## Implementazione
+## Implementation
 
-Vedi `index.js` (Node.js 20 + `@google-cloud/storage` + `busboy`).
+See `index.js` (Node.js 20 + `@google-cloud/storage` + `busboy`).
 
 ## Deploy (placeholder)
 
@@ -55,12 +55,12 @@ gcloud functions deploy upload-image \
   --set-env-vars=BUCKET=<your-bucket-name>,MAX_BYTES=200000
 ```
 
-URL risultante va salvato in NVS della CAM sotto la chiave `upload_url`
-(vedi commento nel suo `main.cpp`).
+The resulting URL must be saved in the CAM's NVS under the `upload_url` key
+(see the comment in its `main.cpp`).
 
-## Sicurezza (TODO Fia)
+## Security (Fia TODO)
 
-- Auth via App Check / Identity Token invece di `--allow-unauthenticated`.
-- Pin del CA cert nella CAM (oggi `client.setInsecure()`).
+- Auth via App Check / Identity Token instead of `--allow-unauthenticated`.
+- Pin the CA cert in the CAM (currently `client.setInsecure()`).
 - Rate limiting per device_id.
-- Validazione magic bytes JPEG (FF D8 FF).
+- JPEG magic-byte validation (FF D8 FF).

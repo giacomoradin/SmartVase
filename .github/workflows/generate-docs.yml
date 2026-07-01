@@ -1,37 +1,71 @@
 name: Generate Documentation
 
+# Genera la documentazione Doxygen ad ogni push su main e la pubblica su GitHub Pages.
+# Sorgente di verità unica: i commenti Doxygen nel codice + il Doxyfile in root.
+# L'HTML è un artefatto di build: NON è committato (è in .gitignore), lo rigenera
+# questa Action e lo serve Pages. Per attivarlo una volta:
+#   Settings -> Pages -> Build and deployment -> Source = "GitHub Actions".
+
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
   workflow_dispatch:
 
+# Versioni pinnate per build riproducibili (allineate alla doc locale).
+env:
+  DOXYGEN_VERSION: "1.10.0"
+  DOXYGEN_AWESOME_VERSION: "v2.3.4"
+
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
+
+# Una sola pubblicazione Pages alla volta; non interrompe un deploy in corso.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Doxygen and Graphviz
+      - name: Install Graphviz (dot)
+        run: sudo apt-get update && sudo apt-get install -y graphviz
+
+      - name: Install Doxygen ${{ env.DOXYGEN_VERSION }} (pinned)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y doxygen graphviz
+          wget -q "https://www.doxygen.nl/files/doxygen-${DOXYGEN_VERSION}.linux.bin.tar.gz"
+          tar xzf "doxygen-${DOXYGEN_VERSION}.linux.bin.tar.gz"
+          sudo cp "doxygen-${DOXYGEN_VERSION}/bin/doxygen" /usr/local/bin/
+          doxygen --version
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Fetch doxygen-awesome-css ${{ env.DOXYGEN_AWESOME_VERSION }} (pinned, non-fatal)
+        run: |
+          # Il tema è un extra: se il fetch fallisce (blip di rete), Doxygen usa
+          # comunque il tema di default e il deploy va avanti.
+          curl -sSfL -o docs/doxygen-theme/doxygen-awesome.css \
+            "https://raw.githubusercontent.com/jothepro/doxygen-awesome-css/${DOXYGEN_AWESOME_VERSION}/doxygen-awesome.css" \
+            || echo "::warning::doxygen-awesome.css fetch failed; falling back to default theme"
+
+      - name: Run Doxygen
+        run: doxygen Doxyfile
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          python-version: '3.11'
+          path: docs/doxygen/html
 
-      - name: Run DocGen Script
-        run: python docs/generate_docs.py
-
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy to GitHub Pages
-        uses: JamesIves/github-pages-deploy-action@v4
-        with:
-          folder: docs/doxygen/html
-          branch: gh-pages
+        id: deployment
+        uses: actions/deploy-pages@v4

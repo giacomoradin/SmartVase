@@ -59,7 +59,7 @@ across specialized hardware components and a cloud backbone.
 
 | Component       | Codename   | Core Function                                                            |
 |-----------------|------------|--------------------------------------------------------------------------|
-| Arduino Mega    | *The Brawn* | Direct hardware control: 6 ultrasonic sensors, H-bridge motors, pump relay, RTC, BME680 |
+| Arduino Mega    | *The Brawn* | Direct hardware control: 6 ultrasonic sensors, Pololu Dual VNH5019 motors, pump relay, UVA grow-light relay, RTC |
 | ESP32 Standard  | *The Brain* | Wi-Fi + TLS MQTT, JSON↔Protobuf bridge, coordination logic on FreeRTOS  |
 | ESP32-CAM       | *The Eye*   | Periodic JPEG capture, HTTP upload to Cloud Function, MQTT publish      |
 | Android App     | —          | User-facing control center (Kotlin, Compose, MVVM)                       |
@@ -196,16 +196,19 @@ Connect the Mega via USB at 115200 baud (Newline terminator):
 --- SmartVase CLI ---
 help                       this menu
 version                    firmware version
-status                     mode + runtime state
+status                     mode + runtime state (incl. growLight)
 stats                      cumulative EEPROM stats
 config                     current config
 sensors                    latest sensor readings
+diag                       guided sensor/motor diagnostics (incl. VNH5019 fault, UVA lights)
 mode <idle|light|shadow>   set operating mode
-motor <f|b|l|r> <ms>       motor test (max 5000 ms)
+motor <f|b|l|r> <ms>       motor test (max 60000 ms, wheels lifted)
+motortest                  guided f/b/l/r sequence
 pump <ms>                  pump test (max 60000 ms)
 tank <cm>                  empty-tank threshold (US4)
+light <adc>                light threshold 0..1023 (seeking + UVA grow lights)
 calib <left> <right>       straight-drive PWM trim (0..255)
-rtc / rtc set <epoch>      read / set the RTC clock
+rtc / rtc set <epoch>      read / set the clock (software fallback if no DS3232)
 standalone <on|off>        bench mode (suspends the Hub deadman)
 reboot                     soft reset
 ```

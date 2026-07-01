@@ -14,10 +14,12 @@
 #include "Movement.h"
 #include "Sensors.h"
 #include "Pump.h"
+#include "GrowLight.h"
 #include "Persistence.h"
 #include "SystemStatus.h"
+#include <TimeLib.h>
 
-/*! @brief RAM SRAM libera in byte, definita in main.cpp (usata da `status`/`diag`). */
+/*! @brief Free SRAM in bytes, defined in main.cpp (used by `status`/`diag`). */
 extern int freeRam();
 
 /*!
@@ -64,29 +66,38 @@ static void diagUs(const __FlashStringHelper* label, uint8_t trig, uint8_t echo,
 
 Cli::Cli() : pos(0) { buf[0] = '\0'; }
 
-void Cli::tick(Movement& mv, Sensors& sn, Pump& pp,
+void Cli::tick(Movement& mv, Sensors& sn, Pump& pp, GrowLight& gl,
                Persistence& ps, SystemStatus& sys) {
     while (Serial.available()) {
         char c = (char)Serial.read();
         if (c == '\r') continue;
         if (c == '\n') {
             buf[pos] = '\0';
-            if (pos > 0) execute(buf, mv, sn, pp, ps, sys);
+            if (pos > 0) execute(buf, mv, sn, pp, gl, ps, sys);
             pos = 0;
             buf[0] = '\0';
             Serial.print(F("> "));
-        } else if (pos < BUF_SIZE - 1) {
-            buf[pos++] = c;
-        } else {
-            // Riga troppo lunga: scarta.
-            pos = 0;
-            buf[0] = '\0';
-            Serial.println(F("[CLI] line too long, discarded"));
+        } else if (c == 8 || c == 127) { // Backspace handling
+            if (pos > 0) {
+                pos--;
+                buf[pos] = '\0';
+                Serial.print(F("\b \b")); // Erase character on terminal screen
+            }
+        } else if (c >= 32 && c <= 126) { // Printable ASCII only
+            if (pos < BUF_SIZE - 1) {
+                buf[pos++] = c;
+            } else {
+                // Riga troppo lunga: scarta.
+                pos = 0;
+                buf[0] = '\0';
+                Serial.println(F("\n[CLI] line too long, discarded"));
+                Serial.print(F("> "));
+            }
         }
     }
 }
 
-void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp,
+void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLight& gl,
                   Persistence& ps, SystemStatus& sys) {
     if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) { printHelp(); return; }
     if (strcmp(line, "version") == 0) {
@@ -94,11 +105,11 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp,
                          " (" __DATE__ " " __TIME__ ")"));
         return;
     }
-    if (strcmp(line, "status")  == 0) { printStatus(mv, pp, sys);  return; }
+    if (strcmp(line, "status")  == 0) { printStatus(mv, pp, gl, sys); return; }
     if (strcmp(line, "stats")   == 0) { printStats(ps);            return; }
     if (strcmp(line, "config")  == 0) { printConfig(ps);           return; }
     if (strcmp(line, "sensors") == 0) { printSensors(sn);          return; }
-    if (strcmp(line, "diag")    == 0) { printDiag(sn, mv, pp, ps, sys); return; }
+    if (strcmp(line, "diag")    == 0) { printDiag(sn, mv, pp, gl, ps, sys); return; }
     if (strcmp(line, "motortest") == 0) {
         if (sys.degradedModeActive) {
             Serial.println(F("[CLI] impossibile: degraded mode attivo (motori bloccati)"));
@@ -136,11 +147,27 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp,
         return;
     }
 
+    // light <adc> — soglia luminosita' (seeking LIGHT/SHADOW + luci UVA), persistita in EEPROM
+    if (strncmp(line, "light ", 6) == 0) {
+        int adc;
+        if (sscanf(line + 6, "%d", &adc) != 1 || adc < 0 || adc > 1023) {
+            Serial.println(F("[CLI] usage: light <adc 0..1023>"));
+            return;
+        }
+        ps.getConfig().light_threshold = (uint16_t)adc;
+        ps.saveConfig(true);
+        Serial.print(F("[CLI] light_threshold = "));
+        Serial.println(adc);
+        Serial.println(F("[CLI] nota: usata sia dal seeking LIGHT/SHADOW sia dalle luci UVA"));
+        return;
+    }
+
     // rtc / rtc set <epoch>
     if (strcmp(line, "rtc") == 0) {
         Serial.print(F("rtc_ok      = ")); Serial.println(sn.getRTCStatus() ? F("YES") : F("NO"));
+        Serial.print(F("fake_clock  = ")); Serial.println(sn.isUsingFakeClock() ? F("YES (software, vedi 'rtc set')") : F("NO"));
         Serial.print(F("epoch_s     = ")); Serial.println(sn.getEpoch());
-        Serial.print(F("time_valid  = ")); Serial.println(sn.rtcOscStopped() ? F("NO (usa 'rtc set <epoch>')") : F("YES"));
+        Serial.print(F("time_valid  = ")); Serial.println(sn.timeIsValid() ? F("YES") : F("NO (usa 'rtc set <epoch>')"));
         return;
     }
     if (strncmp(line, "rtc set ", 8) == 0) {
@@ -149,11 +176,14 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp,
             Serial.println(F("[CLI] usage: rtc set <epoch unix in secondi>"));
             return;
         }
-        if (sn.setEpoch((uint32_t)epoch)) {
-            Serial.print(F("[CLI] RTC impostato a epoch "));
+        sn.setEpoch((uint32_t)epoch);
+        if (sn.isUsingFakeClock()) {
+            Serial.print(F("[CLI] chip RTC assente/scrittura fallita: clock SOFTWARE attivato a epoch "));
             Serial.println(epoch);
+            Serial.println(F("[CLI] continua a scorrere finche' il Mega resta acceso; si perde al prossimo reset/spegnimento"));
         } else {
-            Serial.println(F("[CLI] RTC write FAILED (chip assente?)"));
+            Serial.print(F("[CLI] RTC (chip reale) impostato a epoch "));
+            Serial.println(epoch);
         }
         return;
     }
@@ -214,7 +244,7 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp,
             Serial.println(F("[CLI] cannot run pump: degraded mode active"));
             return;
         }
-        // Stessa protezione tanica del comando remoto water.
+        // Same tank protection as the remote water command.
         if (sn.tankLooksEmpty(ps.getConfig().tank_empty_cm)) {
             float wl = sn.getWaterLevel();
             if (isnan(wl)) {
@@ -270,10 +300,11 @@ void Cli::printHelp() {
     Serial.println(F("diag                      diagnostica guidata sensori/motori"));
     Serial.println(F("tank                      stato tanica acqua"));
     Serial.println(F("tank <cm>                 soglia tanica-vuota (3..120)"));
+    Serial.println(F("light <adc>               soglia luminosita' (0..1023): seeking + luci UVA"));
     Serial.println(F("rtc                       stato orologio DS3232"));
     Serial.println(F("rtc set <epoch>           imposta ora (epoch Unix)"));
     Serial.println(F("mode <idle|light|shadow>  cambia modalita'"));
-    Serial.println(F("motor <f|b|l|r> <ms>      test motori (max 5000 ms)"));
+    Serial.println(F("motor <f|b|l|r> <ms>      test motori (max 60000 ms)"));
     Serial.println(F("motortest                 sequenza guidata f/b/l/r"));
     Serial.println(F("calib <left> <right>      PWM motori 0..255"));
     Serial.println(F("pump <ms>                 test pompa (max 60000 ms)"));
@@ -281,7 +312,7 @@ void Cli::printHelp() {
     Serial.println(F("reboot                    soft reset"));
 }
 
-void Cli::printStatus(Movement& mv, Pump& pp, SystemStatus& sys) {
+void Cli::printStatus(Movement& mv, Pump& pp, GrowLight& gl, SystemStatus& sys) {
     Serial.print(F("fw_version="));
     Serial.println(F(SMARTVASE_FW_VERSION));
     Serial.print(F("targetMode="));
@@ -302,6 +333,7 @@ void Cli::printStatus(Movement& mv, Pump& pp, SystemStatus& sys) {
         default:                    Serial.println(F("IDLE"));            break;
     }
     Serial.print(F("pumpActive="));     Serial.println(pp.isActive() ? F("YES") : F("NO"));
+    Serial.print(F("growLight="));      Serial.println(gl.isOn() ? F("ON") : F("OFF"));
     Serial.print(F("degradedMode="));   Serial.println(sys.degradedModeActive ? F("YES") : F("NO"));
     if (sys.degradedModeActive) {
         Serial.print(F("  reason="));
@@ -359,7 +391,7 @@ void Cli::printSensors(Sensors& sn) {
     Serial.print(F("rtc_ok         = "));  Serial.println(sn.getRTCStatus() ? F("YES") : F("NO"));
 }
 
-void Cli::printDiag(Sensors& sn, Movement& mv, Pump& pp, Persistence& ps, SystemStatus& sys) {
+void Cli::printDiag(Sensors& sn, Movement& mv, Pump& pp, GrowLight& gl, Persistence& ps, SystemStatus& sys) {
     DeviceConfig& c = ps.getConfig();
     Serial.println(F("============== DIAGNOSTICA SmartVase =============="));
 
@@ -390,16 +422,34 @@ void Cli::printDiag(Sensors& sn, Movement& mv, Pump& pp, Persistence& ps, System
                                 Serial.println(F("  [!! a fondo scala: LDR scollegato o partitore errato]"));
     else                        Serial.println(F("  [ok] copri/illumina l'LDR e rilancia: in LIGHT gira a dx se lux<soglia, in SHADOW a sx se lux>soglia"));
 
-    // --- Motori (nessun feedback: si osservano) ---
-    Serial.println(F("[MOTORI] nessun encoder -> vanno osservati a ruote sollevate"));
+    // --- Luci di coltivazione (UVA, rele' canale 2 / D11, cablate su NC) ---
+    bool timeValid = sn.timeIsValid();
+    Serial.print(F("[LUCI UVA] growLight=")); Serial.print(gl.isOn() ? F("ON") : F("OFF"));
+    Serial.print(F("  targetMode=")); Serial.println(mv.getTargetMode() == CPP_IDLE ? F("IDLE") : F("LIGHT/SHADOW"));
+    Serial.print(F("  finestra diurna 06:00-20:00 -> timeValid=")); Serial.print(timeValid ? F("YES") : F("NO"));
+    if (timeValid) {
+        Serial.print(sn.isUsingFakeClock() ? F(" (clock SOFTWARE)") : F(" (RTC reale)"));
+        Serial.print(F("  ora=")); Serial.print(hour((time_t)sn.getEpoch()));
+        Serial.println(F(":xx"));
+    } else {
+        Serial.println(F(" [!! senza ora valida le luci restano SEMPRE spente: 'rtc set <epoch>']"));
+    }
+    Serial.println(F("  [ok] si accendono solo se IDLE, lux < soglia E dentro la finestra diurna; cablate su NC -> rele' diseccitato = ACCESE"));
+
+    // --- Motori (Pololu VNH5019, nessun encoder: si osservano) ---
+    Serial.println(F("[MOTORI] Pololu VNH5019 - nessun encoder -> osservare a ruote sollevate"));
     Serial.print(F("  calib L/R = ")); Serial.print(c.motorCalibLeft);
     Serial.print('/'); Serial.println(c.motorCalibRight);
-    Serial.println(F("  pin: L(ENA 6,IN1 43,IN2 45)  R(ENB 7,IN3 47,IN4 49)"));
+    Serial.println(F("  pin L: PWM7 INA41 INB43   R: PWM6 INA45 INB47   (EN/DIAG non cablato)"));
+    Serial.print(F("  fault L/R = ")); Serial.print(mv.faultLeft() ? F("!!FAULT") : F("n/d (EN non cablato)"));
+    Serial.print('/'); Serial.println(mv.faultRight() ? F("!!FAULT") : F("n/d (EN non cablato)"));
     Serial.print(F("  movementState = ")); Serial.println(movStateName(mv.getCurrentState()));
     if (sys.degradedModeActive)
         Serial.println(F("  [!! DEGRADED: motori bloccati - vedi causa in [SISTEMA], usa 'standalone on' a banco]"));
-    else
-        Serial.println(F("  [ok] test: 'motor f 1000' poi b/l/r. Se una ruota gira al contrario: inverti i suoi 2 fili"));
+    else {
+        Serial.println(F("  [ok] test: 'motor f 60000' poi b/l/r. Ruota al contrario -> inverti i suoi 2 fili (INA<->INB)"));
+        Serial.println(F("  0V in uscita (M1A/M1B)? -> 1) GND comune Mega-shield  2) mapping pin PWM/INA/INB"));
+    }
 
     // --- Tanica / pompa ---
     float wl = sn.getWaterLevel();
@@ -411,10 +461,13 @@ void Cli::printDiag(Sensors& sn, Movement& mv, Pump& pp, Persistence& ps, System
     else                                          Serial.println(F("abilitata"));
 
     // --- RTC ---
-    Serial.print(F("[RTC] ok=")); Serial.print(sn.getRTCStatus() ? F("YES") : F("NO"));
-    Serial.print(F(" time_valid=")); Serial.print(sn.rtcOscStopped() ? F("NO") : F("YES"));
+    Serial.print(F("[RTC] chip_ok=")); Serial.print(sn.getRTCStatus() ? F("YES") : F("NO"));
+    Serial.print(F(" fake_clock=")); Serial.print(sn.isUsingFakeClock() ? F("YES") : F("NO"));
+    Serial.print(F(" time_valid=")); Serial.print(sn.timeIsValid() ? F("YES") : F("NO"));
     Serial.print(F(" epoch=")); Serial.println(sn.getEpoch());
-    if (sn.getRTCStatus() && sn.rtcOscStopped())
+    if (!sn.getRTCStatus() && !sn.isUsingFakeClock())
+        Serial.println(F("  [!! chip non rilevato su I2C: cablaggio, oppure 'rtc set <epoch>' attiva un clock software di fallback]"));
+    else if (sn.getRTCStatus() && sn.rtcOscStopped() && !sn.isUsingFakeClock())
         Serial.println(F("  [!! ora non valida: 'rtc set <epoch>' (batteria CR2032?)]"));
 
     // --- Sistema ---

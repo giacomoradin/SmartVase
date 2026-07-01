@@ -9,7 +9,9 @@ BRIEF_MEMBER_DESC      = YES
 REPEAT_BRIEF           = YES
 ALWAYS_DETAILED_SEC    = NO
 FULL_PATH_NAMES        = YES
-STRIP_FROM_PATH        = C:/SmartVase_prject/smartvase/
+# Relativo alla cwd da cui si lancia `doxygen Doxyfile` (la root del repo):
+# niente percorsi assoluti machine-specific, funziona identico in locale e in CI.
+STRIP_FROM_PATH        = .
 JAVADOC_AUTOBRIEF      = YES
 OPTIMIZE_OUTPUT_FOR_C  = YES
 MARKDOWN_SUPPORT       = YES
@@ -61,7 +63,9 @@ REFERENCES_LINK_SOURCE = YES
 GENERATE_HTML          = YES
 HTML_OUTPUT            = html
 HTML_FILE_EXTENSION    = .html
-HTML_EXTRA_STYLESHEET  = docs/doxygen/doxygen-awesome.css docs/doxygen/custom.css
+# Tema vendorizzato (pinnato) + override SmartVase. Vedi docs/doxygen-theme/README.md.
+# Se doxygen-awesome.css non è presente in locale, Doxygen usa il tema di default (solo warning).
+HTML_EXTRA_STYLESHEET  = docs/doxygen-theme/doxygen-awesome.css docs/doxygen-theme/custom.css
 HTML_DYNAMIC_MENUS     = YES
 HTML_DYNAMIC_SECTIONS  = YES
 HTML_CODE_FOLDING      = YES

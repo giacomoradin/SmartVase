@@ -1,0 +1,8 @@
+/* Override custom per la documentazione SmartVase.
+ * Caricato DOPO doxygen-awesome.css (vedi HTML_EXTRA_STYLESHEET nel Doxyfile):
+ * ridefinisce la palette sul verde "SmartVase". */
+:root {
+    --primary-color: #2e7d32;       /* Verde tema SmartVase */
+    --primary-dark-color: #1b5e20;
+    --primary-light-color: #4caf50;
+}
