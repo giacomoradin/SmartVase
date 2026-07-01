@@ -1,29 +1,29 @@
-# SmartVase — Checklist bring-up in laboratorio
+# SmartVase — Lab bring-up checklist
 
-> Procedura passo-passo per il primo flash e collaudo dei tre firmware
-> (Mega v5.1, Hub v1.2, CAM v2.1) sul nuovo prototipo.
-> L'ordine è pensato per essere **sicuro**: prima si verifica ogni
-> attuatore "a vuoto", poi si collega il carico.
+> Step-by-step procedure for the first flash and testing of the three
+> firmwares (Mega v5.1, Hub v1.2, CAM v2.1) on the new prototype.
+> The order is designed to be **safe**: each actuator is first verified
+> "unloaded", and only then is the load connected.
 >
-> Tutto il collaudo funziona **senza rete**: ogni scheda ha una CLI
-> seriale a 115200 baud (terminatore di riga: Newline / `\n`).
+> The whole test works **without networking**: every board has a serial
+> CLI at 115200 baud (line terminator: Newline / `\n`).
 
 ---
 
-## 0. Materiale da portare
+## 0. What to bring
 
-- [ ] Cavo USB-B (Mega) + cavo micro-USB (Hub ESP32 devkit).
-- [ ] Per la CAM: adattatore USB-seriale FTDI 3.3V **oppure** base ESP32-CAM-MB.
-      Con FTDI: per entrare in flash mode collegare **GPIO0 a GND** e premere
-      reset; scollegare GPIO0 e resettare di nuovo per avviare il firmware.
-- [ ] **Partitore resistivo o level shifter per la UART Mega→Hub**:
-      il TX1 del Mega è a 5V, il GPIO16 dell'ESP32 tollera 3.3V.
-      Un partitore 1kΩ/2kΩ è sufficiente (5V · 2/3 ≈ 3.3V).
-      La direzione opposta (Hub TX 3.3V → Mega RX) funziona diretta.
-- [ ] Tanica + acqua per la taratura di US4 e il test della pompa.
-- [ ] Torcia/telefono per il test del fotoresistore.
+- [ ] USB-B cable (Mega) + micro-USB cable (Hub ESP32 devkit).
+- [ ] For the CAM: an FTDI 3.3V USB-serial adapter **or** an ESP32-CAM-MB base.
+      With FTDI: to enter flash mode connect **GPIO0 to GND** and press
+      reset; disconnect GPIO0 and reset again to boot the firmware.
+- [ ] **Resistive divider or level shifter for the Mega→Hub UART**:
+      the Mega's TX1 is at 5V, the ESP32's GPIO16 tolerates 3.3V.
+      A 1kΩ/2kΩ divider is enough (5V · 2/3 ≈ 3.3V).
+      The opposite direction (Hub TX 3.3V → Mega RX) works directly.
+- [ ] Tank + water for calibrating US4 and testing the pump.
+- [ ] Flashlight/phone for testing the photoresistor.
 
-## 0.1 Comandi base (PowerShell, dalla root del repo)
+## 0.1 Basic commands (PowerShell, from the repo root)
 
 ```powershell
 # Build
@@ -31,117 +31,154 @@
 .\build_hub.bat
 .\build_cam.bat
 
-# Build + flash (aggiungere la porta se il rilevamento automatico fallisce)
+# Build + flash (add the port if auto-detection fails)
 .\build_mega.bat -t upload
 .\build_hub.bat  -t upload
 .\build_cam.bat  -t upload --upload-port COM5
 
-# Lista porte COM disponibili
+# List available COM ports
 & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" device list
 
-# Monitor seriale (CTRL+C per uscire)
+# Serial monitor (CTRL+C to quit)
 & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" device monitor -b 115200 -p COM5
 ```
 
-> La macchina è risultata **offline verso il registry PlatformIO**: tutte le
-> dipendenze sono già in cache o vendorizzate nel repo, le build non hanno
-> bisogno di internet. Non lanciare `pio pkg update`.
+> The machine turned out to be **offline w.r.t. the PlatformIO registry**: all
+> dependencies are already cached or vendored in the repo, the builds do not
+> need internet. Do not run `pio pkg update`.
 
 ---
 
-## 1. Arduino Mega da solo (la fase più lunga)
+## 1. Arduino Mega alone (the longest phase)
 
-Flash + monitor seriale. Al boot compare `Platform Controller v5.1 boot`.
+Flash + serial monitor. At boot, `Platform Controller v5.1 boot` appears.
 
-### 1.1 Setup sessione
+### 1.1 Session setup
 
-- [ ] `standalone on` — **primo comando da dare sempre a banco**: sospende il
-      deadman dell'Hub (altrimenti dopo 120 s senza Hub il Mega entra in
-      degraded mode e blocca motori e pompa).
+- [ ] `standalone on` — **the first command to always give on the bench**: it
+      suspends the Hub's deadman (otherwise, after 120 s without the Hub, the
+      Mega enters degraded mode and stops the motors and pump).
 - [ ] `version` → v5.1.0.
 - [ ] `status` → degradedMode=NO, freeRam ≳ 3500 B.
 
-### 1.2 Sensori a ultrasuoni (uno alla volta)
+### 1.2 Ultrasonic sensors (one at a time)
 
-- [ ] `sensors` ripetuto, mettendo la mano davanti a ciascuna sonda:
-      | Sonda | Ruolo | Trig/Echo |
-      |-------|-------|-----------|
-      | US1   | frontale alto    | 33/35 |
-      | US2   | frontale destro  | 26/27 |
-      | US3   | frontale sinistro| 36/37 |
-      | US4   | tanica           | 50/51 |
-      | US5   | lato sinistro    | 4/5   |
-      | US6   | lato destro      | 28/29 |
-- [ ] Se una sonda legge sempre `nan`: probabile trig/echo invertiti nel
-      cablaggio (verifica contro `docs/PINS - Sheet1.csv`) o VCC/GND mancanti.
-- [ ] Nota: il filtro EMA impiega ~1 s ad assestarsi dopo un cambiamento.
+- [ ] Repeat `sensors`, placing a hand in front of each probe:
+      | Probe | Role | Trig/Echo |
+      |-------|------|-----------|
+      | US1   | front-top     | 33/35 |
+      | US2   | front-right   | 26/27 |
+      | US3   | front-left    | 36/37 |
+      | US4   | tank          | 50/51 |
+      | US5   | left side     | 4/5   |
+      | US6   | right side    | 28/29 |
+- [ ] If a probe always reads `nan`: trig/echo are likely swapped in the
+      wiring (check against `docs/PINS - Sheet1.csv`) or VCC/GND is missing.
+- [ ] Note: the EMA filter takes ~1 s to settle after a change.
 
-### 1.3 Sensori analogici — annotare i valori!
+### 1.3 Analog sensors — write down the values!
 
-- [ ] Forcella (A0): leggere `sensors` con forcella **asciutta** e poi
-      **immersa**. Annotare i due valori ADC qui: asciutta=____ bagnata=____
-      (servono per tarare `soil_dry_threshold`).
-- [ ] Fotoresistore (A1): valore con LDR **coperto** e **illuminato**.
-      Annotare: buio=____ luce=____ (serve per `light_threshold` e per capire
-      la direzione del partitore: con LDR verso VCC più luce = valore più alto).
+- [ ] Fork (A0): read `sensors` with the fork **dry** and then **immersed**.
+      Write down the two ADC values here: dry=____ wet=____
+      (needed to calibrate `soil_dry_threshold`).
+- [ ] Photoresistor (A1): value with the LDR **covered** and **lit**.
+      Write down: dark=____ light=____ . Observed real scale ~0-800 (dark≈11,
+      lab neon≈540). Calibrate `light_threshold` (default **500**) with
+      `light <adc>`: the "sufficient" ambient-light value must stay ABOVE
+      the threshold (UVA lights off), darkness BELOW it (UVA lights on). The
+      threshold is shared with the LIGHT/SHADOW seeking.
 
 ### 1.4 RTC DS3232
 
-- [ ] `rtc` → `rtc_ok = YES`. Se NO: controllare SDA=20/SCL=21 e alimentazione.
-- [ ] Se `time_valid = NO` (modulo nuovo o batteria tampone scarica):
-      ottenere l'epoch corrente dal PC (PowerShell):
+- [ ] `rtc` → `chip_ok = YES`. If NO: check SDA=20/SCL=21 and power.
+- [ ] If `time_valid = NO` (new module or dead backup battery):
+      get the current epoch from the PC (PowerShell):
       ```powershell
       [DateTimeOffset]::Now.ToUnixTimeSeconds()
       ```
-      poi sul Mega: `rtc set <numero>`. Riverificare con `rtc`.
+      then on the Mega: `rtc set <number>`. Re-check with `rtc`.
+- [ ] **Dead/absent CR2032 battery?** The firmware automatically enables a
+      **software fallback clock**: at boot it starts from 08:00 and `rtc`
+      shows `fake_clock = YES`, `time_valid = YES`. This is fine for bench
+      testing (it is lost on every reset, must be re-set). The UVA lights
+      depend on the time: with `time_valid = NO` they stay off forever.
 
-### 1.5 Motori — ROBOT SOLLEVATO da terra
+### 1.5 Motors — Pololu Dual VNH5019 — ROBOT LIFTED off the ground
 
-- [ ] `motor f 1000` → entrambe le ruote in avanti. Se una gira al contrario:
-      invertire i due fili di quel motore sull'H-bridge (oppure scambiare
-      IN1/IN2 o IN3/IN4 in `Movement.cpp` e riflashare).
-- [ ] `motor b 1000` / `motor l 1000` / `motor r 1000` → verificare che
-      "left/right" corrispondano alla sinistra/destra fisica del robot.
-      Se invertiti: scambiare i gruppi LEFT/RIGHT dei `#define` in
-      `Movement.cpp` (canale A pin 6/43/45, canale B pin 7/47/49).
-- [ ] Calibrazione marcia dritta (si può fare dopo, a terra):
-      `calib <left> <right>` (0..255, persiste in EEPROM). Default 255/240.
+- [ ] 🔴 **FIRST OF ALL — common GND**: with a multimeter, verify continuity
+      (0Ω) between Mega GND, the shield's (logic) GND and the battery −.
+      Without a common ground the signals do not arrive and the outputs stay
+      at **0V** even with VDD present (cause #1).
+- [ ] Pin mapping (see `docs/PINS - Sheet1.csv`): D6→M1PWM, D43→M1INA,
+      D45→M1INB, D7→M2PWM, D47→M2INA, D49→M2INB. ⚠️ On the standard shield
+      pin 6 is M1EN, not M1PWM: make sure the wire really goes to **M1PWM**.
+- [ ] `diag` → the `fault L/R` line: must read `ok/ok`. If `!!FAULT` on a
+      motor, the VNH5019 is in protection mode (EN/DIAG low): check the
+      power/wiring of that channel. (EN/DIAG on D41/D39 is optional.)
+- [ ] `motor f 60000` → both wheels forward (test up to 60 s). If one turns
+      the wrong way: swap the two wires of that motor, **or** swap
+      INA/INB of that motor in `Movement.cpp` and reflash.
+- [ ] `motortest` → guided f/b/l/r sequence; verify that "left/right"
+      match the physical left/right side. If swapped: swap the LEFT/RIGHT
+      `#define` groups in `Movement.cpp` (L: 6/43/45/41, R: 7/47/49/39).
+- [ ] If the outputs stay at 0V with a correct common GND and mapping: measure
+      with the multimeter D43≈5V / D45≈0V / D6≈5V during `motor f 60000`, then
+      M1EN≈5V (VDD, via the pull-up). Check the shield's "M1EN A=B" / "M2EN A=B"
+      jumper.
+- [ ] Straight-drive calibration (can be done later, on the ground):
+      `calib <left> <right>` (0..255, persists in EEPROM). Default 255/240.
 
-### 1.6 Relè pompa — POMPA SCOLLEGATA
+### 1.6 Pump relay — PUMP DISCONNECTED
 
-- [ ] Al boot il relè deve restare **diseccitato** (nessun click all'accensione).
-      Se il relè si attiva da solo al boot: il modulo è attivo-alto →
-      mettere `PUMP_RELAY_ACTIVE_LOW 0` in `Pump.cpp` e riflashare.
-- [ ] `tank` → con US4 non ancora montato sulla tanica dirà
-      `SENSOR FAULT -> pompa bloccata`: è il comportamento fail-safe voluto.
-- [ ] Per testare il solo relè serve una lettura valida di US4: puntarlo verso
-      una superficie a meno della soglia (default 20 cm), poi `pump 1000` →
-      un click di attacco e uno di stacco dopo 1 s.
+- [ ] At boot the relay must remain **de-energized** (no click at power-on).
+      If the relay activates on its own at boot: the module is active-high →
+      set `PUMP_RELAY_ACTIVE_LOW 0` in `Pump.cpp` and reflash.
+- [ ] `tank` → with US4 not yet mounted on the tank it will say
+      `SENSOR FAULT -> pump blocked`: this is the intended fail-safe behavior.
+- [ ] To test the relay alone you need a valid US4 reading: point it at
+      a surface closer than the threshold (default 20 cm), then `pump 1000` →
+      one click to engage and one to disengage after 1 s.
 
-### 1.7 Tanica e protezione pompa
+### 1.7 Tank and pump protection
 
-- [ ] Montare US4 sul coperchio della tanica, puntato verso l'acqua.
-- [ ] Tanica **piena**: `tank` → annotare la distanza: piena=____ cm.
-- [ ] Tanica **vuota** (o quasi): `tank` → annotare: vuota=____ cm.
-- [ ] Impostare la soglia ~2 cm sotto il livello minimo utile:
-      `tank <vuota - 2>` (es. se vuota=18 → `tank 16`). Persiste in EEPROM.
-- [ ] Test protezione: con tanica vuota `pump 2000` → deve rispondere
-      `BLOCCATO: tanica vuota`. Riempire → `pump 2000` → la pompa parte.
-- [ ] Test auto-stop: avviare `pump 30000` e svuotare/alzare US4 → la pompa
-      deve fermarsi da sola (log `pump_stop tank_empty_or_fault`).
-- [ ] Solo ora collegare la pompa al relè e ripetere con acqua.
+- [ ] Mount US4 on the tank lid, pointed at the water.
+- [ ] Tank **full**: `tank` → write down the distance: full=____ cm.
+- [ ] Tank **empty** (or nearly so): `tank` → write down: empty=____ cm.
+- [ ] Set the threshold ~2 cm below the minimum usable level:
+      `tank <empty - 2>` (e.g. if empty=18 → `tank 16`). Persists in EEPROM.
+- [ ] Protection test: with an empty tank, `pump 2000` → must respond
+      `BLOCKED: tank empty`. Fill it → `pump 2000` → the pump starts.
+- [ ] Auto-stop test: start `pump 30000` and empty/lift US4 → the pump
+      must stop by itself (log `pump_stop tank_empty_or_fault`).
+- [ ] Only now connect the pump to the relay and repeat with water.
+
+### 1.8 UVA grow lights (relay D11, NC contact)
+
+> The lights are wired on the **NC** contact of the 2nd relay channel: with
+> the relay at rest they are **ON**. They turn on automatically only if
+> `IDLE` + `lux<threshold` + the time is within 06:00–20:00. Use the `diag`
+> `[LUCI UVA]` line to read the state.
+
+- [ ] `mode idle` + LDR covered (dark) + `time_valid=YES` → `diag` must show
+      `growLight=ON` (and the lights physically on).
+- [ ] Shine light on the LDR above the threshold (or `mode light`) →
+      `growLight=OFF`.
+- [ ] If the lights stay on all the time in full light: the threshold is too
+      high → set `light <adc>` lower than the ambient light value (see §1.3).
+- [ ] Check the time window: if `time_valid=NO` the lights stay off forever
+      (no time available); set `rtc set <epoch>` or rely on the 08:00 fallback.
 
 ---
 
-## 2. ESP32 Hub da solo
+## 2. ESP32 Hub alone
 
-Flash + monitor. Al boot: `[SmartVase Hub] Avvio... v1.2` poi `[CLI] pronta`.
+Flash + monitor. At boot: `[SmartVase Hub] Starting... v1.2` then `[CLI] ready`.
 
-- [ ] Senza Wi-Fi configurato il boot prosegue **offline** (è il comportamento
-      atteso: nessun AP di provisioning, nessun blocco).
-- [ ] `version` → 1.2.0. `status` → wifi OFFLINE, mqtt NON CONFIGURATO,
-      mega_link ASSENTE: tutto normale a questo punto.
-- [ ] (Solo quando ci sarà rete) provisioning dalla CLI:
+- [ ] Without Wi-Fi configured, the boot proceeds **offline** (this is the
+      expected behavior: no provisioning AP, no blocking).
+- [ ] `version` → 1.2.0. `status` → wifi OFFLINE, mqtt NOT CONFIGURED,
+      mega_link ABSENT: all normal at this point.
+- [ ] (Only once there is networking) provisioning from the CLI:
       ```
       set wifi_ssid <ssid>
       set wifi_pass <password>
@@ -153,62 +190,67 @@ Flash + monitor. Al boot: `[SmartVase Hub] Avvio... v1.2` poi `[CLI] pronta`.
       reboot
       ```
 
-## 3. Catena Hub ↔ Mega (il test più importante)
+## 3. Hub ↔ Mega chain (the most important test)
 
-Cablaggio (a schede spente):
+Wiring (with the boards powered off):
 
-| Da (Mega)   | A (Hub ESP32) | Nota                              |
-|-------------|---------------|-----------------------------------|
-| TX1 = D18   | GPIO16 (RX2)  | **⚠ tramite partitore 5V→3.3V**  |
-| RX1 = D19   | GPIO17 (TX2)  | diretto (3.3V è letto come HIGH)  |
-| GND         | GND           | massa comune obbligatoria         |
+| From (Mega) | To (Hub ESP32) | Note                               |
+|-------------|-----------------|-------------------------------------|
+| TX1 = D18   | GPIO16 (RX2)    | **⚠ via a 5V→3.3V divider**        |
+| RX1 = D19   | GPIO17 (TX2)    | direct (3.3V is read as HIGH)       |
+| GND         | GND             | common ground mandatory             |
 
-- [ ] Accendere entrambi, monitor sull'**Hub**.
-- [ ] Entro ~5 s devono comparire i log del Mega inoltrati (`Mega log [INFO] boot...`).
-- [ ] `status` sull'Hub → `mega_link = OK (ultimo msg N s fa)`.
-- [ ] `telemetry` → distanze/lux/soil correnti lette dal Mega: muovere una mano
-      davanti a una sonda e rilanciare per conferma.
-- [ ] `soil` → deve arrivare `[ACK Mega] ... detail=soil_moisture value=<adc>`.
-- [ ] `water 2000` (tanica OK) → ACK `water_started` e pompa attiva 2 s.
-- [ ] `water 2000` (tanica vuota) → ACK `ERROR detail=tank_empty`.
-- [ ] Sul Mega: con l'Hub collegato l'heartbeat arriva ogni 30 s, quindi
-      `standalone off` e verificare con `status` che NON entri in degraded.
-- [ ] Spegnere l'Hub e attendere 2 min: il Mega deve entrare in degraded mode
-      (`hub_missing`) e fermare tutto → riaccendere l'Hub → recupero automatico.
+- [ ] Power both on, monitor on the **Hub**.
+- [ ] Within ~5 s the forwarded Mega logs must appear (`Mega log [INFO] boot...`).
+- [ ] `status` on the Hub → `mega_link = OK (last msg N s ago)`.
+- [ ] `telemetry` → current distances/lux/soil read from the Mega: move a hand
+      in front of a probe and rerun to confirm.
+- [ ] `soil` → must receive `[ACK Mega] ... detail=soil_moisture value=<adc>`.
+- [ ] `water 2000` (tank OK) → ACK `water_started` and the pump active for 2 s.
+- [ ] `water 2000` (empty tank) → ACK `ERROR detail=tank_empty`.
+- [ ] On the Mega: with the Hub connected the heartbeat arrives every 30 s, so
+      `standalone off` and verify with `status` that it does NOT enter degraded mode.
+- [ ] Power off the Hub and wait 2 min: the Mega must enter degraded mode
+      (`hub_missing`) and stop everything → power the Hub back on → automatic recovery.
 
 ## 4. ESP32-CAM
 
-Flash (GPIO0→GND per il bootloader se si usa FTDI) + monitor.
+Flash (GPIO0→GND for the bootloader if using FTDI) + monitor.
 
-- [ ] Boot: `SmartVase Vision Co-Processor v2.1`, poi `CLI pronta`.
-- [ ] `status` → `camera = OK`. Se FAILED: controllare che il flat cable
-      della OV2640 sia inserito bene (causa n.1) e alimentare a 5V ≥ 500 mA.
-- [ ] `capture` → `frame ok: NNNN byte, crc32=..., NN ms`. Ripetere 4-5 volte
-      e controllare con `stats` che `failed_frames` non cresca.
-- [ ] (Solo quando ci sarà rete + Cloud Function) `set upload_url <...>` +
-      credenziali wifi/mqtt come per l'Hub, poi `upload` per il test completo.
+- [ ] Boot: `SmartVase Vision Co-Processor v2.1`, then `CLI ready`.
+- [ ] `status` → `camera = OK`. If FAILED: check that the OV2640's flat
+      cable is properly seated (cause #1) and power it at 5V ≥ 500 mA.
+- [ ] `capture` → `frame ok: NNNN bytes, crc32=..., NN ms`. Repeat 4-5 times
+      and check with `stats` that `failed_frames` does not grow.
+- [ ] (Only once there is networking + the Cloud Function) `set upload_url <...>`
+      + wifi/mqtt credentials as for the Hub, then `upload` for the full test.
 
 ---
 
-## 5. Troubleshooting rapido
+## 5. Quick troubleshooting
 
-| Sintomo | Causa probabile | Azione |
+| Symptom | Likely cause | Action |
 |---|---|---|
-| Sonda US sempre `nan` | trig/echo invertiti o non alimentata | verifica cablaggio col CSV |
-| Tutte le sonde `nan` | GND comune mancante | controlla le masse |
-| `pump` sempre BLOCCATO | US4 non vede l'acqua / soglia bassa | `tank` per diagnosi, `tank <cm>` per tarare |
-| Relè eccitato al boot | modulo attivo-alto | `PUMP_RELAY_ACTIVE_LOW 0` in Pump.cpp |
-| Motore gira al contrario | polarità motore | inverti i fili sull'H-bridge |
-| Mega in degraded a banco | deadman Hub scattato | `standalone on` |
-| Hub non vede il Mega | TX/RX non incrociati o partitore mancante | rivedi tabella §3 |
-| `epoch_s = 0` in telemetria | RTC non impostato | `rtc set <epoch>` (§1.4) |
-| CAM riavvii continui | alimentazione insufficiente | 5V dedicati, non dal FTDI |
-| upload/flash CAM fallisce | GPIO0 non a GND durante il flash | rivedi §4 |
+| US probe always `nan` | trig/echo swapped or unpowered | check the wiring against the CSV |
+| All probes `nan` | common GND missing | check the grounds |
+| `pump` always BLOCKED | US4 does not see the water / threshold too low | `tank` to diagnose, `tank <cm>` to calibrate |
+| Pump relay energized at boot | active-high module | `PUMP_RELAY_ACTIVE_LOW 0` in Pump.cpp |
+| **Motors: 0V on M1A/M1B/M2A/M2B** | **common GND Mega↔shield missing** | check the ground with a multimeter (§1.5) — cause #1 |
+| Motors: outputs 0V, GND ok | wrong PWM/INA/INB pin mapping | check D6→M1PWM etc. (§1.5) |
+| `diag` shows `fault !!FAULT` | VNH5019 in protection | power/wiring of the channel, EN A=B jumper |
+| Motor turns the wrong way | motor polarity | swap the 2 wires or INA/INB in Movement.cpp |
+| Mega in degraded mode on the bench | Hub deadman tripped | `standalone on` |
+| Hub does not see the Mega | TX/RX not crossed or missing divider | review the table in §3 |
+| UVA lights always on | threshold too high / `time_valid=NO` | lower `light <adc>` / `rtc set` (§1.8) |
+| `epoch_s = 0` in telemetry | RTC not set | `rtc set <epoch>` or the 08:00 fallback (§1.4) |
+| MQTT command not executed | wrong publish topic | use the full `smartvase/HUB_123456/command/<type>` |
+| CAM keeps rebooting | insufficient power | dedicated 5V, not from the FTDI |
+| CAM upload/flash fails | GPIO0 not tied to GND during flashing | review §4 |
 
-## 6. A fine giornata
+## 6. At the end of the day
 
-- [ ] Annotare su questo file (o su `docs/SmartVase_Project_State.md`):
-      valori forcella/LDR, distanze tanica piena/vuota, soglia `tank` scelta,
-      mapping motori verificato, polarità relè.
-- [ ] Se è stato modificato un flag (`PUMP_RELAY_ACTIVE_LOW`, pin scambiati):
-      commit della modifica con una riga di motivazione.
+- [ ] Write down in this file (or in `docs/SmartVase_Project_State.md`):
+      fork/LDR values, full/empty tank distances, the chosen `tank` threshold,
+      verified motor mapping, relay polarity.
+- [ ] If a flag was changed (`PUMP_RELAY_ACTIVE_LOW`, swapped pins):
+      commit the change with a one-line rationale.

@@ -4,6 +4,12 @@ node_modules/
 # Contesto di lavoro locale (non committare: repo accademico, niente tracce AI)
 CLAUDE.md
 
+# Credenziali reali (Wi-Fi/MQTT): mai nel versionato. Vedi secrets.h.example
+secrets.h
+
+# Host unit-test build artifacts (g++)
+tests/host/build_*
+
 # PlatformIO
 .pio/
 
@@ -16,3 +22,8 @@ __pycache__/
 .pytest_cache/
 venv/
 .venv/
+
+# Doxygen: output HTML generato (rigenerato dalla CI, mai committato)
+docs/doxygen/
+# Tema terze parti: vendorizzato in CI alla versione pinnata (vedi docs/doxygen-theme/README.md)
+docs/doxygen-theme/doxygen-awesome.css

@@ -1,76 +1,75 @@
-#include "ConfigManager.h" // <-- LA RIGA FONDAMENTALE CHE MANCAVA!
+/*! @file ConfigManager.cpp
+ *  @ingroup HubConfig
+ *  @brief Implementation of ConfigManager: NVS I/O, CRC validation,
+ *  bench fallback from secrets.h.
+ *  @author Giacomo Radin
+ *  @date 2025-10-28
+ */
 
-#include "nvs_flash.h"
-#include "nvs.h"
-#include "esp_log.h"
-#include <string.h> // Per memset e memcpy
-#include <stdint.h> // Per uint16_t etc.
+#include "ConfigManager.h" // <-- THE CRUCIAL LINE THAT WAS MISSING!
 
-// Tag per i log specifici di questo modulo
+#include "secrets.h"       // bench credentials (gitignored; see secrets.h.example)
+#include "crc_utils.h"     // crc16_ibm (shared)
+#include <nvs_flash.h>
+#include <nvs.h>
+#include <esp_log.h>
+#include <string.h> // For memset and memcpy
+#include <stdint.h> // For uint16_t etc.
+
+// Tag for this module's log messages
 static const char *TAG = "ConfigManager";
 
-// Namespace e Chiave per la NVS
-#define NVS_NAMESPACE "smartvase_cfg"
-#define NVS_CONFIG_KEY "device_config"
+#define NVS_NAMESPACE "smartvase_cfg"   ///< NVS (Preferences) namespace for the Hub configuration.
+#define NVS_CONFIG_KEY "device_config"  ///< NVS key of the `DeviceConfig` blob.
 
-// Magic number per validare la struttura dati
+/*! @brief Magic number marking a valid `DeviceConfig` blob in NVS. */
 #define CONFIG_MAGIC_NUMBER 0xCF6BEEF6
 
-// Funzione CRC16 (stessa del Mega per coerenza)
-// Definita qui perché usata solo in questo modulo.
+// CRC16 for NVS blob integrity: IBM/ARC (poly 0xA001), implementation shared
+// in crc_utils. NOTE: this is DIFFERENT from the serial protocol's CRC (CCITT,
+// see SerialManager/Mega) and that's intentional -- two independent uses.
 namespace {
-    uint16_t crc16_update(uint16_t crc, uint8_t a) {
-        crc ^= a;
-        for (int i = 0; i < 8; ++i) {
-            if (crc & 1) crc = (crc >> 1) ^ 0xA001;
-            else crc = (crc >> 1);
-        }
-        return crc;
-    }
-    uint16_t calculate_crc16(const uint8_t* data, size_t length) {
-        uint16_t crc = 0x0;
-        for (size_t i = 0; i < length; i++) {
-            crc = crc16_update(crc, data[i]);
-        }
-        return crc;
-    }
-
-    // CRC dell'intera struct con il campo crc16 azzerato. Il campo crc16
-    // sta in mezzo alla struct: calcolare il CRC con dentro il valore
-    // vecchio (come faceva la versione precedente) rendeva impossibile la
-    // verifica al load — la config NVS risultava sempre corrotta e le
-    // credenziali venivano azzerate a ogni boot.
+    /*! @brief Computes the CRC16-IBM of the entire `DeviceConfig` with the
+     *  `crc16` field zeroed out, so that it is reproducible both when
+     *  writing and when reading.
+     *  @param[in] cfg Configuration to compute the checksum over (passed by
+     *  copy internally, so the crc16 field can be zeroed without altering the original).
+     *  @return CRC16-IBM computed over the struct's bytes.
+     *  @note The `crc16` field sits in the middle of the struct: computing
+     *  the CRC with the old value still inside it (as the previous version
+     *  did) made verification on load impossible -- the NVS config always
+     *  appeared corrupted and the credentials were wiped on every boot. */
     uint16_t config_crc(const DeviceConfig& cfg) {
         DeviceConfig tmp = cfg;
         tmp.crc16 = 0;
-        return calculate_crc16(reinterpret_cast<const uint8_t*>(&tmp), sizeof(DeviceConfig));
+        return crc16_ibm(reinterpret_cast<const uint8_t*>(&tmp), sizeof(DeviceConfig));
     }
 }
 
 
-// --- Implementazione Metodi Classe ConfigManager ---
+// --- ConfigManager Class Method Implementation ---
 
 ConfigManager::ConfigManager() {
-    // Inizializza la configurazione in memoria con valori vuoti o di default sicuri
+    // Initialize the in-memory configuration with empty/safe default values
     memset(&_config, 0, sizeof(DeviceConfig));
-    _config.magic_number = CONFIG_MAGIC_NUMBER; // Imposta subito il magic number
+    _config.magic_number = CONFIG_MAGIC_NUMBER; // Set the magic number right away
     strcpy(_config.wifi_ssid, "");
     strcpy(_config.wifi_password, "");
     strcpy(_config.mqtt_broker, "");
-    _config.mqtt_port = 1883; // Porta MQTT standard
+    _config.mqtt_port = 1883; // Standard MQTT port
     strcpy(_config.mqtt_user, "");
     strcpy(_config.mqtt_password, "");
     strcpy(_config.webhook_url, "");
-    // Aggiungi qui altri valori di default se necessario
+    // Add further default values here if needed
 }
 
 bool ConfigManager::init() {
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        // Se la partizione NVS è corrotta o in una vecchia versione, la cancelliamo e reinizializziamo
+        // If the NVS partition is corrupted or on an old version, erase and reinitialize it
         ESP_LOGW(TAG, "NVS partition damaged or outdated, erasing...");
         ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init(); // Riprova l'inizializzazione
+        err = nvs_flash_init(); // Retry initialization
     }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize NVS (%s)", esp_err_to_name(err));
@@ -81,21 +80,6 @@ bool ConfigManager::init() {
 }
 
 bool ConfigManager::loadConfig() {
-    // ============================================================
-    // ⚠️  BENCH ONLY — credenziali hard-coded per il collaudo.
-    //     RIMUOVERE QUESTO BLOCCO prima di qualsiasi commit/push
-    //     (repo accademico: niente password reali nel versionato).
-    //     Forza la config in RAM a ogni boot, bypassando la NVS.
-    // ============================================================
-    memset(&_config, 0, sizeof(DeviceConfig));
-    _config.magic_number = CONFIG_MAGIC_NUMBER;
-    setWifiCredentials("GiacomoPhone", "giacomonoretaaleinternet");
-    setMqttConfig("fec435c1f9c5410e8105bc0a677662ab.s1.eu.hivemq.cloud",
-                  8883, "SmartVase", "7w#po8N&Hr6R6Z");
-    ESP_LOGW(TAG, "BENCH: credenziali hard-coded attive (RIMUOVERE prima del commit)");
-    return true;
-    // ============ fine blocco bench — sotto la logica NVS normale ============
-
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
     if (err != ESP_OK) {
@@ -104,20 +88,20 @@ bool ConfigManager::loadConfig() {
     }
 
     DeviceConfig loaded_config;
-    // Inizializza loaded_config a zero per sicurezza prima della lettura
+    // Zero-initialize loaded_config for safety before reading
     memset(&loaded_config, 0, sizeof(DeviceConfig));
     size_t required_size = sizeof(DeviceConfig);
     err = nvs_get_blob(nvs_handle, NVS_CONFIG_KEY, &loaded_config, &required_size);
 
     bool load_successful = false;
     if (err == ESP_OK) {
-        // Verifica Magic Number e Dimensione PRIMA di calcolare il CRC
+        // Verify Magic Number and Size BEFORE computing the CRC
         if (required_size == sizeof(DeviceConfig) && loaded_config.magic_number == CONFIG_MAGIC_NUMBER) {
-            // CRC su una copia con il campo crc16 azzerato (vedi config_crc)
+            // CRC over a copy with the crc16 field zeroed out (see config_crc)
             uint16_t calculated_crc = config_crc(loaded_config);
 
             if (calculated_crc == loaded_config.crc16) {
-                // CRC e Magic Number corrispondono, configurazione valida!
+                // CRC and Magic Number match, valid configuration!
                 memcpy(&_config, &loaded_config, sizeof(DeviceConfig));
                 load_successful = true;
                 ESP_LOGI(TAG, "Configuration loaded successfully from NVS.");
@@ -125,7 +109,7 @@ bool ConfigManager::loadConfig() {
                 ESP_LOGW(TAG, "NVS CRC mismatch! Calculated=0x%X, Stored=0x%X", calculated_crc, loaded_config.crc16);
             }
         } else {
-             // Stampa valori specifici per il debug
+             // Print specific values for debugging
              ESP_LOGW(TAG, "NVS magic/size mismatch! Read Size=%d, Expected Size=%d, Read Magic=0x%lX, Expected Magic=0x%lX",
                      required_size, sizeof(DeviceConfig), (unsigned long)loaded_config.magic_number, (unsigned long)CONFIG_MAGIC_NUMBER);
         }
@@ -137,18 +121,34 @@ bool ConfigManager::loadConfig() {
 
     nvs_close(nvs_handle);
 
-    if (!load_successful) {
-        ESP_LOGW(TAG, "Loading default configuration and saving to NVS.");
-        // Resetta la configurazione ai default del costruttore prima di salvare
-        memset(&_config, 0, sizeof(DeviceConfig)); // Ripulisce tutto
-        _config.magic_number = CONFIG_MAGIC_NUMBER; // Reimposta il magic
-        // Reimposta eventuali altri default non a zero qui se necessario
-         _config.mqtt_port = 1883;
-        // ...
-        return saveConfig(); // Salva i valori di default (che ora includono il magic number corretto)
+    // NVS-first: if the config is valid AND contains Wi-Fi credentials, use it.
+    // This way, provisioning via CLI (`set` + `save`) is honored after a
+    // reboot (it used to be broken by the old bench bypass that returned early).
+    bool provisioned = load_successful && _config.wifi_ssid[0] != '\0';
+    if (provisioned) {
+        ESP_LOGI(TAG, "Configuration loaded from NVS (provisioned).");
+        return true;
     }
 
+    // NVS empty / invalid / without Wi-Fi: start from clean defaults.
+    memset(&_config, 0, sizeof(DeviceConfig));
+    _config.magic_number = CONFIG_MAGIC_NUMBER;
+    _config.mqtt_port    = 1883;
+
+#ifdef SV_BENCH_MODE
+    // BENCH fallback: credentials from secrets.h (gitignored) for immediate
+    // testing without provisioning. Kept in RAM only (NOT saved): editing
+    // secrets.h takes effect on every boot, and a `set`+`save` from the CLI
+    // moves the config permanently to NVS (which then wins from that point on, see 'provisioned').
+    setWifiCredentials(SV_WIFI_SSID, SV_WIFI_PASS);
+    setMqttConfig(SV_MQTT_BROKER, SV_MQTT_PORT, SV_MQTT_USER, SV_MQTT_PASS);
+    ESP_LOGW(TAG, "NVS vuota: uso credenziali di fallback da secrets.h (SV_BENCH_MODE).");
     return true;
+#else
+    // Production: no credentials -> provisioning via CLI or AP required. Initialize NVS.
+    ESP_LOGW(TAG, "NVS vuota: nessuna credenziale, provisioning necessario.");
+    return saveConfig();
+#endif
 }
 
 
@@ -160,13 +160,13 @@ bool ConfigManager::saveConfig() {
         return false;
     }
 
-     // Assicura che il magic number sia corretto prima di salvare (anche se dovrebbe già esserlo)
+     // Make sure the magic number is correct before saving (even though it should already be)
     _config.magic_number = CONFIG_MAGIC_NUMBER;
 
-    // CRC su una copia con il campo crc16 azzerato (vedi config_crc)
+    // CRC over a copy with the crc16 field zeroed out (see config_crc)
     _config.crc16 = config_crc(_config);
 
-    // Scrive l'intera struttura come blob
+    // Write the whole struct as a blob
     err = nvs_set_blob(nvs_handle, NVS_CONFIG_KEY, &_config, sizeof(DeviceConfig));
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Error writing configuration blob to NVS (%s)", esp_err_to_name(err));
@@ -174,7 +174,7 @@ bool ConfigManager::saveConfig() {
         return false;
     }
 
-    // Effettua il commit delle modifiche sulla NVS
+    // Commit the changes to NVS
     err = nvs_commit(nvs_handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Error committing configuration changes to NVS (%s)", esp_err_to_name(err));
@@ -187,7 +187,7 @@ bool ConfigManager::saveConfig() {
     return true;
 }
 
-// --- Metodi Getter ---
+// --- Getter Methods ---
 
 const char* ConfigManager::getWifiSsid() const {
     return _config.wifi_ssid;
@@ -217,7 +217,7 @@ const char* ConfigManager::getWebhookUrl() const {
     return _config.webhook_url;
 }
 
-// --- Metodi Setter (per aggiornare la configurazione in memoria prima di salvarla) ---
+// --- Setter Methods (to update the in-memory configuration before saving it) ---
 
 void ConfigManager::setWifiCredentials(const char* ssid, const char* password) {
     if (ssid) {

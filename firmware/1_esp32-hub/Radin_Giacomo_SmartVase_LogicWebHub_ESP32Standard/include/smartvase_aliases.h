@@ -1,9 +1,23 @@
-/*
- * =================================================================
- * SmartVase - Protobuf Alias Definitions (lato Hub ESP32)
- * =================================================================
- * Schema v4.0 — 2026-05-19. Solo alias Protobuf — niente tipi C++ interni
- * del Mega (DeviceConfig, CumulativeStats, ecc.).
+/*! @file smartvase_aliases.h
+ *  @ingroup HubMisc
+ *  @brief Aliases without the `smartvase_` prefix for the types/tags generated
+ *  by nanopb from `smartvase.proto`, so that the rest of the Hub code can use
+ *  short names (e.g. `Command` instead of `smartvase_Command`).
+ *  @details Schema v4.0 — 2026-05-19. Protobuf aliases only: no Mega-internal
+ *  C++ types (DeviceConfig, CumulativeStats, etc.), which stay private to the
+ *  Mega firmware.
+ *  @note Must be kept aligned by hand with the canonical `.proto`
+ *  (`infra/smartvase-proto/smartvase.proto`): if fields or tags are added or
+ *  renamed in the `.proto`, update the corresponding aliases here after
+ *  regenerating the `.pb.{c,h}` (see CLAUDE.md §5.3 for the complete
+ *  schema-first workflow).
+ *  @author Giacomo Radin
+ *  @date 2025-10-20
+ */
+
+/*! @defgroup HubMisc Miscellaneous (protobuf aliases, certificates)
+ *  @brief Cross-cutting support files: aliases for the generated protobuf
+ *  types and the CA certificate for the TLS link to HiveMQ Cloud.
  */
 
 #ifndef SMARTVASE_ALIASES_H_INCLUDED
@@ -11,7 +25,11 @@
 
 #include "smartvase.pb.h"
 
-// --- Alias per Tipi (Structs & Enums) ---
+/*! @addtogroup HubMisc
+ *  @{
+ */
+
+// --- Aliases for Types (Structs & Enums) ---
 typedef smartvase_WrapperMessage         WrapperMessage;
 typedef smartvase_Log_LogLevel           Log_LogLevel;
 typedef smartvase_Command                Command;
@@ -24,10 +42,10 @@ typedef smartvase_Log                    Log;
 typedef smartvase_Heartbeat              Heartbeat;
 typedef smartvase_CommandResponse        CommandResponse;
 
-// --- Descrittori dei Messaggi ---
+// --- Message Descriptors ---
 #define WrapperMessage_fields smartvase_WrapperMessage_fields
 
-// --- Macro di Inizializzazione ---
+// --- Initialization Macros ---
 #define WrapperMessage_init_zero    smartvase_WrapperMessage_init_zero
 #define Log_init_zero               smartvase_Log_init_zero
 #define Command_init_zero           smartvase_Command_init_zero
@@ -36,7 +54,7 @@ typedef smartvase_CommandResponse        CommandResponse;
 #define TelemetryDeep_init_zero     smartvase_TelemetryDeep_init_zero
 #define Heartbeat_init_zero         smartvase_Heartbeat_init_zero
 
-// --- Tag dei Campi 'oneof' ---
+// --- 'oneof' Field Tags ---
 #define WrapperMessage_telemetry_fast_tag   smartvase_WrapperMessage_telemetry_fast_tag
 #define WrapperMessage_telemetry_deep_tag   smartvase_WrapperMessage_telemetry_deep_tag
 #define WrapperMessage_log_tag              smartvase_WrapperMessage_log_tag
@@ -52,7 +70,7 @@ typedef smartvase_CommandResponse        CommandResponse;
 #define Command_read_soil_tag             smartvase_Command_read_soil_tag
 #define Command_soft_reset_tag            smartvase_Command_soft_reset_tag
 
-// --- Valori degli Enum ---
+// --- Enum Values ---
 #define Log_LogLevel_INFO      smartvase_Log_LogLevel_INFO
 #define Log_LogLevel_WARN      smartvase_Log_LogLevel_WARN
 #define Log_LogLevel_ERROR     smartvase_Log_LogLevel_ERROR
@@ -71,5 +89,7 @@ typedef smartvase_CommandResponse        CommandResponse;
 #define MS_AVOID_REVERSING smartvase_MovementState_M_AVOID_REVERSING
 #define MS_AVOID_TURNING   smartvase_MovementState_M_AVOID_TURNING
 #define MS_STUCK           smartvase_MovementState_M_STUCK
+
+/*! @} */ // end of HubMisc group
 
 #endif // SMARTVASE_ALIASES_H_INCLUDED

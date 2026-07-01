@@ -39,7 +39,13 @@ except Exception as e:
 
 # --- Setup MQTT Client (Initialized early for global access) ---
 client_id = f"firestore-bridge-{int(time.time())}"
-client = mqtt.Client(client_id=client_id)
+# Compatibility wrapper for paho-mqtt v1.x and v2.x
+try:
+    # paho-mqtt v2.x requires callback_api_version
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id=client_id)
+except AttributeError:
+    # fallback for paho-mqtt v1.x
+    client = mqtt.Client(client_id=client_id)
 
 # --- MQTT Client Callbacks (MQTT -> Firestore) ---
 
@@ -74,9 +80,13 @@ def on_message(client, userdata, msg):
 
     try:
         payload_json = json.loads(payload_str)
-        if 'vase_id' not in payload_json and 'device_id' not in payload_json:
-            payload_json['vase_id'] = vase_id
-        payload_json['cloud_received_ts'] = firestore.SERVER_TIMESTAMP
+        if isinstance(payload_json, dict):
+            if 'vase_id' not in payload_json and 'device_id' not in payload_json:
+                payload_json['vase_id'] = vase_id
+            payload_json['cloud_received_ts'] = firestore.SERVER_TIMESTAMP
+        else:
+            print(f"WARN: JSON payload is not a dictionary: {payload_str}")
+            return
     except json.JSONDecodeError as e:
         print(f"ERROR: Failed to parse JSON payload on topic {topic}: {e}")
         return 

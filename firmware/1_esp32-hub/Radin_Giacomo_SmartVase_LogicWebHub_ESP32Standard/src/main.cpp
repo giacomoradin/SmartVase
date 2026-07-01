@@ -1,55 +1,66 @@
-/*
- * =================================================================
- * SmartVase - ESP32 Hub (Gateway)
- * Firmware Versione 1.2 — 2026-06-11 (hardening pre-bring-up)
- * =================================================================
- * Punto di ingresso: setup() crea code e moduli, poi i task FreeRTOS.
- * loop() gestisce solo la CLI seriale di debug/provisioning.
- *
- * Nota d'ordine: i manager sono allocati in setup() DOPO la creazione
- * delle code FreeRTOS. La versione precedente li istanziava come oggetti
- * globali: i costruttori copiavano gli handle delle code quando erano
- * ancora NULL (static init) e i task partivano su code inesistenti.
- * =================================================================
+/*! @file main.cpp
+ *  @ingroup HubCore
+ *  @brief Hub firmware entry point: bootstraps NVS/Wi-Fi/FreeRTOS queues,
+ *  creates the three pinned tasks (TaskSerialMega, TaskMqttLink,
+ *  TaskMainLogic) and the Arduino loop dedicated to CLI/provisioning/OTA.
+ *  @details setup() creates the FreeRTOS queues BEFORE instantiating the
+ *  modules that use them (SerialManager, MqttManager, MainLogic): an earlier
+ *  attempt instantiated them as global objects, whose constructors copied
+ *  the queue handles while they were still NULL (static initialization),
+ *  causing the tasks to start on non-existent queues. loop() only handles
+ *  non time-critical, lowest-priority activity (serial CLI, captive portal,
+ *  OTA): the real logic runs in the three FreeRTOS tasks created by setup().
+ *  @author Giacomo Radin
+ *  @date 2025-10-28
  */
 
 #include <Arduino.h>
+#include <WiFi.h>
+#include <ArduinoOTA.h>
 #include "ConfigManager.h"
 #include "WifiManager.h"
 #include "SerialManager.h"
 #include "MQTTManager.h"
 #include "MainLogic.h"
 #include "HubCli.h"
+#include "secrets.h"     // SV_OTA_PASS (gitignored)
 
-// --- Code FreeRTOS ---
-// Comunicazione seriale (Mega <-> Hub)
-QueueHandle_t serialRxQueue; // Messaggi Protobuf dal Mega all'Hub (MainLogic)
-QueueHandle_t serialTxQueue; // Messaggi Protobuf dall'Hub (MainLogic/CLI) al Mega
+// --- FreeRTOS Queues ---
+// Serial communication (Mega <-> Hub)
+QueueHandle_t serialRxQueue; /**< Protobuf messages from the Mega to the Hub (consumed by MainLogic). */
+QueueHandle_t serialTxQueue; /**< Protobuf messages from the Hub (MainLogic/HubCli) to the Mega. */
 
-// Comunicazione MQTT (Hub <-> Broker)
-QueueHandle_t mqttTxQueue;   // Messaggi JSON dall'Hub (MainLogic) al Broker MQTT
-QueueHandle_t mqttRxQueue;   // Messaggi JSON dal Broker MQTT all'Hub (MainLogic)
+// MQTT communication (Hub <-> Broker)
+QueueHandle_t mqttTxQueue;   /**< JSON messages from the Hub (MainLogic) to the MQTT broker. */
+QueueHandle_t mqttRxQueue;   /**< JSON messages from the MQTT broker to the Hub (MainLogic). */
 
-// --- Moduli ---
-// Senza dipendenze dalle code: istanze globali.
-ConfigManager configManager;
-WifiManager   wifiManager(configManager);
-HubCli        hubCli;
+// --- Modules ---
+// No dependency on the queues: global instances.
+ConfigManager configManager;          /**< Persistent configuration (NVS). */
+WifiManager   wifiManager(configManager); /**< Wi-Fi STA connection + provisioning AP. */
+HubCli        hubCli;                 /**< Serial debug/provisioning CLI. */
 
-// Dipendenti dalle code: creati in setup() dopo xQueueCreate.
-SerialManager* serialManager = nullptr;
-MqttManager*   mqttManager   = nullptr;
-MainLogic*     mainLogic     = nullptr;
+// Dependent on the queues: created in setup() after xQueueCreate.
+SerialManager* serialManager = nullptr; /**< Body of the TaskSerialMega task; allocated in setup(). */
+MqttManager*   mqttManager   = nullptr; /**< Body of the TaskMqttLink task; allocated in setup(). */
+MainLogic*     mainLogic     = nullptr; /**< Body of the TaskMainLogic task; allocated in setup(). */
 
-// =================================================================
-// SETUP
-// =================================================================
+/*! @brief Arduino entry point: initializes NVS/Wi-Fi, creates the four
+ *  FreeRTOS queues and the modules that use them, then starts the three
+ *  pinned tasks (TaskSerialMega on Core 1 prio 3, TaskMqttLink on Core 0
+ *  prio 2, TaskMainLogic on Core 1 prio 1).
+ *  @details Critical ordering: the queues are created BEFORE instantiating
+ *  SerialManager/MqttManager/MainLogic, which receive them by pointer in
+ *  the constructor (see the module comment above). On NVS or xQueueCreate()
+ *  failure, performs a restart (ESP.restart()) after a short diagnostic
+ *  delay: there is no degraded path without working queues. */
 void setup() {
-    // 1. Seriale di Debug/CLI (USB)
+    // 1. Debug/CLI Serial (USB)
+    pinMode(3, INPUT_PULLUP); // Prevents RXD0 from floating when USB is not connected
     Serial.begin(115200);
-    Serial.println("\n[SmartVase Hub] Avvio... v1.2");
+    Serial.println("\n[SmartVase Hub] Avvio... v1.3");
 
-    // 2. Configurazione NVS
+    // 2. NVS Configuration
     if (!configManager.init()) {
         Serial.println("[CRITICAL] Impossibile inizializzare NVS. Riavvio.");
         delay(2000);
@@ -57,7 +68,7 @@ void setup() {
     }
     configManager.loadConfig();
 
-    // 3. Code FreeRTOS (prima dei moduli che le usano)
+    // 3. FreeRTOS queues (before the modules that use them)
     serialRxQueue = xQueueCreate(10, sizeof(SerialMessage));
     serialTxQueue = xQueueCreate(10, sizeof(SerialMessage));
     mqttTxQueue   = xQueueCreate(10, sizeof(MqttMessage));
@@ -70,62 +81,80 @@ void setup() {
         ESP.restart();
     }
 
-    // 4. Moduli dipendenti dalle code
+    // 4. Modules dependent on the queues
     serialManager = new SerialManager(serialRxQueue, serialTxQueue);
     mqttManager   = new MqttManager(mqttTxQueue, mqttRxQueue, configManager);
     mainLogic     = new MainLogic(serialRxQueue, serialTxQueue,
                                   mqttTxQueue, mqttRxQueue, configManager);
 
-    // 5. Wi-Fi: tentativo con timeout; se fallisce si continua offline
-    //    (provisioning dalla CLI seriale, retry automatico in background).
+    // 5. Wi-Fi: attempt with timeout; if it fails, continue offline
+    //    (provisioning from the serial CLI, automatic retry in the background).
     wifiManager.connect();
 
-    // 6. Inizializzazione dei Manager
+    // 6. Manager initialization
     serialManager->init();
     mqttManager->init();
     mainLogic->init();
     hubCli.begin(&configManager, &wifiManager, mqttManager, mainLogic, serialTxQueue);
 
-    // 7. Task FreeRTOS
+    // 7. FreeRTOS Tasks
     xTaskCreatePinnedToCore(
-        SerialManager::taskEntry,   // Funzione del task (statica)
-        "TaskSerialMega",           // Nome
+        SerialManager::taskEntry,   // Task function (static)
+        "TaskSerialMega",           // Name
         4096,                       // Stack size
-        serialManager,              // Parametri: puntatore all'istanza
-        3,                          // Priorità (alta)
+        serialManager,              // Parameters: pointer to the instance
+        3,                          // Priority (high)
         NULL,                       // Handle
         1);                         // Core 1
 
     xTaskCreatePinnedToCore(
-        MqttManager::taskEntry,     // Funzione del task (statica)
-        "TaskMqttLink",             // Nome
+        MqttManager::taskEntry,     // Task function (static)
+        "TaskMqttLink",             // Name
         8192,                       // Stack size (MQTT + SSL)
-        mqttManager,                // Parametri: puntatore all'istanza
-        2,                          // Priorità (media)
+        mqttManager,                // Parameters: pointer to the instance
+        2,                          // Priority (medium)
         NULL,                       // Handle
         0);                         // Core 0
 
     xTaskCreatePinnedToCore(
-        MainLogic::taskEntry,       // Funzione del task (statica)
-        "TaskMainLogic",            // Nome
+        MainLogic::taskEntry,       // Task function (static)
+        "TaskMainLogic",            // Name
         8192,                       // Stack size (JSON/Protobuf)
-        mainLogic,                  // Parametri: puntatore all'istanza
-        1,                          // Priorità (bassa)
+        mainLogic,                  // Parameters: pointer to the instance
+        1,                          // Priority (low)
         NULL,                       // Handle
-        0);                         // Core 0
+        1);                         // Core 1 (isolated from TLS spikes on Core 0)
 
     Serial.println("[SETUP] Setup completato. Avvio dei Task.");
 }
 
-// =================================================================
-// LOOP (Task Principale Arduino)
-// =================================================================
+/*! @brief Main Arduino loop: only handles non time-critical activity at the
+ *  lowest priority (the core logic runs in the FreeRTOS tasks started by setup()).
+ *  @details On each pass: drains the serial CLI (hubCli.tick()), advances
+ *  the Captive Portal if the provisioning AP is active (no-op otherwise),
+ *  and starts/handles ArduinoOTA once the Wi-Fi STA is connected.
+ *  @note OTA startup (`ArduinoOTA.begin()`) happens exactly once, guarded by
+ *  the local `otaStarted` flag; from that point on `ArduinoOTA.handle()` is
+ *  called on every iteration regardless of the connection state. */
 void loop() {
-    // CLI di debug/provisioning: attività non critica a priorità minima.
+    // Debug/provisioning CLI: non-critical activity at the lowest priority.
     hubCli.tick();
 
-    // No-op se l'AP di provisioning non è attivo.
+    // No-op if the provisioning AP is not active.
     wifiManager.handleProvisioning();
+
+    // OTA: started once when Wi-Fi comes up; then handle() on every pass.
+    // Additive and passive (does not interfere with normal operation). Real
+    // update validation must be done on the bench (requires network + tooling).
+    static bool otaStarted = false;
+    if (!otaStarted && WiFi.status() == WL_CONNECTED) {
+        ArduinoOTA.setHostname("smartvase-hub");
+        ArduinoOTA.setPassword(SV_OTA_PASS);
+        ArduinoOTA.begin();
+        otaStarted = true;
+        Serial.println("[OTA] pronto: hostname 'smartvase-hub'");
+    }
+    if (otaStarted) ArduinoOTA.handle();
 
     vTaskDelay(pdMS_TO_TICKS(20));
 }

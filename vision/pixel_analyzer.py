@@ -3,9 +3,6 @@ import numpy as np
 
 class PixelAnalyzer:
     def __init__(self, green_threshold=20, brown_threshold_r=90, disease_tolerance_pct=15.0):
-        self.width = 160
-        self.height = 120
-        self.total_pixels = self.width * self.height
         self.green_threshold = green_threshold
         self.brown_threshold_r = brown_threshold_r
         self.disease_tolerance_pct = disease_tolerance_pct
@@ -15,11 +12,12 @@ class PixelAnalyzer:
         if img is None:
             raise FileNotFoundError(f"Image not found: {image_path}")
 
-        # resize to QQVGA to match ESP32-CAM resolution
-        img_resized = cv2.resize(img, (self.width, self.height))
+        # calculate total pixels dynamically based on the original image
+        height, width = img.shape[:2]
+        self.total_pixels = width * height
         
         # convert to RGB and cast to int32 to avoid overflow during bitwise ops
-        img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB).astype(np.int32)
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.int32)
         
         # split channels for easier manipulation
         r = img_rgb[:, :, 0]

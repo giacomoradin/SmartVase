@@ -1,70 +1,74 @@
+/*! @file SerialManager.cpp
+ *  @ingroup HubSerial
+ *  @brief Implementation of SerialManager: serial framing receive FSM and
+ *  sending of Protobuf messages to the Mega.
+ *  @author Giacomo Radin
+ *  @date 2025-10-28
+ */
+
 #include "SerialManager.h"
 #include "esp_log.h"
-#include <HardwareSerial.h> // Per accedere a Serial2
+#include <HardwareSerial.h> // To access Serial2
+#include "crc_utils.h"      // crc16_ccitt (shared)
 
-// Tag per i log specifici di questo modulo
+// Tag for this module's log messages
 static const char *TAG = "SerialManager";
 
-// Definizioni per il protocollo di framing (devono corrispondere a quelle del Mega)
-#define SOF_BYTE 0xAA // Start Of Frame
+/*! @brief Start-of-frame of the serial protocol (must match the Mega's). */
+#define SOF_BYTE 0xAA
 
 // --- Implementazione Metodi Classe SerialManager ---
 
 SerialManager::SerialManager(QueueHandle_t rxQueue, QueueHandle_t txQueue)
     : _rxQueue(rxQueue), _txQueue(txQueue) {
-    // Il costruttore riceve le code create in main.cpp
+    // The constructor receives the queues created in main.cpp
 }
 
 void SerialManager::init() {
-    // Inizializza Serial2 sui pin definiti
+    // Initialize Serial2 on the defined pins
     Serial2.begin(115200, SERIAL_8N1, MEGA_RX_PIN, MEGA_TX_PIN);
     ESP_LOGI(TAG, "Serial2 initialized (RX:%d, TX:%d) at 115200 baud.", MEGA_RX_PIN, MEGA_TX_PIN);
 }
 
-// Funzione statica usata per avviare il task FreeRTOS
+// Static function used to start the FreeRTOS task
 void SerialManager::taskEntry(void* pvParameters) {
-    // Il parametro è un puntatore all'istanza della classe SerialManager
+    // The parameter is a pointer to the SerialManager instance
     SerialManager* instance = static_cast<SerialManager*>(pvParameters);
-    // Chiama la funzione membro che contiene il loop del task
+    // Call the member function containing the task loop
     instance->taskRun();
 }
 
-// Funzione principale del Task (loop infinito)
+// Main task function (infinite loop)
 void SerialManager::taskRun() {
     ESP_LOGI(TAG, "SerialManager Task Started.");
 
-    // Loop principale del task
+    // Main task loop
     while (true) {
-        // 1. Gestisci la ricezione di dati dal Mega
+        // 1. Handle incoming data from the Mega
         handleSerialReception();
 
-        // 2. Controlla se ci sono messaggi da inviare al Mega
+        // 2. Wait (max 10 ms) for a message to send to the Mega: if one arrives,
+        //    the task wakes up immediately (~0 TX latency); otherwise the
+        //    timeout acts as a tick to go back and drain the serial reception.
         SerialMessage msgToSend;
-        // Controlla la coda _txQueue senza bloccare (timeout 0)
-        if (xQueueReceive(_txQueue, &msgToSend, 0) == pdPASS) {
-            ESP_LOGD(TAG, "Sending message from TX queue...");
+        if (xQueueReceive(_txQueue, &msgToSend, pdMS_TO_TICKS(10)) == pdPASS) {
             if (!sendProtobufMessage(msgToSend.message)) {
                 ESP_LOGE(TAG, "Failed to send protobuf message!");
-                // Qui potresti implementare una logica di retry o notifica errore
             }
         }
-
-        // 3. Breve pausa per non sovraccaricare la CPU e permettere ad altri task di girare
-        vTaskDelay(pdMS_TO_TICKS(10)); // Controlla ogni 10ms
     }
 }
 
-// Gestisce la ricezione dei dati seriali con il protocollo di framing (SOF, Len, Payload, CRC)
+// Handles reception of serial data using the framing protocol (SOF, Len, Payload, CRC)
 void SerialManager::handleSerialReception() {
-    // Macchina a stati per la decodifica del frame
-    static enum {
-        WAIT_SOF, WAIT_LEN_H, WAIT_LEN_L, WAIT_PAYLOAD, WAIT_CRC_H, WAIT_CRC_L
-    } state = WAIT_SOF;
-    static uint16_t messageLength = 0;
-    static uint16_t payloadIndex = 0;
-    static uint16_t receivedCRC = 0;
+    // FSM state kept as instance MEMBERS (reentrant class). Local aliases so
+    // we don't have to rewrite the whole function body.
+    RxState&  state         = _rxState;
+    uint16_t& messageLength = _rxMessageLength;
+    uint16_t& payloadIndex  = _rxPayloadIndex;
+    uint16_t& receivedCRC   = _rxReceivedCRC;
 
-    // Leggi tutti i byte disponibili dalla porta seriale
+    // Read all bytes currently available on the serial port
     while (Serial2.available() > 0) {
         uint8_t byteIn = Serial2.read();
 
@@ -72,64 +76,64 @@ void SerialManager::handleSerialReception() {
             case WAIT_SOF:
                 if (byteIn == SOF_BYTE) {
                     state = WAIT_LEN_H;
-                    payloadIndex = 0; // Resetta l'indice per un nuovo messaggio
+                    payloadIndex = 0; // Reset the index for a new message
                     messageLength = 0;
                     receivedCRC = 0;
                      ESP_LOGV(TAG, "SOF received");
                 } else {
                      ESP_LOGV(TAG, "Waiting SOF, received 0x%02X", byteIn);
-                     // Ignora byte spazzatura prima del SOF
+                     // Ignore junk bytes before the SOF
                 }
                 break;
 
-            case WAIT_LEN_H: // Riceve il byte alto della lunghezza
+            case WAIT_LEN_H: // Receives the high byte of the length
                 messageLength = (uint16_t)byteIn << 8;
                 state = WAIT_LEN_L;
                 break;
 
-            case WAIT_LEN_L: // Riceve il byte basso della lunghezza
+            case WAIT_LEN_L: // Receives the low byte of the length
                 messageLength |= byteIn;
                 ESP_LOGV(TAG, "Length received: %d", messageLength);
-                // Controllo di sanità sulla lunghezza
+                // Sanity check on the length
                 if (messageLength == 0 || messageLength > sizeof(_rxBuffer)) {
                     ESP_LOGE(TAG, "Invalid message length received: %d. Max allowed: %d", messageLength, sizeof(_rxBuffer));
-                    state = WAIT_SOF; // Torna in attesa del prossimo SOF
+                    state = WAIT_SOF; // Go back to waiting for the next SOF
                 } else {
-                    payloadIndex = 0; // Prepara a ricevere il payload
+                    payloadIndex = 0; // Prepare to receive the payload
                     state = WAIT_PAYLOAD;
                 }
                 break;
 
-            case WAIT_PAYLOAD: // Riceve i byte del payload Protobuf
+            case WAIT_PAYLOAD: // Receives the Protobuf payload bytes
                 _rxBuffer[payloadIndex++] = byteIn;
-                // Se abbiamo ricevuto tutti i byte del payload
+                // If we've received all the payload bytes
                 if (payloadIndex == messageLength) {
-                    state = WAIT_CRC_H; // Passa a ricevere il CRC
+                    state = WAIT_CRC_H; // Move on to receiving the CRC
                      ESP_LOGV(TAG, "Payload received (%d bytes)", messageLength);
                 }
                 break;
 
-            case WAIT_CRC_H: // Riceve il byte alto del CRC
+            case WAIT_CRC_H: // Receives the high byte of the CRC
                 receivedCRC = (uint16_t)byteIn << 8;
                 state = WAIT_CRC_L;
                 break;
 
-            case WAIT_CRC_L: // Riceve il byte basso del CRC e valida il messaggio
-            { // <-- APERTURA PARENTESI GRAFFA
+            case WAIT_CRC_L: // Receives the low byte of the CRC and validates the message
+            { // <-- OPENING BRACE
                 receivedCRC |= byteIn;
                 ESP_LOGV(TAG, "CRC received: 0x%04X", receivedCRC);
 
-                // Calcola il CRC sul payload ricevuto
-                uint16_t calculatedCRC = crc16(_rxBuffer, messageLength);
+                // Compute the CRC over the received payload
+                uint16_t calculatedCRC = crc16_ccitt(_rxBuffer, messageLength);
 
                 if (receivedCRC == calculatedCRC) {
-                    // CRC Corretto! Decodifica il messaggio Protobuf
+                    // CRC OK! Decode the Protobuf message
                     ESP_LOGD(TAG, "CRC OK. Decoding Protobuf message...");
                     WrapperMessage decodedMsg = WrapperMessage_init_zero;
                     pb_istream_t stream = pb_istream_from_buffer(_rxBuffer, messageLength);
 
                     if (pb_decode(&stream, WrapperMessage_fields, &decodedMsg)) {
-                        // Decodifica riuscita! Inserisci il messaggio nella coda rxQueue
+                        // Decode succeeded! Push the message onto the rxQueue
                         SerialMessage serialMsg;
                         memcpy(&serialMsg.message, &decodedMsg, sizeof(WrapperMessage));
 
@@ -145,12 +149,10 @@ void SerialManager::handleSerialReception() {
                     ESP_LOGE(TAG, "CRC Error! Expected 0x%04X, Calculated 0x%04X", receivedCRC, calculatedCRC);
                 }
                 state = WAIT_SOF;
-                break; // Il break rimane DENTRO le graffe
-            } // <-- CHIUSURA PARENTESI GRAFFA spostata QUI!
+                break;
+            }
 
-            // --- CORREZIONE: La chiusura della graffa era qui per errore ---
-
-            default: // Ora 'default' è correttamente all'interno dello switch
+            default:
                 ESP_LOGE(TAG, "Invalid state in serial reception FSM: %d! Resetting to WAIT_SOF.", state);
                 state = WAIT_SOF;
                 break;
@@ -159,7 +161,7 @@ void SerialManager::handleSerialReception() {
 }
 
 
-// Invia un messaggio Protobuf al Mega usando il protocollo di framing
+// Sends a Protobuf message to the Mega using the framing protocol
 bool SerialManager::sendProtobufMessage(const WrapperMessage& message) {
     pb_ostream_t stream = pb_ostream_from_buffer(_txBuffer, sizeof(_txBuffer));
 
@@ -181,7 +183,7 @@ bool SerialManager::sendProtobufMessage(const WrapperMessage& message) {
      }
 
     ESP_LOGD(TAG, "Encoding successful (%d bytes). Sending framed message...", payloadLen);
-    uint16_t crc = crc16(_txBuffer, payloadLen);
+    uint16_t crc = crc16_ccitt(_txBuffer, payloadLen);
 
     Serial2.write(SOF_BYTE);
     Serial2.write((uint8_t)(payloadLen >> 8));
@@ -195,25 +197,7 @@ bool SerialManager::sendProtobufMessage(const WrapperMessage& message) {
     return true;
 }
 
-// --- Funzioni Helper CRC16 ---
-// DEVE essere identico a crc16_ccitt del Mega (Crc16.cpp): poly 0x1021,
-// MSB-first, init 0x0000, no reflection, no xor-out. La versione precedente
-// usava 0xA001 LSB-first (CRC-16-IBM): ogni frame veniva scartato per
-// "CRC Error" da entrambi i lati e il link Hub<->Mega era di fatto morto.
-uint16_t SerialManager::crc16_update(uint16_t crc, uint8_t a) {
-    crc ^= (uint16_t)a << 8;
-    for (int i = 0; i < 8; ++i) {
-        if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
-        else              crc <<= 1;
-    }
-    return crc;
-}
-
-uint16_t SerialManager::crc16(const uint8_t* data, size_t length) {
-    uint16_t crc = 0x0000;
-    for (size_t i = 0; i < length; i++) {
-        crc = crc16_update(crc, data[i]);
-    }
-    return crc;
-}
+// CRC16-CCITT moved to crc_utils.{h,cpp} (shared with ConfigManager).
+// Still poly 0x1021 MSB-first, identical to the Mega's crc16_ccitt: the host
+// test `test_crc_utils` pins the value (XMODEM 0x31C3) against regressions.
 

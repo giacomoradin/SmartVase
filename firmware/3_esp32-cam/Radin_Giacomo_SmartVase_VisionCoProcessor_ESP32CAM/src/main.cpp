@@ -1,3 +1,10 @@
+/**
+ * @file main.cpp
+ * @brief Sorgente per il modulo main
+ * @author Giacomo Radin
+ * @date 2026-06-30
+ */
+
 /*
  * =================================================================
  * SmartVase - Vision Co-Processor (ESP32-CAM)
@@ -116,6 +123,13 @@ bool captureRequested           = false; // captureNow via Firestore
 unsigned long lastDebugMs       = 0;     // throttle telemetria debug seriale
 
 // -------------------- UTILITIES --------------------
+/**
+ * @brief Calcola il checksum CRC32 (Little Endian) di un buffer di dati.
+ * @param crc Valore iniziale del CRC.
+ * @param buf Puntatore al buffer dei dati.
+ * @param len Lunghezza in byte dei dati nel buffer.
+ * @return uint32_t Il checksum CRC32 calcolato.
+ */
 uint32_t crc32_le(uint32_t crc, const uint8_t *buf, size_t len) {
     static const uint32_t table[16] = {
         0x00000000, 0x1db71064, 0x3b6e20c8, 0x26d930ac,
@@ -132,6 +146,9 @@ uint32_t crc32_le(uint32_t crc, const uint8_t *buf, size_t len) {
     return ~crc;
 }
 
+/**
+ * @brief Carica le configurazioni dell'ESP32-CAM dalla memoria NVS.
+ */
 void loadConfig() {
     prefs.begin("cam", true);
     cfg.wifi_ssid   = prefs.getString("wifi_ssid",   "");
@@ -161,6 +178,9 @@ void loadConfig() {
     // ============ fine blocco bench ============
 }
 
+/**
+ * @brief Salva le configurazioni correnti dell'ESP32-CAM nella memoria NVS.
+ */
 void saveConfig() {
     prefs.begin("cam", false);
     prefs.putString("wifi_ssid",   cfg.wifi_ssid);
@@ -174,6 +194,9 @@ void saveConfig() {
     prefs.end();
 }
 
+/**
+ * @brief Carica le statistiche sull'utilizzo della fotocamera dalla memoria NVS.
+ */
 void loadStats() {
     statsPrefs.begin("cam_stats", true);
     stats.successful_frames     = statsPrefs.getUInt   ("succ_frames",   0);
@@ -624,6 +647,7 @@ void printDebugTelemetry() {
 // -------------------- SETUP / LOOP --------------------
 void setup() {
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // disabilita brown-out (noto issue ESP32-CAM)
+    pinMode(3, INPUT_PULLUP); // Evita che RXD0 fluttui quando l'USB/FTDI non e' connesso
     Serial.begin(115200);
     delay(200);
     Serial.println("\n[CAM] SmartVase Vision Co-Processor v" CAM_FW_VERSION);

@@ -1,193 +1,220 @@
-# SmartVase — Architettura e contesto del progetto
+# SmartVase — Architecture and project context
 
-> Documento di onboarding tecnico per il team SmartVase.
-> Stato consolidato al **2026-05-19**. Allineato al PIN map
-> `docs/PINS - Sheet1.csv` e alle decisioni architetturali correnti.
-
----
-
-## 1. Stato attuale del progetto (TL;DR)
-
-- Il prototipo hardware è in **ricostruzione attiva** (maggio 2026). Il robot
-  fisico è in costruzione *ora*: il PIN map (`docs/PINS - Sheet1.csv`) è il
-  riferimento autoritativo del cablaggio.
-- **Refactor totale del firmware completato** in data 2026-05-19, allineato
-  al nuovo PIN map + decisioni architetturali (vedi §11). Versioni:
-  - Mega: **v5.0** — 6 HC-SR04, pompa via relè, RTC DS3232, modulo `Pump`
-    dedicato, `Communication` ora esegue davvero i comandi end-to-end.
-    Hysteresis SRAM (800/1200 B) per recovery pulito da degraded mode.
-  - Hub: **v1.1** — `MainLogic.cpp` non ha più stub; pubblica telemetry,
-    log, alarm e **command/ack** (topic dedicato); deadman switch attivo.
-  - ESP32-CAM: **v2.0** — completamente riscritto da bench-code a
-    Wi-Fi STA + NTP + MQTT TLS + upload HTTP **streaming** a Cloud Function.
-  - Protocollo: **proto v4.0** — `TelemetryFast` con 5 distanze nav.
-    + soil moisture + epoch_s; `CommandResponse` con campo `value`.
-- **Pipeline vision Python** estesa con `metrics`, `leaf_health` (rule-based
-  v0.2) e `pipeline.analyze_image()`. Output JSON conforme a
-  `SmartVase_data_structure.md`. 18 test pytest passano.
-- **Cloud Function stub** `upload-image` aggiunta in `infra/cloud-functions/`
-  (Node 20 + Firebase Storage). Da rifinire con Fia.
+> Technical onboarding document for the SmartVase team.
+> State consolidated as of **2026-05-19**. Aligned with the PIN map
+> `docs/PINS - Sheet1.csv` and the current architectural decisions.
 
 ---
 
-## 2. Vision di prodotto
+## 1. Current project status (TL;DR)
 
-SmartVase è un **vaso/serra IoT mobile e autonoma**:
+- The hardware prototype is under **active rebuild** (May 2026). The physical
+  robot is being built *right now*: the PIN map (`docs/PINS - Sheet1.csv`) is the
+  authoritative wiring reference.
+- **Full firmware refactor completed** on 2026-05-19, aligned with the new
+  PIN map + architectural decisions (see §11). Versions:
+  - Mega: **v5.0** — 6 HC-SR04, pump via relay, RTC DS3232, dedicated `Pump`
+    module, `Communication` now actually executes commands end-to-end.
+    SRAM hysteresis (800/1200 B) for a clean recovery from degraded mode.
+  - Hub: **v1.1** — `MainLogic.cpp` no longer has stubs; it publishes telemetry,
+    logs, alarms and **command/ack** (dedicated topic); the deadman switch is active.
+  - ESP32-CAM: **v2.0** — completely rewritten from bench-code to
+    Wi-Fi STA + NTP + MQTT TLS + **streaming** HTTP upload to a Cloud Function.
+  - Protocol: **proto v4.0** — `TelemetryFast` with 5 nav distances
+    + soil moisture + epoch_s; `CommandResponse` with a `value` field.
+- **Python vision pipeline** extended with `metrics`, `leaf_health` (rule-based
+  v0.2) and `pipeline.analyze_image()`. JSON output conforming to
+  `SmartVase_data_structure.md`. 18 pytest tests pass.
+- **Cloud Function stub** `upload-image` added in `infra/cloud-functions/`
+  (Node 20 + Firebase Storage). To be refined with Fia.
 
-- Si muove su ruote alla ricerca di luce o ombra a seconda della modalità
-  scelta (`LIGHT` / `SHADOW` / `IDLE`) — comportamento light-seeking /
-  shadow-seeking governato dal fotoresistore.
-- Innaffia la pianta su comando (pompa controllata da relè) o, in futuro,
-  in autonomia in base a umidità del suolo (sensore a forcella).
-- Cattura periodicamente immagini della pianta con la ESP32-CAM e ne valuta
-  qualità del frame e salute fogliare via pipeline di vision Python.
-- È controllato da un'**app Android** (MVVM + Compose, sviluppo di Francesco).
-- Riporta telemetria e log a HiveMQ Cloud, con Firestore come store autoritativo.
+---
 
-Principi guida del progetto (dal README):
+## 2. Product vision
+
+SmartVase is a **mobile, autonomous IoT pot/greenhouse**:
+
+- It moves on wheels seeking light or shade depending on the selected mode
+  (`LIGHT` / `SHADOW` / `IDLE`) — light-seeking / shadow-seeking behavior
+  driven by the photoresistor.
+- It waters the plant on command (relay-controlled pump) or, in the future,
+  autonomously based on soil moisture (fork sensor).
+- It periodically captures images of the plant with the ESP32-CAM and evaluates
+  frame quality and leaf health via the Python vision pipeline.
+- It is controlled by an **Android app** (MVVM + Compose, developed by Francesco).
+- It reports telemetry and logs to HiveMQ Cloud, with Firestore as the authoritative store.
+
+Project guiding principles (from the README):
 **Resilience & Robustness** · **Observability & Diagnostics** ·
 **Performance & Efficiency** · **Modularity & Maintainability**.
 
 ---
 
-## 3. Topologia hardware
+## 3. Hardware topology
 
-Tre microcontrollori più un'app mobile:
+Three microcontrollers plus a mobile app:
 
-| Ruolo                | MCU             | Codename     | Compito                                                                 |
+| Role                 | MCU             | Codename     | Task                                                                    |
 |----------------------|-----------------|--------------|-------------------------------------------------------------------------|
-| Platform Controller  | Arduino Mega    | *The Brawn*  | Controllo diretto di motori, pompa, sensori, RTC. Nessuna rete.         |
-| Logic & Web Hub      | ESP32 standard  | *The Brain*  | Wi-Fi, MQTT/TLS verso HiveMQ, coordinamento, ponte JSON↔Protobuf.       |
-| Vision Co-Processor  | ESP32-CAM       | *The Eye*    | Cattura JPEG, upload immagine, pubblicazione `vision/image` su MQTT.    |
-| Android App          | —               | —            | UI utente (Kotlin, Compose, MVVM).                                      |
+| Platform Controller  | Arduino Mega    | *The Brawn*  | Direct control of motors, pump, sensors, RTC. No networking.            |
+| Logic & Web Hub      | ESP32 standard  | *The Brain*  | Wi-Fi, MQTT/TLS to HiveMQ, coordination, JSON↔Protobuf bridge.          |
+| Vision Co-Processor  | ESP32-CAM       | *The Eye*    | JPEG capture, image upload, `vision/image` publish over MQTT.           |
+| Android App          | —               | —            | User UI (Kotlin, Compose, MVVM).                                        |
 
-### 3.1 Bus di comunicazione
+### 3.1 Communication buses
 
-- **Hub ↔ Mega**: UART seriale (115200 baud). Frame:
+- **Hub ↔ Mega**: serial UART (115200 baud). Frame:
   `SOF=0xAA | len_hi | len_lo | payload(protobuf) | crc16_hi | crc16_lo`.
-  Payload = `WrapperMessage` di [smartvase.proto](infra/smartvase-proto/smartvase.proto).
-- **Hub ↔ Cloud**: MQTT su TLS verso **HiveMQ Cloud**. Payload **JSON**.
+  Payload = `WrapperMessage` from [smartvase.proto](infra/smartvase-proto/smartvase.proto).
+- **Hub ↔ Cloud**: MQTT over TLS to **HiveMQ Cloud**. **JSON** payload.
 - **Cloud pipeline**:
-  `HiveMQ ⇄ Cloud Functions ⇄ Firestore ⇄ App Android / Vision`.
-  Firestore è lo store autoritativo. Le Cloud Functions bridgiano MQTT e
-  documenti Firestore (vedi [SmartVase_data_structure.md](SmartVase_data_structure.md)).
-- **CAM ↔ Cloud**: **autonomo**. La ESP32-CAM si connette al Wi-Fi e
-  pubblica direttamente su MQTT (o uploada su storage e poi pubblica
-  `vision/image`). Il `main.cpp` attuale che stampa su Serial è *bench code*,
-  non rappresenta l'architettura target.
-- **Vision Python ↔ Cloud**: consuma `vision/image`, scrive `vision/result`
-  (entrambi via Firestore).
+  `HiveMQ ⇄ Cloud Functions ⇄ Firestore ⇄ Android App / Vision`.
+  Firestore is the authoritative store. The Cloud Functions bridge MQTT and
+  Firestore documents (see [SmartVase_data_structure.md](SmartVase_data_structure.md)).
+- **CAM ↔ Cloud**: **autonomous**. The ESP32-CAM connects to Wi-Fi and
+  publishes directly to MQTT (or uploads to storage and then publishes
+  `vision/image`). The current `main.cpp` that prints to Serial is *bench code*,
+  it does not represent the target architecture.
+- **Python Vision ↔ Cloud**: consumes `vision/image`, writes `vision/result`
+  (both via Firestore).
 
 ---
 
-## 4. PIN map autoritativo (Arduino Mega)
+## 4. Authoritative PIN map (Arduino Mega)
 
-Dal file [docs/PINS - Sheet1.csv](docs/PINS - Sheet1.csv).
-**Questa tabella vince su qualsiasi `#define` presente nei sorgenti
-firmware attuali.** Tutto il firmware Mega va riallineato a questi pin.
+From the file [docs/PINS - Sheet1.csv](docs/PINS - Sheet1.csv).
+**This table wins over any `#define` present in the current firmware
+sources.** All Mega firmware must be aligned to these pins.
 
-### 4.1 Sensori ultrasuoni HC-SR04 (6 totali)
+### 4.1 HC-SR04 ultrasonic sensors (6 total)
 
-| ID  | Ruolo fisico                       | Trigger | Echo | Note                                   |
+| ID  | Physical role                      | Trigger | Echo | Notes                                  |
 |-----|------------------------------------|---------|------|----------------------------------------|
-| US1 | Frontale alto (avanti, in alto)    | D33     | D35  | Anti-collisione frontale superiore     |
-| US2 | Frontale destro                    | D26     | D27  | Anti-collisione frontale destra        |
-| US3 | Frontale sinistro                  | D36     | D37  | Anti-collisione frontale sinistra      |
-| US4 | Tanica acqua                       | D50     | D51  | **Misura livello acqua nel serbatoio** |
-| US5 | Lato sinistro                      | D4      | D5   | Anti-collisione laterale sinistra      |
-| US6 | Lato destro                        | D28     | D29  | Anti-collisione laterale destra        |
+| US1 | Front-top (forward, high)          | D33     | D35  | Upper front anti-collision             |
+| US2 | Front-right                        | D26     | D27  | Front-right anti-collision             |
+| US3 | Front-left                         | D36     | D37  | Front-left anti-collision              |
+| US4 | Water tank                         | D50     | D51  | **Measures the water level in the tank** |
+| US5 | Left side                          | D4      | D5   | Left-side anti-collision               |
+| US6 | Right side                         | D28     | D29  | Right-side anti-collision              |
 
-US1, US2, US3, US5, US6 → **navigazione e obstacle avoidance** (5 sensori).
-US4 → **solo** livello acqua nella tanica.
+US1, US2, US3, US5, US6 → **navigation and obstacle avoidance** (5 sensors).
+US4 → **only** the water level in the tank.
 
-### 4.2 Driver motori (H-bridge, 2 motori DC)
+### 4.2 Motor driver — Pololu Dual VNH5019 Shield (2 DC motors)
 
-Da CSV (pin del "driver motorini"):
+The motor shield is a **Pololu Dual VNH5019** (`ash02b`, 2014), wired to the Mega
+with jumpers. VNH5019 interface per motor (≠ L298N): `INA`/`INB` (direction),
+`PWM` (speed, PWM pin), `EN/DIAG` (enable + fault flag, open-drain with a
+pull-up on the shield → driver enabled at rest).
 
-| Funzione        | Pin Mega |
-|-----------------|----------|
-| Motor A — IN1   | D47      |
-| Motor A — IN2   | D49      |
-| Motor A — ENA   | D6 (PWM) |
-| Motor B — IN3   | D43      |
-| Motor B — IN4   | D45      |
-| Motor B — ENB   | D7 (PWM) |
+| Shield signal  | Mega pin | Notes |
+|----------------|----------|-------|
+| M1PWM          | D7 (PWM) | "left" motor speed |
+| M1INA          | D41      | direction |
+| M1INB          | D43      | direction |
+| M1EN/DIAG      | not wired | optional, not connected as of 2026-06-30 |
+| M2PWM          | D6 (PWM) | "right" motor speed |
+| M2INA          | D45      | direction |
+| M2INB          | D47      | direction |
+| M2EN/DIAG      | not wired | optional, not connected as of 2026-06-30 |
 
-> Il firmware legacy ([Movement.cpp](firmware/2_platform-controller_mega/Radin_Giacomo_SmartVase_PlatformController_ArduinoMega/src/Movement.cpp))
-> usa già `enA=7, in1=43, in2=45, enB=6, in3=47, in4=49`, che matcha il CSV
-> a meno di un'eventuale ridefinizione di quale H-bridge è "left" vs "right".
-> Da verificare a banco quale ENA corrisponde alla ruota fisica sinistra.
+> Pin mapping **confirmed 2026-06-30** via multimeter continuity test (see
+> `docs/Scheda_Verifica_Hardware.md` §1.1/T7), superseding an earlier
+> best-guess mapping that paired PWM/INA/INB from different shield channels —
+> the actual root cause of the 0 V outputs seen on the bench.
+>
+> [Movement.cpp](firmware/2_platform-controller_mega/Radin_Giacomo_SmartVase_PlatformController_ArduinoMega/src/Movement.cpp)
+> drives PWM (`analogWrite`) + INA/INB (`digitalWrite`). EN/DIAG is not wired to
+> the Mega (`MOTOR_EN_DIAG_WIRED 0`): `faultLeft()`/`faultRight()` always
+> return `false` until it is physically wired and the flag/pins are updated.
+> Which motor is "left" and the wheel direction must still be verified on the
+> bench (`motortest`).
+> ⚠️ **Common GND** Mega↔shield is mandatory: without a ground reference the
+> signals do not arrive and the outputs stay at 0 V even with VDD present.
 
-### 4.3 Alimentazione e RTC
+### 4.3 Power and RTC
 
-| Funzione                       | Pin Mega       | Note                                                  |
+| Function                       | Mega pin       | Notes                                                  |
 |--------------------------------|----------------|-------------------------------------------------------|
-| Partitore tensione batteria    | A0 (vedi nota) | Divisore R1=30k, R2=7.5k → `Vbatt = Vadc · 5.0`       |
-| RTC DS3232 — SDA               | D20 (SDA)      | I²C                                                   |
-| RTC DS3232 — SCL               | D21 (SCL)      | I²C                                                   |
+| Battery voltage divider        | A2 (`BATTERY_MONITORING_ENABLED=0`) | Divider R1=30k, R2=7.5k → `Vbatt = Vadc · 5.0`; not mounted |
+| RTC DS3232 — SDA               | D20 (SDA)      | I²C 0x68                                              |
+| RTC DS3232 — SCL               | D21 (SCL)      | I²C 0x68                                              |
 
-> **Pin batteria — discrepanza aperta**: il firmware legacy usa `A2`, il CSV
-> non lo elenca esplicitamente nella sezione batteria. Da confermare al
-> prossimo refactor sul banco.
+> **RTC — software fallback clock**: if the DS3232 chip does not respond on I²C
+> or has a stopped oscillator (dead/absent CR2032 battery), `setEpoch()` enables
+> a `millis()`-based software clock; at boot, if no valid time is available, it
+> starts from **08:00** (`DEFAULT_BOOT_HOUR`, inside the grow-light daylight
+> window). It is lost on every reset (must be re-set with `rtc set <epoch>`), but
+> it avoids blocking the time-dependent features. The real chip always takes
+> precedence when it responds.
 
-### 4.4 Pompa e relè
+### 4.4 Pump, relays and grow lights
 
-| Funzione               | Pin Mega | Note                                |
+| Function               | Mega pin | Notes                                |
 |------------------------|----------|-------------------------------------|
-| Relè canale 1 (IN1)    | D10      | Pompa irrigazione                   |
-| Relè canale 2 (IN2)    | D11      | Riserva / secondo attuatore         |
+| Relay channel 1 (IN1)  | D10      | Irrigation pump (active LOW, `Pump` module) |
+| Relay channel 2 (IN2)  | D11      | **UVA grow lights** (`GrowLight` module) |
 
-Il firmware Mega legacy **non** implementa ancora l'attivazione del relè:
-`WaterCommand` esiste a livello Protobuf ma il side-effect HW è da scrivere.
+- **Pump** ([Pump.cpp](firmware/2_platform-controller_mega/Radin_Giacomo_SmartVase_PlatformController_ArduinoMega/src/Pump.cpp)):
+  relay D10 active-LOW, 60 s duration cap, empty-tank protection (US4). The
+  `WaterCommand` is implemented end-to-end.
+- **UVA lights** ([GrowLight.cpp](firmware/2_platform-controller_mega/Radin_Giacomo_SmartVase_PlatformController_ArduinoMega/src/GrowLight.cpp)):
+  relay D11, lights wired on the **NC** contact (with the relay at rest they are
+  ON, polarity inverted compared to the pump). Turned on automatically only if:
+  `IDLE` mode **and** `lux < light_threshold` **and** within the daylight window
+  **06:00–20:00** (gated via RTC/software clock; outside that window or without a
+  valid time they stay off). Pure logic in
+  [`growLightWanted()` / `withinDaylightWindow()`](firmware/2_platform-controller_mega/Radin_Giacomo_SmartVase_PlatformController_ArduinoMega/src/SensorPolicy.h).
 
-### 4.5 Sensore umidità suolo "a forcella"
+### 4.5 "Fork" soil-moisture sensor
 
-| Funzione           | Pin       | Note                                                |
+| Function           | Pin       | Notes                                               |
 |--------------------|-----------|-----------------------------------------------------|
-| Forcella (signal)  | A0        | Sonda a due puntali per umidità del terreno         |
-| Forcella VCC       | 5V        |                                                     |
-| Forcella GND       | GND       |                                                     |
+| Fork (signal)      | A0        | Two-prong probe for soil moisture                   |
+| Fork VCC           | 5V        |                                                     |
+| Fork GND           | GND       |                                                     |
 
-> **Conflitto fotoresistore ↔ forcella su A0**: il CSV mappa entrambi su A0,
-> ma su Mega ogni ADC è single-ended. Decisione: **la forcella resta su A0,
-> il fotoresistore va spostato su un altro pin analogico libero** (es. A1
-> o A3). Da decidere e annotare al momento del refactor.
+> **Photoresistor ↔ fork conflict on A0**: the CSV maps both to A0, but on the
+> Mega each ADC is single-ended. Decision: **the fork stays on A0, the
+> photoresistor moves to another free analog pin** (e.g. A1 or A3). To be
+> decided and noted at refactor time.
 
-### 4.6 Fotoresistore (luminosità ambientale)
+### 4.6 Photoresistor (ambient light)
 
-| Funzione           | Pin       | Note                                                |
+| Function           | Pin       | Notes                                               |
 |--------------------|-----------|-----------------------------------------------------|
-| Fotoresistore (LDR)| **TBD**   | Era su A0 nel firmware legacy. Da spostare per fare posto alla forcella. |
+| Photoresistor (LDR)| **TBD**   | Was on A0 in the legacy firmware. To be moved to make room for the fork. |
 
-Il fotoresistore guida la state machine `LIGHT` / `SHADOW`:
-gira a destra se serve più luce, a sinistra se serve ombra.
+The photoresistor drives the `LIGHT` / `SHADOW` state machine:
+turn right if more light is needed, left if shade is needed.
 
-### 4.7 Pin Mega ad oggi *non assegnati* / *non chiari*
+### 4.7 Mega pins currently *unassigned* / *unclear*
 
-- Sensore BME680 (T / RH / pressione / VOC) — usato dal firmware legacy via
-  I²C `0x76`, ma **non presente nel CSV**. Da chiarire se è ancora nel BOM.
-- Sensore di corrente motori (INA219, roadmap) — non ancora cablato.
+- BME680 sensor (T / RH / pressure / VOC) — used by the legacy firmware via
+  I²C `0x76`, but **not present in the CSV**. To be clarified whether it is still
+  in the BOM.
+- Motor current sensor (INA219, roadmap) — not yet wired.
 
 ---
 
-## 5. Protocollo dati
+## 5. Data protocol
 
-### 5.1 Seriale Hub ↔ Mega (Protobuf, nanopb)
+### 5.1 Hub ↔ Mega serial (Protobuf, nanopb)
 
-File sorgente: [infra/smartvase-proto/smartvase.proto](infra/smartvase-proto/smartvase.proto).
+Source file: [infra/smartvase-proto/smartvase.proto](infra/smartvase-proto/smartvase.proto).
 
-Messaggi atomici incapsulati in `WrapperMessage`:
+Atomic messages wrapped in `WrapperMessage`:
 
-- **TelemetryFast** — invio ad alta frequenza:
+- **TelemetryFast** — high-frequency send:
   `front_dist_cm`, `left_dist_cm`, `right_dist_cm`, `water_level_cm`, `lux`,
   `movement_state`, `device_id`.
-  → Dopo il refactor a 6 ultrasuoni, **questo schema andrà esteso** con
-  almeno `front_top_dist_cm` (US1) e `front_right_dist_cm` / `front_left_dist_cm`
-  (US2/US3), oppure rinominati i campi esistenti. Decisione architetturale
-  aperta.
-- **TelemetryDeep** — invio a bassa frequenza (~minuti):
+  → After the refactor to 6 ultrasonic sensors, **this schema must be extended**
+  with at least `front_top_dist_cm` (US1) and `front_right_dist_cm` /
+  `front_left_dist_cm` (US2/US3), or the existing fields must be renamed. Open
+  architectural decision.
+- **TelemetryDeep** — low-frequency send (~minutes):
   BME680 (`temperature_c`, `humidity_percent`, `pressure_hpa`,
-  `gas_resistance_ohms`), `uptime_s`, `free_ram_bytes`, contatori cumulativi
+  `gas_resistance_ohms`), `uptime_s`, `free_ram_bytes`, cumulative counters
   (`watchdog_resets`, `total_irrigations`, `obstacles_avoided`, `stuck_events`,
   `bme_read_errors`, `log_overflows`, …), `battery_voltage`.
 - **Log** — `level` (INFO/WARN/ERROR/CRITICAL), `event`, `detail`,
@@ -198,57 +225,57 @@ Messaggi atomici incapsulati in `WrapperMessage`:
 - **CommandResponse** (Mega → Hub) — `status` (OK/ERROR), `detail`,
   `cmd_id`, `exec_time_ms`.
 
-Generazione codice: vedere [infra/smartvase-proto/generate_proto.bat](infra/smartvase-proto/generate_proto.bat).
-Dopo la generazione: **modificare a mano** `smartvase.pb.h` cambiando
-`#include <pb.h>` → `#include "pb.h"` (vincolo Arduino IDE / nanopb).
+Code generation: see [infra/smartvase-proto/generate_proto.bat](infra/smartvase-proto/generate_proto.bat).
+After generation: **manually edit** `smartvase.pb.h` changing
+`#include <pb.h>` → `#include "pb.h"` (Arduino IDE / nanopb constraint).
 
 ### 5.2 MQTT (JSON)
 
-Topic root: `smartvase/{device_id}/...`. Specifica completa in
-[SmartVase_data_structure.md](SmartVase_data_structure.md). Sintesi:
+Root topic: `smartvase/{device_id}/...`. Full spec in
+[SmartVase_data_structure.md](SmartVase_data_structure.md). Summary:
 
-| Topic                                | Direzione                              |
+| Topic                                | Direction                              |
 |--------------------------------------|----------------------------------------|
 | `smartvase/{id}/telemetry`           | Hub → Cloud → App                      |
 | `smartvase/{id}/logs`                | Hub → Cloud (Firestore subcollection)  |
-| `smartvase/{id}/alarm`               | Hub → Cloud → App (anomalie operative) |
+| `smartvase/{id}/alarm`               | Hub → Cloud → App (operational anomalies) |
 | `smartvase/{id}/command/config`      | App → Cloud → Hub                      |
-| `smartvase/{id}/command/#`           | App → Cloud → Hub (setMode, water, ecc.) |
-| `smartvase/{id}/command/ack`         | Hub → Cloud → App (esito comandi: status, value, exec_time_ms) |
+| `smartvase/{id}/command/#`           | App → Cloud → Hub (setMode, water, etc.) |
+| `smartvase/{id}/command/ack`         | Hub → Cloud → App (command result: status, value, exec_time_ms) |
 | `smartvase/{id}/vision/image`        | Hub/CAM → Cloud → Vision               |
 | `smartvase/{id}/vision/result`       | Vision → Cloud → Hub & App             |
 
-I JSON di `vision/result` **devono** sempre contenere `schema_version`,
+The `vision/result` JSON **must** always contain `schema_version`,
 `model_version`, `image_url`, `frame_quality`, `leaf_health`,
 `timestamp_utc`. Enum `frame_quality`: `ok|too_dark|too_bright|blurry|occluded|unknown`.
 Enum `leaf_health`: `healthy|warning|critical|unknown`.
 
 ---
 
-## 6. Struttura del repository
+## 6. Repository structure
 
 ```
 SmartVase/
-├── README.md                              # overview pubblico
-├── SmartVase_data_structure.md            # spec MQTT/Firestore JSON
+├── README.md                              # public overview
+├── SmartVase_data_structure.md            # MQTT/Firestore JSON spec
 ├── docs/
-│   ├── ARCHITECTURE.md                    # questo file
-│   └── PINS - Sheet1.csv                  # PIN map autoritativo
-├── build_hub.bat / build_mega.bat / build_cam.bat   # wrapper PlatformIO
+│   ├── ARCHITECTURE.md                    # this file
+│   └── PINS - Sheet1.csv                  # authoritative PIN map
+├── build_hub.bat / build_mega.bat / build_cam.bat   # PlatformIO wrappers
 ├── infra/
-│   ├── hivemq_ca_cert.h                   # CA cert HiveMQ condiviso Hub/CAM
-│   ├── smartvase-proto/                   # .proto, generatore nanopb, output
+│   ├── hivemq_ca_cert.h                   # HiveMQ CA cert shared by Hub/CAM
+│   ├── smartvase-proto/                   # .proto, nanopb generator, output
 │   │   ├── smartvase.proto
 │   │   ├── smartvase.pb.{c,h}
 │   │   ├── generate_proto.bat
 │   │   └── nanopb-nanopb-0.4.9.1/
 │   └── cloud-functions/
-│       └── upload-image/                  # Cloud Function stub upload JPEG
+│       └── upload-image/                  # JPEG upload Cloud Function stub
 │           ├── README.md
 │           ├── package.json
 │           └── index.js
 ├── firmware/
-│   ├── lib/                               # zip librerie locali (DriverDkv, HCSR04)
+│   ├── lib/                               # local library zips (DriverDkv, HCSR04)
 │   ├── 1_esp32-hub/
 │   │   └── Radin_Giacomo_SmartVase_LogicWebHub_ESP32Standard/
 │   │       ├── platformio.ini             # esp32dev + ArduinoJson + PubSubClient + AsyncTCP
@@ -265,14 +292,14 @@ SmartVase/
 │   └── 3_esp32-cam/
 │       └── Radin_Giacomo_SmartVase_VisionCoProcessor_ESP32CAM/
 │           ├── platformio.ini
-│           └── src/main.cpp               # bench code — da riscrivere per Wi-Fi/MQTT
+│           └── src/main.cpp               # bench code — to be rewritten for Wi-Fi/MQTT
 └── vision/
     ├── requirements.txt                   # opencv, numpy, pytest…
     ├── vision/
     │   ├── __init__.py
     │   ├── quality_gate.py                # brightness + Laplacian-var blur
     │   ├── metrics.py                     # HSV ratios, dominant color, bbox
-    │   ├── leaf_health.py                 # classifier rule-based v0.2
+    │   ├── leaf_health.py                 # rule-based classifier v0.2
     │   └── pipeline.py                    # end-to-end → JSON vision/result
     └── tests/
         ├── test_quality_gate.py
@@ -283,116 +310,124 @@ SmartVase/
 
 ---
 
-## 7. Architettura firmware (stato corrente)
+## 7. Firmware architecture (current state)
 
 ### 7.1 Mega — `2_platform-controller_mega`
 
-- **`main.cpp`** — setup + loop non bloccante, WDT (4s), recovery da reset
-  con conteggio `watchdog_resets`, gestione `degradedMode` se `freeRam<800`
-  o se Hub silente > 120 s.
+- **`main.cpp`** — setup + non-blocking loop, WDT (4s), reset recovery
+  with `watchdog_resets` counting, `degradedMode` handling if `freeRam<800`
+  or if the Hub is silent for > 120 s.
 - **`Movement`** — state machine `M_IDLE → M_MOVING → M_AVOID_START →
   M_AVOID_REVERSING → M_AVOID_TURNING → M_STUCK`. Light/shadow seeking
-  via fotoresistore (`lightThreshold=600`). Avoidance con 3 tentativi
-  prima di entrare in `M_STUCK` (cooldown auto-incrementante).
-- **`Sensors`** — letture HC-SR04 con filtro EMA (α=0.4) + soglie di
-  validità (2–400 cm) + streak di letture invalide consecutive. BME680
-  via I²C `0x76`. Batteria via partitore. *Oggi gestisce solo 4 ultrasuoni
-  e va esteso a 6.*
-- **`Communication`** — framing seriale (SOF/len/payload/CRC16-CCITT),
-  log queue circolare (20 slot), encode/decode `WrapperMessage`.
-- **`Persistence`** — EEPROM **dual-slot** (`SLOT_0` / `SLOT_1`) con
-  rotazione (wear leveling) + magic number + CRC16 per `DeviceConfig`
-  e `CumulativeStats`. Write throttling (60s config, 300s stats).
-- **CLI debug** su USB a 115200 baud: `status`, `stats`, `config`,
-  `sensors`, `reboot`, `motor <dir> <ms>`, `pump <ms>`, `help`.
+  via the photoresistor (`light_threshold`, default **500**, tunable from the
+  CLI with `light <adc>`). Avoidance with 3 attempts before entering `M_STUCK`
+  (auto-incrementing cooldown). **Pololu Dual VNH5019** driver (see §4.2):
+  PWM/INA/INB + EN/DIAG fault read (`faultLeft()`/`faultRight()`).
+- **`Sensors`** — readings of the **6** round-robin HC-SR04 with an EMA filter
+  (α=0.4) + validity thresholds (2–200/120 cm) + invalid-reading streaks. RTC
+  DS3232 with a **software fallback clock** (see §4.3). BME680 and battery behind
+  flags (not mounted).
+- **`Pump`** — relay D10 (active-LOW), 60 s cap, empty-tank protection.
+- **`GrowLight`** — relay D11, UVA lights on the NC contact; on in IDLE +
+  insufficient light + daylight window 06:00–20:00 (see §4.4).
+- **`Communication`** — serial framing (SOF/len/payload/CRC16-CCITT),
+  circular log queue (20 slots), encode/decode `WrapperMessage`, `cmd_id`
+  idempotency + command clamp/rate-limit (`CommandPolicy.h`).
+- **`Persistence`** — **dual-slot** EEPROM (`SLOT_0` / `SLOT_1`) with
+  rotation (wear leveling) + magic number + CRC16 for `DeviceConfig`
+  and `CumulativeStats`. Write throttling (60s config, 300s stats).
+- **Debug CLI** over USB at 115200 baud: `status`, `stats`, `config`,
+  `sensors`, `diag`, `reboot`, `mode`, `motor <dir> <ms>` (max 60 s),
+  `motortest`, `pump <ms>`, `tank <cm>`, `light <adc>`, `calib`, `rtc`/`rtc set`,
+  `standalone`, `help`.
 
 ### 7.2 ESP32 Hub — `1_esp32-hub`
 
-Architettura **FreeRTOS** con 3 task pinnati e 4 code:
+**FreeRTOS** architecture with 3 pinned tasks and 4 queues:
 
-| Task           | Core | Priorità | Stack | Ruolo                                       |
+| Task           | Core | Priority | Stack | Role                                        |
 |----------------|------|----------|-------|---------------------------------------------|
-| `TaskSerialMega` | 1  | 3 (alta) | 4 KB  | UART2 ↔ Mega, encode/decode Protobuf+framing |
-| `TaskMqttLink`   | 0  | 2 (med)  | 8 KB  | Connessione TLS a HiveMQ, pub/sub           |
-| `TaskMainLogic`  | 0  | 1 (bassa)| 8 KB  | Bridge JSON↔Protobuf, timer telemetria      |
+| `TaskSerialMega` | 1  | 3 (high) | 4 KB  | UART2 ↔ Mega, Protobuf+framing encode/decode |
+| `TaskMqttLink`   | 0  | 2 (med)  | 8 KB  | TLS connection to HiveMQ, pub/sub           |
+| `TaskMainLogic`  | 0  | 1 (low)  | 8 KB  | JSON↔Protobuf bridge, telemetry timer       |
 
-Code (`xQueueCreate`):
+Queues (`xQueueCreate`):
 - `serialRxQueue` (Mega → MainLogic): `SerialMessage` wrapping `WrapperMessage`.
-- `serialTxQueue` (MainLogic → Mega): idem in uscita.
+- `serialTxQueue` (MainLogic → Mega): same in the outbound direction.
 - `mqttTxQueue`   (MainLogic → MqttManager): `MqttMessage{topic,payload}`.
 - `mqttRxQueue`   (MqttManager → MainLogic): `MqttCommand{topic,payload,ts}`.
 
-Moduli:
-- **`ConfigManager`** — NVS, struct `DeviceConfig` con WiFi/MQTT/webhook +
+Modules:
+- **`ConfigManager`** — NVS, `DeviceConfig` struct with WiFi/MQTT/webhook +
   magic number + CRC16.
-- **`WifiManager`** — STA + fallback **Access Point di provisioning** se
-  SSID vuoto o connessione fallita.
-- **`SerialManager`** — Serial2 su `MEGA_RX_PIN=16 / MEGA_TX_PIN=17`.
-- **`MqttManager`** — HiveMQ TLS con CA cert hardcoded, client ID da MAC,
-  LWT su `smartvase/HUB_{macSuffix}/status`, sottoscrizione a
+- **`WifiManager`** — STA + **provisioning Access Point** fallback if the
+  SSID is empty or the connection fails.
+- **`SerialManager`** — Serial2 on `MEGA_RX_PIN=16 / MEGA_TX_PIN=17`.
+- **`MqttManager`** — HiveMQ TLS with hardcoded CA cert, client ID from the MAC,
+  LWT on `smartvase/HUB_{macSuffix}/status`, subscription to
   `smartvase/HUB_{macSuffix}/command/#`.
-- **`MainLogic`** — telemetry timer (60s), `checkMegaConnection` con
-  deadman switch (130s, 10s di margine rispetto al Mega). Routing
-  comandi MQTT → Protobuf:
+- **`MainLogic`** — telemetry timer (60s), `checkMegaConnection` with
+  deadman switch (130s, a 10s margin over the Mega). MQTT command → Protobuf
+  routing:
   `setMode | water | stop | requestDiagnostics | setMotionParams |
    readSoil | softReset`.
 
-> ⚠️ **Stub aperti nel Hub**: `publishTelemetryJson`, `publishLogJson`,
+> ⚠️ **Open stubs in the Hub**: `publishTelemetryJson`, `publishLogJson`,
 > `publishAlarmJson`, `processSerialMessage`, `checkMegaConnection`,
-> `applyDefaultPlantLogic` sono al momento solo log placeholder.
+> `applyDefaultPlantLogic` are currently only log placeholders.
 
 ### 7.3 ESP32-CAM — `3_esp32-cam`
 
-Stato attuale (`main.cpp` v14): **bench code**.
-Cattura JPEG → stampa header JSON + buffer raw su Serial USB → CRC32 →
-stats persistenti su NVS (`successful_frames`, `failed_frames`, `crc_errors`,
+Current state (`main.cpp` v14): **bench code**.
+JPEG capture → prints JSON header + raw buffer over USB Serial → CRC32 →
+stats persisted to NVS (`successful_frames`, `failed_frames`, `crc_errors`,
 rolling-avg capture time).
 
-**Target architetturale**: Wi-Fi autonomo, pubblicazione su MQTT
-(`smartvase/{id}/vision/image`) con `image_url` puntante a storage cloud.
-Da progettare e implementare ex-novo.
+**Architectural target**: autonomous Wi-Fi, publishing over MQTT
+(`smartvase/{id}/vision/image`) with `image_url` pointing to cloud storage.
+To be designed and implemented from scratch.
 
-### 7.4 Vision Python — `vision/`
+### 7.4 Python Vision — `vision/`
 
 - **`quality_gate.py`** — input `np.ndarray BGR` → output
   `("ok"|"too_dark"|"too_bright"|"blurry", metrics)`.
-  Soglie attuali (da calibrare su immagini reali):
+  Current thresholds (to be calibrated on real images):
   `too_dark_mean_gray=40`, `too_bright_mean_gray=220`,
   `blurry_laplacian_var=60`.
-- **`tests/test_quality_gate.py`** — copre i 3 casi base.
-- Mancano: pipeline `leaf_health`, integrazione Firestore/MQTT,
+- **`tests/test_quality_gate.py`** — covers the 3 base cases.
+- Missing: `leaf_health` pipeline, Firestore/MQTT integration,
   packaging (no `setup.py`/`pyproject.toml`).
 
 ---
 
-## 8. Resilienza & osservabilità (concetti chiave)
+## 8. Resilience & observability (key concepts)
 
-- **Watchdog hardware** (Mega): WDTO_4S, conteggio reset persistito.
-- **Memoria bassa**: ingresso in `degradedMode` se `freeRam < 800 B`.
-- **Hub deadman timer**: Mega va in `degradedMode("Hub Missing")` se non
-  riceve nulla dall'Hub per >120 s. L'Hub considera il Mega disconnesso
-  dopo 130 s (margine di 10 s).
-- **Persistenza resiliente**: doppio slot EEPROM + magic + CRC16, fallback
-  ai default in caso di corruzione.
-- **Framing seriale robusto**: SOF + len + CRC16 (poly 0x1021), state
-  machine di decoding con drop dei byte malformati.
-- **Log strutturati** con livelli INFO/WARN/ERROR/CRITICAL e queue circolare
-  per evitare blocchi sotto carico (overflow contato in stats).
+- **Hardware watchdog** (Mega): WDTO_4S, persisted reset count.
+- **Low memory**: enters `degradedMode` if `freeRam < 800 B`.
+- **Hub deadman timer**: the Mega enters `degradedMode("Hub Missing")` if it
+  receives nothing from the Hub for >120 s. The Hub considers the Mega
+  disconnected after 130 s (10 s margin).
+- **Resilient persistence**: dual EEPROM slot + magic + CRC16, fallback to
+  defaults on corruption.
+- **Robust serial framing**: SOF + len + CRC16 (poly 0x1021), decoding state
+  machine that drops malformed bytes.
+- **Structured logs** with INFO/WARN/ERROR/CRITICAL levels and a circular queue
+  to avoid blocking under load (overflow counted in stats).
 
 ---
 
-## 9. Workflow di sviluppo
+## 9. Development workflow
 
-### 9.1 Prerequisiti
+### 9.1 Prerequisites
 
-- PlatformIO (consigliato CLI, già usato dai `.bat` di build).
+- PlatformIO (CLI recommended, already used by the build `.bat` files).
 - Python 3.x + `nanopb` (`pip install nanopb`) + `protoc`.
-- Per la vision: `pip install -r vision/requirements.txt`.
-- Android Studio (per l'app, fuori da questo repo).
+- For vision: `pip install -r vision/requirements.txt`.
+- Android Studio (for the app, outside this repo).
 
 ### 9.2 Build
 
-Dalla root del progetto:
+From the project root:
 
 ```
 build_mega.bat   # Arduino Mega
@@ -400,103 +435,107 @@ build_hub.bat    # ESP32 Hub
 build_cam.bat    # ESP32-CAM
 ```
 
-I `.bat` invocano `pio run -d <project>`.
+The `.bat` files invoke `pio run -d <project>`.
 
-### 9.3 Workflow schema-first
+### 9.3 Schema-first workflow
 
-1. Modificare [smartvase.proto](infra/smartvase-proto/smartvase.proto).
-2. Eseguire [generate_proto.bat](infra/smartvase-proto/generate_proto.bat).
-3. Copiare i `.pb.{c,h}` aggiornati in `firmware/1_esp32-hub/.../src+include`
-   e in `firmware/2_platform-controller_mega/.../src`.
-4. Patchare a mano `smartvase.pb.h`: `#include <pb.h>` → `#include "pb.h"`.
-5. Aggiornare `smartvase_aliases.h` se sono cambiati nomi di messaggi/enum/tag.
+1. Edit [smartvase.proto](infra/smartvase-proto/smartvase.proto).
+2. Run [generate_proto.bat](infra/smartvase-proto/generate_proto.bat).
+3. Copy the updated `.pb.{c,h}` into `firmware/1_esp32-hub/.../src+include`
+   and `firmware/2_platform-controller_mega/.../src`.
+4. Manually patch `smartvase.pb.h`: `#include <pb.h>` → `#include "pb.h"`.
+5. Update `smartvase_aliases.h` if message/enum/tag names changed.
 
-### 9.4 Branching & autori
+### 9.4 Branching & authors
 
-| Componente               | Owner principale                                   |
+| Component                | Main owner                                         |
 |--------------------------|----------------------------------------------------|
-| Architettura, Hub & CAM  | Giacomo (PM & Lead Firmware)                       |
+| Architecture, Hub & CAM  | Giacomo (PM & Lead Firmware)                       |
 | Vision pipeline          | Antonio                                            |
 | Cloud / MQTT / Firestore | Fia                                                |
-| App Android              | Francesco                                          |
+| Android App              | Francesco                                          |
 
 ---
 
-## 10. Punti aperti / TODO
+## 10. Open items / TODO
 
-Lo stato del refactor 2026-05-19 chiude la maggior parte dei TODO
-architetturali del prototipo precedente. Restano i seguenti, ordinati per
-priorità:
+The 2026-05-19 refactor closes most of the architectural TODOs of the previous
+prototype. The following remain, ordered by priority:
 
-### A. Verifica/test su HW reale (priorità alta)
+### A. Verification/testing on real HW (high priority)
 
-1. **Build e flash dei 3 firmware** con i `.bat` quando il robot è cablato:
-   `build_mega.bat`, `build_hub.bat`, `build_cam.bat`. Sono stati scritti
-   in ambiente sandboxato senza poter eseguire `pio run`: aspettarsi
-   piccoli aggiustamenti di lib version / include path.
-2. **Verifica polarità relè pompa**: in `Pump.cpp` ho usato
-   `PUMP_RELAY_ACTIVE_LOW 1`. Se il modulo in uso è attivo-alto, settare
-   a 0.
-3. **Verifica direzione ruote**: in `Movement.cpp` "LEFT" è il canale A
-   (ENA=D6, IN1=D43, IN2=D45). Da banco verificare che corrisponda alla
-   ruota fisica sinistra; in caso contrario invertire IN1/IN2 o ENA/ENB.
-4. **Calibrazione `light_threshold`** del fotoresistore su A1: il default
-   `600` è ereditato dal vecchio prototipo, va probabilmente ritarato.
-5. **Calibrazione `soil_dry_threshold`** della forcella su A0: capire il
-   range ADC effettivo bagnato/asciutto e settarlo via `SetMotionParams`?
-   *(in realtà va aggiunto un comando `SetSoilThreshold` o esteso `Config`).*
+1. **Build and flash the 3 firmwares** with the `.bat` files once the robot is
+   wired: `build_mega.bat`, `build_hub.bat`, `build_cam.bat`. They were written
+   in a sandboxed environment without being able to run `pio run`: expect small
+   lib-version / include-path adjustments.
+2. **Verify the pump relay polarity**: in `Pump.cpp` I used
+   `PUMP_RELAY_ACTIVE_LOW 1`. If the module in use is active-high, set it to 0.
+2-bis. **VNH5019 motor driver**: PWM/INA/INB pin mapping confirmed via
+   continuity test on 2026-06-30 (see §4.2); still to verify on the bench: the
+   **common GND** Mega↔shield, and whether the motors actually spin now that
+   the mapping is fixed. EN/DIAG is not wired, so `diag`'s `fault L/R` is
+   currently a placeholder (`n/d`) — wire it and set `MOTOR_EN_DIAG_WIRED 1`
+   in `Movement.cpp` if fault diagnostics are wanted.
+3. **Verify the wheel direction**: in `Movement.cpp` "LEFT" is motor 1
+   (PWM=D7, INA=D41, INB=D43). On the bench, verify it matches the physical
+   left wheel; otherwise swap INA/INB. Use `motortest`.
+4. **Calibrate `light_threshold`** of the photoresistor on A1: new default
+   **500** (tuned 2026-06-30: dark≈11, lab neon≈540, real scale ~0-800).
+   Tunable on the bench with `light <adc>`. Used both by the seeking and the UVA lights.
+5. **Calibrate `soil_dry_threshold`** of the fork on A0: figure out the actual
+   wet/dry ADC range and set it via `SetMotionParams`?
+   *(in reality a `SetSoilThreshold` command should be added, or `Config` extended).*
 
-### B. Hardware ancora da decidere
+### B. Hardware still to be decided
 
-6. **Partitore batteria**: non c'è. Quando viene aggiunto, settare in
-   `Sensors.h` `BATTERY_MONITORING_ENABLED 1`, confermare `BATTERY_PIN`
-   (`A2` di default) e i valori R1/R2.
-7. **BME680**: mantenuto nel firmware ma non più nel CSV. Decidere se
-   resta nel BOM o se va rimosso (dipende dal nuovo case).
+6. **Battery divider**: not present. When added, set
+   `BATTERY_MONITORING_ENABLED 1` in `Sensors.h`, confirm `BATTERY_PIN`
+   (`A2` by default) and the R1/R2 values.
+7. **BME680**: kept in the firmware but no longer in the CSV. Decide whether it
+   stays in the BOM or is removed (depends on the new case).
 
 ### C. Vision pipeline
 
-8. **Pipeline rule-based v0.2** in `vision/vision/{metrics,leaf_health,pipeline}.py`
-   con 18 test pytest. Soglie HSV calibrate su foglie generiche, da
-   ritarare con immagini reali del prototipo. Quando avremo dataset
-   etichettato sostituire il classifier rule-based con un modello vero
-   (mantenendo l'interfaccia di `classify_leaf_health`).
-9. **Cloud Function `upload-image`** in `infra/cloud-functions/upload-image/`
-   (Node 20 + busboy + Firebase Storage). Stub funzionale da rifinire con
-   Fia: auth, App Check, rate limiting, pin CA cert lato CAM.
+8. **Rule-based pipeline v0.2** in `vision/vision/{metrics,leaf_health,pipeline}.py`
+   with 18 pytest tests. HSV thresholds calibrated on generic leaves, to be
+   re-tuned with real images of the prototype. Once we have a labeled dataset,
+   replace the rule-based classifier with a real model (keeping the
+   `classify_leaf_health` interface).
+9. **`upload-image` Cloud Function** in `infra/cloud-functions/upload-image/`
+   (Node 20 + busboy + Firebase Storage). Functional stub to be refined with
+   Fia: auth, App Check, rate limiting, CA cert pinning on the CAM side.
 
 ### D. Cloud / app
 
-10. **App Android (Francesco)**: aggiornare il modello JSON Telemetry per
-    riflettere il nuovo schema `distances_cm{top,front_right,front_left,
-    left,right}` + `soil_moisture` + `water_level_cm` separato.
-    Aggiungere subscription al nuovo topic `command/ack`.
-11. **Seconda Cloud Function** (out-of-scope di `upload-image`): legge
-    `vision/image` da HiveMQ, scarica il JPEG via `image_url`, invoca la
-    pipeline Python `vision.analyze_image`, pubblica `vision/result`.
+10. **Android app (Francesco)**: update the Telemetry JSON model to reflect the
+    new schema `distances_cm{top,front_right,front_left,left,right}` +
+    `soil_moisture` + separate `water_level_cm`.
+    Add a subscription to the new `command/ack` topic.
+11. **Second Cloud Function** (out of scope of `upload-image`): reads
+    `vision/image` from HiveMQ, downloads the JPEG via `image_url`, invokes the
+    Python pipeline `vision.analyze_image`, publishes `vision/result`.
 
-### E. Pulizia / housekeeping
+### E. Cleanup / housekeeping
 
-12. **CLI debug Mega**: implementata in `Cli.{h,cpp}`. Comandi: `help`,
+12. **Mega debug CLI**: implemented in `Cli.{h,cpp}`. Commands: `help`,
     `status`, `stats`, `config`, `sensors`, `mode`, `motor`, `pump`,
-    `reboot`. Disponibile sulla USB Serial del Mega.
+    `reboot`. Available on the Mega's USB Serial.
 
 ---
 
-## 11. Convenzioni per chi (umano o AI) lavora qui
+## 11. Conventions for whoever (human or AI) works here
 
-- **Lingua**: italiano per commit, doc e conversazione. Identificatori e
-  log in inglese.
-- **Sorgenti `OLD_*`**: trattarli come storico / referenza, **mai** come
-  base di edit attivi.
-- **PIN**: il CSV `docs/PINS - Sheet1.csv` è la **single source of truth**
-  del cablaggio. Qualsiasi `#define`/`const int` nel codice che lo
-  contraddice è un bug.
-- **Protobuf**: non modificare a mano i `.pb.{c,h}` (a parte la patch di
-  include obbligatoria). Le modifiche partono sempre da `.proto`.
-- **Allocazioni**: niente `String` su Mega (SRAM limitata). Buffer fissi
-  con `strncpy` + null-termination esplicita.
-- **Non-blocking**: nessun `delay()` nel main loop Mega. Solo `millis()`
+- **Language**: project documentation in **English** (the course is delivered in
+  English). Identifiers and logs in English. Conversation can be in Italian.
+- **`OLD_*` sources**: treat them as history / reference, **never** as a base for
+  active edits.
+- **PINs**: the CSV `docs/PINS - Sheet1.csv` is the **single source of truth**
+  for wiring. Any `#define`/`const int` in the code that contradicts it is a bug.
+- **Protobuf**: do not manually edit the `.pb.{c,h}` (except the mandatory
+  include patch). Changes always start from `.proto`.
+- **Allocations**: no `String` on the Mega (limited SRAM). Fixed buffers with
+  `strncpy` + explicit null-termination.
+- **Non-blocking**: no `delay()` in the Mega main loop. Only `millis()`
   + state machines.
-- **EEPROM**: rispettare il write throttling (`EEPROM_*_WRITE_INTERVAL`)
-  per non logorare le celle.
+- **EEPROM**: respect the write throttling (`EEPROM_*_WRITE_INTERVAL`) to avoid
+  wearing out the cells.

@@ -1,57 +1,68 @@
-# SmartVase - Firmware Platform Controller (Arduino Mega)
+# SmartVase - Platform Controller Firmware (Arduino Mega)
 
-Firmware del **Platform Controller** SmartVase. Versione **5.1** (2026-06-11):
-hardening pre-bring-up con protezione tanica per la pompa, CLI estesa,
-modalità standalone e driver locali per HC-SR04 e DS3232.
-La v5.0 (2026-05-19) era il refactor totale sul nuovo PIN map
-(`docs/PINS - Sheet1.csv`).
+Firmware for the SmartVase **Platform Controller**. Version **5.2** (working tree):
+in addition to the v5.1 hardening (pump tank protection, extended CLI, standalone
+mode, local HC-SR04/DS3232 drivers), v5.2 adds irrigation rate-limiting,
+EEPROM no-op on `setMotionParams`, EMA on lux/soil, anti-circling for the
+seeking behavior, and the seeking/escape counters in `TelemetryDeep`.
+**Bring-up updates (2026-06-30):** `GrowLight` module (UVA lights on relay
+D11, NC contact, on when IDLE + insufficient light + daylight window
+06:00–20:00); motor driver made **VNH5019-aware** (PWM/INA/INB + EN/DIAG
+fault read, Pololu Dual VNH5019 shield); **software fallback clock** for the
+RTC when the DS3232 does not respond (default boot 08:00); default light
+threshold 500 + CLI command `light <adc>`; `motor` motor test up to 60 s.
+**Authoritative** architectural reference: `docs/ARCHITECTURE.md`.
+PIN map: `docs/PINS - Sheet1.csv`.
 
-## Architettura
+## Architecture
 
-Il Mega è "il braccio": pilota direttamente l'hardware (motori, pompa,
-sensori, RTC) e parla **solo** con l'ESP32 Hub via Serial1 a 115200 baud
-(framing Protobuf+CRC16).
+The Mega is "the arm": it directly drives the hardware (motors, pump,
+sensors, RTC) and talks **only** to the ESP32 Hub over Serial1 at 115200 baud
+(Protobuf+CRC16 framing).
 
-Moduli (`src/`):
+Modules (`src/`):
 
-| File              | Responsabilità                                                                           |
-|-------------------|------------------------------------------------------------------------------------------|
-| `main.cpp`        | Setup + loop non bloccante, scheduler telemetria/heartbeat/log, WDT, degraded mode       |
-| `Sensors.{h,cpp}` | 6 HC-SR04 (round-robin), RTC DS3232, forcella umidità, fotoresistore, BME680 (flag)      |
-| `Movement.{h,cpp}`| State machine motori (IDLE/MOVING/AVOID*/STUCK), light-seek / shadow-seek                |
-| `Pump.{h,cpp}`    | Pompa irrigazione non-bloccante (relè D10, max 60s safety)                               |
-| `Persistence.{h,cpp}` | EEPROM dual-slot con magic+CRC16, wear leveling                                       |
-| `Communication.{h,cpp}` | Framing seriale SOF/len/payload/CRC16, parser stato, log queue, dispatcher comandi |
-| `Cli.{h,cpp}`     | CLI di debug su Serial USB (provisioning soglie, test motori/pompa, standalone)          |
-| `Ultrasonic.{h,cpp}` | Driver HC-SR04 minimale locale (pulseIn con timeout, nessun delay fisso)              |
-| `RtcDs3232.{h,cpp}`  | Driver DS3232 minimale locale (get/set epoch + flag OSF via Wire)                     |
-| `SystemStatus.h`  | Struct condivisa di stato (degraded mode, standalone, deviceId, versione fw)             |
-| `smartvase_aliases.h` | Typedef/define per i simboli nanopb + tipi C++ interni                               |
+| File              | Responsibility                                                                            |
+|-------------------|---------------------------------------------------------------------------------------------|
+| `main.cpp`        | Setup + non-blocking loop, telemetry/heartbeat/log scheduler, WDT, degraded mode           |
+| `Sensors.{h,cpp}` | 6 HC-SR04 (round-robin), RTC DS3232, humidity fork, photoresistor, BME680 (flag)           |
+| `Movement.{h,cpp}`| Motor state machine (IDLE/MOVING/AVOID*/STUCK), light-seek / shadow-seek                    |
+| `Pump.{h,cpp}`    | Non-blocking irrigation pump (relay D10, 60s max safety)                                    |
+| `GrowLight.{h,cpp}` | UVA lights on relay D11 (NC contact): ON if IDLE + lux<threshold + daylight window 06:00–20:00 |
+| `SensorPolicy.h` / `CommandPolicy.h` | Pure functions (no HW) for tank/seeking/lights and command clamp/rate-limit, unit-testable on host |
+| `Persistence.{h,cpp}` | Dual-slot EEPROM with magic+CRC16, wear leveling                                        |
+| `Communication.{h,cpp}` | SOF/len/payload/CRC16 serial framing, state parser, log queue, command dispatcher  |
+| `Cli.{h,cpp}`     | Debug CLI over Serial USB (threshold provisioning, motor/pump tests, standalone)            |
+| `Ultrasonic.{h,cpp}` | Minimal local HC-SR04 driver (pulseIn with timeout, no fixed delay)                       |
+| `RtcDs3232.{h,cpp}`  | Minimal local DS3232 driver (get/set epoch + OSF flag via Wire)                          |
+| `SystemStatus.h`  | Shared status struct (degraded mode, standalone, deviceId, fw version)                      |
+| `smartvase_aliases.h` | Typedefs/defines for the nanopb symbols + internal C++ types                            |
 
-## PIN map autoritativo
+## Authoritative PIN map
 
-Vedi `docs/PINS - Sheet1.csv`. Sintesi:
+See `docs/PINS - Sheet1.csv`. Summary:
 
-| Periferica           | Pin                             |
-|----------------------|---------------------------------|
-| US1 (front-top)      | trig D33 / echo D35             |
-| US2 (front-right)    | trig D26 / echo D27             |
-| US3 (front-left)     | trig D36 / echo D37             |
-| US4 (water tank)     | trig D50 / echo D51             |
-| US5 (left)           | trig D4  / echo D5              |
-| US6 (right)          | trig D28 / echo D29             |
-| Motori H-bridge L    | IN1=D43, IN2=D45, ENA=D6 (PWM)  |
-| Motori H-bridge R    | IN3=D47, IN4=D49, ENB=D7 (PWM)  |
-| Relè pompa           | IN1=D10 (active-low), backup D11|
-| RTC DS3232 (I²C)     | SDA=D20, SCL=D21 (addr 0x68)    |
-| Forcella umidità     | A0                              |
-| Fotoresistore (LDR)  | A1 (spostato da A0)             |
-| Batteria (partitore) | A2 (disabilitato finché non cablato) |
-| BME680 (I²C)         | addr 0x76                       |
+| Peripheral            | Pin                              |
+|------------------------|-----------------------------------|
+| US1 (front-top)        | trig D33 / echo D35              |
+| US2 (front-right)      | trig D26 / echo D27              |
+| US3 (front-left)       | trig D36 / echo D37              |
+| US4 (water tank)       | trig D50 / echo D51              |
+| US5 (left)             | trig D4  / echo D5               |
+| US6 (right)            | trig D28 / echo D29              |
+| Motor L (VNH5019)      | PWM=D7, INA=D41, INB=D43, EN/DIAG=not wired |
+| Motor R (VNH5019)      | PWM=D6, INA=D45, INB=D47, EN/DIAG=not wired |
+| Pump relay             | IN1=D10 (active-low)             |
+| UVA grow-light relay   | IN2=D11 (NC contact: rest=on)    |
+| RTC DS3232 (I²C)       | SDA=D20, SCL=D21 (addr 0x68); software fallback clock |
+| Moisture fork          | A0                               |
+| Photoresistor (LDR)    | A1 (moved from A0)               |
+| Battery (divider)      | A2 (disabled until wired)        |
+| BME680 (I²C)           | addr 0x76                        |
 
-Le costanti pin sono centralizzate in `Sensors.cpp` e `Movement.cpp`.
+The pin constants are centralized in `Sensors.cpp` and `Movement.cpp`.
 
-## Dipendenze (PlatformIO)
+## Dependencies (PlatformIO)
 
 ```ini
 lib_deps =
@@ -59,10 +70,10 @@ lib_deps =
     paulstoffregen/Time @ ^1.6.1
 ```
 
-HC-SR04 e DS3232 sono gestiti da driver locali in `src/` (`Ultrasonic`,
-`RtcDs3232`): nessun download dal registry, le build funzionano offline.
-I file Nanopb (`pb_*.c/h`, `smartvase.pb.{c,h}`) sono già in `src/` e
-vengono compilati con lo sketch.
+HC-SR04 and DS3232 are handled by local drivers in `src/` (`Ultrasonic`,
+`RtcDs3232`): no registry download, the builds work offline.
+The Nanopb files (`pb_*.c/h`, `smartvase.pb.{c,h}`) are already in `src/`
+and are compiled with the sketch.
 
 ## Build
 
@@ -70,49 +81,49 @@ vengono compilati con lo sketch.
 build_mega.bat
 ```
 
-Equivalente a `pio run -d firmware/2_platform-controller_mega/...`.
+Equivalent to `pio run -d firmware/2_platform-controller_mega/...`.
 
-## Funzionalità chiave
+## Key features
 
-- **Non-blocking**: nessun `delay()` nel main loop (ad eccezione di
-  `Movement::testMove`, usato solo dalla CLI manuale).
-- **Hardware Watchdog**: `WDTO_4S`. Reset count salvato in EEPROM stats.
-- **Degraded mode**: si attiva se `freeRam() < 800 B` o se l'Hub tace
-  >120 s. Ferma motori, ferma pompa, ignora comandi di movimento.
-- **EEPROM dual-slot**: doppio slot (alternato) con magic number + CRC16
-  per `DeviceConfig` (60 s throttle) e `CumulativeStats` (300 s throttle).
-- **Framing seriale**: `SOF=0xAA | len(2) | payload | crc16(2)`, CRC-CCITT
+- **Non-blocking**: no `delay()` in the main loop (except for
+  `Movement::testMove`, used only by the manual CLI).
+- **Hardware watchdog**: `WDTO_4S`. Reset count saved in the EEPROM stats.
+- **Degraded mode**: activates if `freeRam() < 800 B` or if the Hub is
+  silent for >120 s. Stops the motors, stops the pump, ignores movement commands.
+- **Dual-slot EEPROM**: alternating double slot with magic number + CRC16
+  for `DeviceConfig` (60 s throttle) and `CumulativeStats` (300 s throttle).
+- **Serial framing**: `SOF=0xAA | len(2) | payload | crc16(2)`, CRC-CCITT
   (poly `0x1021`).
-- **Log queue**: circolare a 20 slot, drenata a 200 ms dal main loop.
-- **Protezione tanica (v5.1)**: la pompa non parte (e si ferma da sola) se
-  US4 misura una distanza oltre `tank_empty_cm` (default 20, tarabile con
-  `tank <cm>` da CLI) **o** se la lettura non è valida — fail-safe contro
-  la marcia a secco. Vale per comando remoto `water` e CLI `pump`.
-- **Modalità standalone (v5.1)**: `standalone on` da CLI sospende il deadman
-  dell'Hub per i test a banco senza ESP32 collegato.
-- **Comandi supportati** (da Hub):
+- **Log queue**: circular, 20 slots, drained every 200 ms by the main loop.
+- **Tank protection (v5.1)**: the pump does not start (and stops on its own)
+  if US4 measures a distance beyond `tank_empty_cm` (default 20, tunable with
+  `tank <cm>` from the CLI) **or** if the reading is invalid — fail-safe
+  against dry running. Applies to the remote `water` command and the CLI `pump`.
+- **Standalone mode (v5.1)**: `standalone on` from the CLI suspends the Hub's
+  deadman for bench tests without the ESP32 connected.
+- **Supported commands** (from the Hub):
   `WaterCommand`, `SetModeCommand`, `StopCommand`,
   `RequestDiagnosticsCommand`, `SetMotionParamsCommand`,
-  `ReadSoilCommand`, `SoftResetCommand`. Ogni comando produce un
+  `ReadSoilCommand`, `SoftResetCommand`. Every command produces a
   `CommandResponse` (status OK/ERROR, detail, value, cmd_id, exec_time_ms).
 
-## CLI di debug (Serial USB, 115200, newline)
+## Debug CLI (Serial USB, 115200, newline)
 
-`help` mostra il menu completo: `status`, `stats`, `config`, `sensors`,
+`help` shows the full menu: `status`, `stats`, `config`, `sensors`,
 `tank [cm]`, `rtc [set <epoch>]`, `mode <idle|light|shadow>`,
 `motor <f|b|l|r> <ms>`, `calib <l> <r>`, `pump <ms>`,
 `standalone <on|off>`, `version`, `reboot`.
-La procedura completa di collaudo è in `docs/Lab_Bringup_Checklist.md`.
+The full test procedure is in `docs/Lab_Bringup_Checklist.md`.
 
-## TODO aperti
+## Open TODOs
 
-- [ ] Confermare partitore batteria a banco → settare
+- [ ] Confirm the battery divider on the bench → set
       `BATTERY_MONITORING_ENABLED 1` in `Sensors.h`.
-- [ ] Montare il BME680 (oggi assente dal prototipo) → settare
+- [ ] Mount the BME680 (currently absent from the prototype) → set
       `BME680_ENABLED 1` in `Sensors.h`.
-- [ ] Integrazione corrente motori (INA219) per stallo.
-- [ ] OTA via Hub.
+- [ ] Motor current integration (INA219) for stall detection.
+- [ ] OTA via the Hub.
 
-## Licenza
+## License
 
-MIT — vedi `LICENSE`.
+MIT — see `LICENSE`.

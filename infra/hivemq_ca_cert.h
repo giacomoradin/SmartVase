@@ -1,17 +1,14 @@
-/*
- * =================================================================
- * HiveMQ Cloud — Root CA certificate
- * =================================================================
- * Sorgente: ISRG Root X1 di Let's Encrypt (CA pubblica usata da
- * HiveMQ Cloud al momento del rilascio v1.1).
- *
- * Se HiveMQ migra a un'altra CA o ne aggiunge un'altra, sostituire
- * o concatenare i certificati PEM qui sotto.
- *
- * Per usarlo nel codice firmware:
- *   - Hub:  copiare questo file in firmware/1_esp32-hub/.../include/
- *   - CAM:  copiare in firmware/3_esp32-cam/.../src/   (o include path)
- * =================================================================
+/*! @file hivemq_ca_cert.h
+ *  @ingroup HubMisc
+ *  @brief Certificato CA root (ISRG Root X1 di Let's Encrypt) per la
+ *  validazione TLS del broker HiveMQ Cloud.
+ *  @details Fonte canonica condivisa: questo file viene copiato (sync
+ *  automatico via `infra/smartvase-proto/sync_to_firmware.py` per l'Hub;
+ *  manuale per la CAM) in `firmware/1_esp32-hub/.../include/` e
+ *  `firmware/3_esp32-cam/.../src/`. Se HiveMQ migra a un'altra CA o ne
+ *  aggiunge un'altra, sostituire o concatenare i certificati PEM qui sotto.
+ *  @author Giacomo Radin
+ *  @date 2026-05-20
  */
 #ifndef SMARTVASE_HIVEMQ_CA_CERT_H
 #define SMARTVASE_HIVEMQ_CA_CERT_H
