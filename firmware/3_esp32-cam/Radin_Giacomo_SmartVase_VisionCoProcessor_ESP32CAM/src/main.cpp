@@ -10,7 +10,7 @@
  *   - Cattura JPEG periodica quando rete e upload_url sono configurati.
  *   - Upload HTTP POST multipart streaming a una Cloud Function;
  *     la function restituisce JSON con 'image_url' su storage.
- *   - Pubblicazione MQTT su smartvase/{device_id}/vision/image con
+ *   - Pubblicazione Firestore su smartvase/{device_id}/vision/image con
  *     l'URL ottenuto + metadati (timestamp, dimensione, CRC32).
  *   - Stats cumulative persistenti in NVS.
  *   - Web server locale (porta 80) con live feed MJPEG (/, /stream, /jpg).
@@ -19,15 +19,15 @@
  *  Configurazione (NVS namespace "cam", scrivibile dalla CLI con `set`):
  *     wifi_ssid    string
  *     wifi_pass    string
- *     mqtt_broker  string  (es. "<id>.s1.eu.hivemq.cloud")
- *     mqtt_port    uint16  (default 8883 TLS)
- *     mqtt_user    string
- *     mqtt_pass    string
+ *     firebase_api_key  string
+ *     firebase_project_id  string
+ *     firebase_email  string
+ *     firebase_password  string
  *     upload_url   string  (Cloud Function POST endpoint)
  *     interval_s   uint32  (cattura ogni N secondi, default 300)
  *
  *  Stats (namespace "cam_stats"):
- *     succ_frames, fail_frames, upload_err, mqtt_err, total_cap_ms
+ *     succ_frames, fail_frames, upload_err, total_cap_ms
  * =================================================================
  */
 
@@ -37,13 +37,12 @@
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
-#include <HTTPClient.h>
-#include <PubSubClient.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
 #include <time.h>
-#include "esp_http_server.h"
-#include "hivemq_ca_cert.h"
+
+#include <FirebaseClient.h>
+
 
 #define CAM_FW_VERSION "2.1.0"
 
@@ -71,54 +70,50 @@ static char deviceId[16] = {0};
 
 // -------------------- TIMING --------------------
 #define WIFI_RETRY_INTERVAL_MS   30000UL  // nuovo tentativo STA ogni 30 s
-#define MQTT_RETRY_INTERVAL_MS   15000UL  // nuovo tentativo broker ogni 15 s
 #define NTP_VALID_EPOCH      1700000000UL // sotto questa soglia l'ora non e' sincronizzata
 
-// -------------------- NVS --------------------
-Preferences prefs;
-Preferences statsPrefs;
-
+// -------------------- NVS CONFIG --------------------
 struct CamConfig {
     String wifi_ssid;
     String wifi_pass;
-    String mqtt_broker;
-    uint16_t mqtt_port;
-    String mqtt_user;
-    String mqtt_pass;
-    String upload_url;
+    String firebase_api_key;
+    String firebase_project_id;
+    String firebase_email;
+    String firebase_password;
     uint32_t interval_s;
 } cfg;
+
+// -------------------- FIREBASE GLOBALS --------------------
+WiFiClientSecure ssl_client;
+DefaultNetwork network;
+AsyncClient aClient(ssl_client, getNetwork(network));
+
+FirebaseApp app;
+UserAuth user_auth;
+
+// -------------------- STATE --------------------
+unsigned long lastCaptureMs     = 0;
+unsigned long lastWifiAttemptMs = 0;
+bool cameraOk                   = false;
+bool captureRequested           = false;
+
+// -------------------- NVS PREFERENCES --------------------
+Preferences prefs;
+Preferences statsPrefs;
 
 struct CamStats {
     uint32_t successful_frames;
     uint32_t failed_frames;
     uint32_t upload_errors;
-    uint32_t mqtt_errors;
     uint64_t total_capture_time_ms;
 } stats;
-
-// -------------------- MQTT --------------------
-WiFiClientSecure wifiClient;
-PubSubClient mqttClient(wifiClient);
-String mqttClientId;
-String topicVisionImage;
-String topicVisionStatus;
-String topicVisionCommand;
-
-// Cert HiveMQ Cloud (ISRG Root X1). Shared con l'Hub via infra/hivemq_ca_cert.h.
-static const char* hivemq_ca_cert = SMARTVASE_HIVEMQ_CA_CERT;
 
 // -------------------- STATE --------------------
 unsigned long lastCaptureMs     = 0;
 unsigned long lastWifiAttemptMs = 0;
-unsigned long lastMqttAttemptMs = 0;
-bool wifiAttemptInProgress      = false;
-bool ntpConfigured              = false;
 bool cameraOk                   = false;
-bool captureRequested           = false; // captureNow via MQTT
-bool webServerStarted           = false; // feed MJPEG locale avviato
+bool captureRequested           = false; // captureNow via Firestore
 unsigned long lastDebugMs       = 0;     // throttle telemetria debug seriale
-httpd_handle_t cameraHttpd      = NULL;  // server web feed (porta 80)
 
 // -------------------- UTILITIES --------------------
 uint32_t crc32_le(uint32_t crc, const uint8_t *buf, size_t len) {
@@ -141,12 +136,12 @@ void loadConfig() {
     prefs.begin("cam", true);
     cfg.wifi_ssid   = prefs.getString("wifi_ssid",   "");
     cfg.wifi_pass   = prefs.getString("wifi_pass",   "");
-    cfg.mqtt_broker = prefs.getString("mqtt_broker", "");
-    cfg.mqtt_port   = prefs.getUShort("mqtt_port",   8883);
-    cfg.mqtt_user   = prefs.getString("mqtt_user",   "");
-    cfg.mqtt_pass   = prefs.getString("mqtt_pass",   "");
     cfg.upload_url  = prefs.getString("upload_url",  "");
     cfg.interval_s  = prefs.getUInt  ("interval_s",  300);
+    cfg.firebase_api_key = prefs.getString("firebase_api_key", "");
+    cfg.firebase_project_id = prefs.getString("firebase_project_id", "");
+    cfg.firebase_email = prefs.getString("firebase_email", "");
+    cfg.firebase_password = prefs.getString("firebase_password", "");
     prefs.end();
 
     // ============================================================
@@ -158,10 +153,11 @@ void loadConfig() {
     // ============================================================
     cfg.wifi_ssid   = "GiacomoPhone";
     cfg.wifi_pass   = "giacomonoretaaleinternet";
-    cfg.mqtt_broker = "fec435c1f9c5410e8105bc0a677662ab.s1.eu.hivemq.cloud";
-    cfg.mqtt_port   = 8883;
-    cfg.mqtt_user   = "SmartVase";
-    cfg.mqtt_pass   = "7w#po8N&Hr6R6Z";
+    cfg.firebase_api_key = "" 
+    cfg.firebase_project_id = ""
+    cfg.firebase_email = ""
+    cfg.firebase_password = ""
+    
     // ============ fine blocco bench ============
 }
 
@@ -169,10 +165,10 @@ void saveConfig() {
     prefs.begin("cam", false);
     prefs.putString("wifi_ssid",   cfg.wifi_ssid);
     prefs.putString("wifi_pass",   cfg.wifi_pass);
-    prefs.putString("mqtt_broker", cfg.mqtt_broker);
-    prefs.putUShort("mqtt_port",   cfg.mqtt_port);
-    prefs.putString("mqtt_user",   cfg.mqtt_user);
-    prefs.putString("mqtt_pass",   cfg.mqtt_pass);
+    prefs.putString("firebase_api_key", cfg.firebase_api_key);
+    prefs.putString("firebase_project_id", cfg.firebase_project_id);
+    prefs.putString("firebase_email", cfg.firebase_email);
+    prefs.putString("firebase_password", cfg.firebase_password);
     prefs.putString("upload_url",  cfg.upload_url);
     prefs.putUInt  ("interval_s",  cfg.interval_s);
     prefs.end();
@@ -183,7 +179,6 @@ void loadStats() {
     stats.successful_frames     = statsPrefs.getUInt   ("succ_frames",   0);
     stats.failed_frames         = statsPrefs.getUInt   ("fail_frames",   0);
     stats.upload_errors         = statsPrefs.getUInt   ("upload_err",    0);
-    stats.mqtt_errors           = statsPrefs.getUInt   ("mqtt_err",      0);
     stats.total_capture_time_ms = statsPrefs.getULong64("total_cap_ms",  0);
     statsPrefs.end();
 }
@@ -193,7 +188,6 @@ void saveStats() {
     statsPrefs.putUInt   ("succ_frames",  stats.successful_frames);
     statsPrefs.putUInt   ("fail_frames",  stats.failed_frames);
     statsPrefs.putUInt   ("upload_err",   stats.upload_errors);
-    statsPrefs.putUInt   ("mqtt_err",     stats.mqtt_errors);
     statsPrefs.putULong64("total_cap_ms", stats.total_capture_time_ms);
     statsPrefs.end();
 }
@@ -263,12 +257,10 @@ void wifiStartAttempt() {
     configTime(0, 0, "pool.ntp.org", "time.google.com");
     // Attesa breve e non-bloccante della sync (max 3 s).
     t0 = millis();
-    while (time(nullptr) < 1700000000UL && millis() - t0 < 3000) {
+    while (time(nullptr) < NTP_VALID_EPOCH && millis() - t0 < 3000) {
         delay(100);
     }
 }
-
-// -------------------- MQTT --------------------
 
 void wifiEnsure() {
     if (cfg.wifi_ssid.length() == 0) return;
@@ -282,180 +274,110 @@ void wifiEnsure() {
     }
 }
 
-void buildTopics() {
-    topicVisionImage   = String("smartvase/") + deviceId + "/vision/image";
-    topicVisionStatus  = String("smartvase/") + deviceId + "/vision/status";
-    topicVisionCommand = String("smartvase/") + deviceId + "/vision/command/#";
+void firebaseInit() {
+    if (cfg.firebase_api_key.length() == 0 || app.isInitialized()) return;
+    
+    Serial.println("[CAM] Inizializzazione Firebase in corso...");
+    
+    // for now keep insecure to save RAM
+    ssl_client.setInsecure(); 
+    
+    user_auth.api_key = cfg.firebase_api_key;
+    user_auth.user.email = cfg.firebase_email;
+    user_auth.user.password = cfg.firebase_password;
+    
+    initializeApp(aClient, app, getAuth(user_auth));
+    Serial.println("[CAM] Firebase App Inizializzata.");
 }
 
-void onMqttMessage(char* topic, byte* payload, unsigned int len) {
-    // Comandi remoti: captureNow, reboot.
-    StaticJsonDocument<256> doc;
-    if (deserializeJson(doc, payload, len)) return;
-    const char* type = doc["type"] | "";
-    if (strcmp(type, "captureNow") == 0) {
-        captureRequested = true; // gestita al prossimo giro di loop
-    } else if (strcmp(type, "reboot") == 0) {
-        ESP.restart();
-    }
-}
+// TODO: change to on firebase update
+// void onMqttMessage(char* topic, byte* payload, unsigned int len) {
+//     // Comandi remoti: captureNow, reboot.
+//     StaticJsonDocument<256> doc;
+//     if (deserializeJson(doc, payload, len)) return;
+//     const char* type = doc["type"] | "";
+//     if (strcmp(type, "captureNow") == 0) {
+//         captureRequested = true; // gestita al prossimo giro di loop
+//     } else if (strcmp(type, "reboot") == 0) {
+//         ESP.restart();
+//     }
+// }
 
-void mqttInit() {
-    wifiClient.setCACert(hivemq_ca_cert);
-    mqttClient.setServer(cfg.mqtt_broker.c_str(), cfg.mqtt_port);
-    mqttClient.setBufferSize(2048);
-    mqttClient.setCallback(onMqttMessage);
-    mqttClientId = String("SmartVase_") + deviceId;
-}
-
-bool mqttEnsure() {
-    if (cfg.mqtt_broker.length() == 0) return false;
-    if (WiFi.status() != WL_CONNECTED) return false;
-    if (mqttClient.connected()) return true;
-    // La connect di PubSubClient e' bloccante (anche secondi se il broker non
-    // risponde): throttling per non congelare la CLI a ogni giro di loop.
-    if (millis() - lastMqttAttemptMs < MQTT_RETRY_INTERVAL_MS && lastMqttAttemptMs != 0) {
-        return false;
-    }
-    lastMqttAttemptMs = millis();
-    Serial.printf("[CAM] MQTT connect %s:%d as %s...\n",
-                  cfg.mqtt_broker.c_str(), cfg.mqtt_port, mqttClientId.c_str());
-    bool ok = mqttClient.connect(mqttClientId.c_str(),
-                                  cfg.mqtt_user.c_str(),
-                                  cfg.mqtt_pass.c_str(),
-                                  topicVisionStatus.c_str(), 1, true, "offline");
-    if (ok) {
-        mqttClient.publish(topicVisionStatus.c_str(), "online", true);
-        mqttClient.subscribe(topicVisionCommand.c_str());
-        Serial.println("[CAM] MQTT connected.");
-    } else {
-        Serial.printf("[CAM] MQTT connect FAILED, state=%d\n", mqttClient.state());
-        stats.mqtt_errors++;
-    }
-    return ok;
-}
-
-// -------------------- UPLOAD --------------------
-// POST multipart/form-data del JPEG verso cfg.upload_url, **streaming**
-// (no allocazione del body intero in heap). La Cloud Function risponde con
-// JSON: { "image_url": "...", "ok": true }
-// Ritorna stringa vuota in caso di errore.
-//
-// Limiti correnti:
-//   - setInsecure(): per ora non si valida il cert TLS dell'endpoint;
-//     TODO Fia: pin del cert/CA della Cloud Function in cfg/NVS.
-String uploadJpeg(const uint8_t* buf, size_t len, const char* contentType) {
-    HTTPClient http;
-    WiFiClientSecure client;
-    client.setInsecure(); // TODO: pin certificato dell'endpoint Cloud Function
-    client.setTimeout(15000);
-    http.setConnectTimeout(8000);
-    http.setTimeout(20000);
-
-    if (!http.begin(client, cfg.upload_url)) {
-        stats.upload_errors++;
-        return String();
+String uploadImageToStorage(const uint8_t* buf, size_t len) {
+    if (!app.isInitialized()) {
+        Serial.println("[CAM] Errore: Firebase non inizializzato prima dell'upload.");
+        return "";
     }
 
-    const char* boundary = "----SmartVaseBoundary";
-    String headStr =
-        String("--") + boundary + "\r\n" +
-        "Content-Disposition: form-data; name=\"device_id\"\r\n\r\n" +
-        deviceId + "\r\n" +
-        "--" + boundary + "\r\n" +
-        "Content-Disposition: form-data; name=\"image\"; filename=\"capture.jpg\"\r\n" +
-        "Content-Type: " + contentType + "\r\n\r\n";
-    String tailStr = String("\r\n--") + boundary + "--\r\n";
-
-    size_t totalLen = headStr.length() + len + tailStr.length();
-    http.addHeader("Content-Type", String("multipart/form-data; boundary=") + boundary);
-    http.addHeader("Content-Length", String(totalLen));
-
-    // sendRequest("POST", Stream*, size) accetta uno Stream che HTTPClient
-    // legge a chunk. Per evitare la malloc del body, una piccola classe
-    // Stream concatena head + jpeg buffer + tail al volo.
-    struct MultipartStream : public Stream {
-        const String& head;
-        const uint8_t* body;
-        size_t bodyLen;
-        const String& tail;
-        size_t pos;
-        size_t total;
-        MultipartStream(const String& h, const uint8_t* b, size_t bl, const String& t)
-          : head(h), body(b), bodyLen(bl), tail(t), pos(0),
-            total(h.length() + bl + t.length()) {}
-        int available() override { return (int)(total - pos); }
-        int peek() override { return -1; }
-        int read() override {
-            if (pos >= total) return -1;
-            uint8_t b;
-            readBytes((char*)&b, 1);
-            return b;
-        }
-        size_t readBytes(char* dest, size_t want) {
-            size_t out = 0;
-            while (out < want && pos < total) {
-                size_t off = pos;
-                if (off < (size_t)head.length()) {
-                    size_t n = min(want - out, (size_t)head.length() - off);
-                    memcpy(dest + out, head.c_str() + off, n);
-                    out += n; pos += n;
-                } else if (off < (size_t)head.length() + bodyLen) {
-                    size_t bOff = off - head.length();
-                    size_t n = min(want - out, bodyLen - bOff);
-                    memcpy(dest + out, body + bOff, n);
-                    out += n; pos += n;
-                } else {
-                    size_t tOff = off - head.length() - bodyLen;
-                    size_t n = min(want - out, (size_t)tail.length() - tOff);
-                    memcpy(dest + out, tail.c_str() + tOff, n);
-                    out += n; pos += n;
-                }
-            }
-            return out;
-        }
-        size_t write(uint8_t) override { return 0; }
-    } payload(headStr, buf, len, tailStr);
-
-    int httpCode = http.sendRequest("POST", (Stream*)&payload, totalLen);
-    String response = (httpCode > 0) ? http.getString() : String();
-    http.end();
-
-    if (httpCode != 200) {
-        Serial.printf("[CAM] upload HTTP=%d\n", httpCode);
-        stats.upload_errors++;
-        return String();
-    }
-    StaticJsonDocument<512> doc;
-    if (deserializeJson(doc, response)) {
-        stats.upload_errors++;
-        return String();
-    }
-    return String((const char*)(doc["image_url"] | ""));
-}
-
-void publishVisionImage(const String& imageUrl, size_t bytes, uint32_t crc, uint32_t capMs) {
-    if (!mqttEnsure()) return;
     time_t nowEpoch = time(nullptr);
-    StaticJsonDocument<512> doc;
-    doc["timestamp_utc"]   = (nowEpoch >= (time_t)NTP_VALID_EPOCH) ? (uint32_t)nowEpoch : 0;
-    doc["device_id"]       = deviceId;
-    doc["fw_version"]      = CAM_FW_VERSION;
-    doc["image_url"]       = imageUrl;
-    doc["size_bytes"]      = bytes;
-    doc["crc32"]           = crc;
-    doc["capture_time_ms"] = capMs;
-    doc["content_type"]    = "image/jpeg";
-    char payload[600];
-    size_t n = serializeJson(doc, payload, sizeof(payload));
-    if (n == 0 || n >= sizeof(payload)) return;
-    if (!mqttClient.publish(topicVisionImage.c_str(), payload)) {
-        stats.mqtt_errors++;
+    String filename = "images/" + String(deviceId) + "_" + String(nowEpoch) + ".jpg";
+    String bucket = cfg.firebase_project_id + ".appspot.com";
+    
+    Serial.printf("[CAM] Uploading to Storage: %s...\n", filename.c_str());
+
+    // Wrappa il buffer della fotocamera per la libreria Firebase
+    MemoryMedia memoryMedia;
+    memoryMedia.data = buf;
+    memoryMedia.size = len;
+    memoryMedia.mime = "image/jpeg";
+
+    // Esegue l'upload sincrono (bloccante) per garantire che termini prima 
+    // di rilasciare il frame buffer
+    bool status = CloudStorage::upload(&aClient, bucket.c_str(), filename.c_str(), 
+                                       UploadType::MEDIA, memoryMedia, nullptr);
+
+    if (status) {
+        // Costruisci e restituisci l'URL in formato gs:// leggibile da Flutter
+        String gsUrl = "gs://" + bucket + "/" + filename;
+        return gsUrl;
+    } else {
+        Serial.printf("[CAM] Upload Fallito. Reason: %s\n", aClient.lastError().message().c_str());
+        return "";
     }
 }
+
+void notifyFirestore(const String& imageUrl, size_t bytes, uint32_t crc, uint32_t capMs) {
+    if (!app.isInitialized()) return;
+
+    time_t nowEpoch = time(nullptr);
+    // Path basato sulla tua architettura: smartvase/{device_id}/vision/image_ready
+    String documentPath = "smartvase/" + String(deviceId) + "/vision/image_ready";
+
+    // Firestore richiede un formato JSON tipizzato
+    StaticJsonDocument<1024> doc;
+    JsonObject fields = doc.createNestedObject("fields");
+    
+    fields["timestamp_utc"]["integerValue"] = (nowEpoch > NTP_VALID_EPOCH) ? nowEpoch : 0;
+    fields["image_url"]["stringValue"]      = imageUrl;
+    fields["resolution"]["stringValue"]     = psramFound() ? "800x600" : "640x480";
+    fields["size_bytes"]["integerValue"]    = bytes;
+    fields["crc32"]["integerValue"]         = crc;
+    fields["capture_time_ms"]["integerValue"] = capMs;
+    // fields["plant_healthy"]["booleanValue"] = true;
+    // fields["message"]["stringValue"] = "Plant is ok, no need to worry!";
+
+    String payload;
+    serializeJson(doc, payload);
+
+    Serial.printf("[CAM] Notifica Firestore su: %s\n", documentPath.c_str());
+
+    // Usa PATCH per creare il documento o fare merge dei campi se esiste già.
+    // L'updateMask (ultimo parametro vuoto in questo caso) forza l'aggiornamento.
+    bool status = Document::patchDocument(&aClient, cfg.firebase_project_id.c_str(), 
+                                          "(default)", documentPath.c_str(), 
+                                          payload.c_str(), "");
+
+    if (!status) {
+        Serial.printf("[CAM] Errore Firestore: %s\n", aClient.lastError().message().c_str());
+        stats.firebase_errors++;
+    } else {
+        Serial.println("[CAM] Firestore aggiornato con successo.");
+    }
+}
+
 
 // -------------------- CAPTURE --------------------
-// Cattura un frame e (se richiesto) lo uploada e pubblica su MQTT.
+// Cattura un frame e (se richiesto) lo uploada e pubblica su Firestore.
 // I metadati del frame vengono copiati PRIMA di restituire il buffer
 // al driver: fb non e' piu' valido dopo esp_camera_fb_return.
 bool doCapture(bool uploadAndPublish) {
@@ -498,6 +420,47 @@ bool doCapture(bool uploadAndPublish) {
     return true;
 }
 
+bool doCapture(bool uploadAndPublish) {
+    if (!cameraOk) return false;
+    
+    unsigned long t0 = millis();
+    camera_fb_t* fb = esp_camera_fb_get();
+    unsigned long capMs = millis() - t0;
+    
+    if (!fb) {
+        stats.failed_frames++;
+        saveStats();
+        return false;
+    }
+
+    // TODO: Here perform the image analysis
+    // AnalysisResult analysis_result = doAnalysis(fb);
+    
+    size_t frameLen = fb->len;
+    uint32_t crc    = crc32_le(0, fb->buf, fb->len);
+    stats.successful_frames++;
+    stats.total_capture_time_ms += capMs;
+
+    if (uploadAndPublish && cfg.firebase_project_id.length() > 0 && WiFi.status() == WL_CONNECTED) {
+        // 1. UPLOAD IMMAGINE
+        String url = uploadImageToStorage(fb->buf, frameLen);
+        
+        // 2. NOTIFICA FIRESTORE (se l'upload è andato a buon fine)
+        if (url.length() > 0) {
+            // TODO: utilize also analysis_result
+            notifyFirestore(url, frameLen, crc, (uint32_t)capMs);
+        } else {
+            stats.firebase_errors++;
+        }
+    }
+    
+    // Libera la memoria del buffer DOPO aver fatto l'upload
+    esp_camera_fb_return(fb);
+    saveStats();
+    return true;
+}
+
+
 // -------------------- CLI SERIALE --------------------
 static char cliBuf[192];
 static size_t cliPos = 0;
@@ -506,10 +469,9 @@ void cliPrintHelp() {
     Serial.println("--- SmartVase CAM CLI v" CAM_FW_VERSION " ---");
     Serial.println("help                  questo menu");
     Serial.println("version               versione firmware");
-    Serial.println("status                Wi-Fi, MQTT, camera, heap");
+    Serial.println("status                Wi-Fi, camera, heap");
     Serial.println("show                  configurazione NVS");
-    Serial.println("set <chiave> <val>    wifi_ssid|wifi_pass|mqtt_broker|mqtt_port|");
-    Serial.println("                      mqtt_user|mqtt_pass|upload_url|interval_s");
+    Serial.println("set <chiave> <val>    wifi_ssid|wifi_pass|");
     Serial.println("save                  salva config su NVS");
     Serial.println("wifi connect          ritenta subito la connessione");
     Serial.println("capture               cattura di test (senza upload)");
@@ -535,8 +497,6 @@ void cliPrintStatus() {
         Serial.printf("feed       = http://%s/\n", WiFi.localIP().toString().c_str());
     else
         Serial.println("feed       = (in attesa di Wi-Fi)");
-    if (cfg.mqtt_broker.length() == 0) Serial.println("mqtt       = NON CONFIGURATO");
-    else Serial.printf("mqtt       = %s\n", mqttClient.connected() ? "CONNESSO" : "DISCONNESSO");
     time_t nowEpoch = time(nullptr);
     Serial.printf("ntp_epoch  = %lu%s\n", (unsigned long)nowEpoch,
                   nowEpoch < (time_t)NTP_VALID_EPOCH ? " (non sincronizzato)" : "");
@@ -548,10 +508,6 @@ void cliPrintShow() {
     Serial.println("--- config NVS ---");
     Serial.printf("wifi_ssid   = %s\n", cfg.wifi_ssid.c_str());
     Serial.printf("wifi_pass   = %s\n", cfg.wifi_pass.length() ? "***" : "(vuoto)");
-    Serial.printf("mqtt_broker = %s\n", cfg.mqtt_broker.c_str());
-    Serial.printf("mqtt_port   = %u\n", cfg.mqtt_port);
-    Serial.printf("mqtt_user   = %s\n", cfg.mqtt_user.c_str());
-    Serial.printf("mqtt_pass   = %s\n", cfg.mqtt_pass.length() ? "***" : "(vuoto)");
     Serial.printf("upload_url  = %s\n", cfg.upload_url.c_str());
     Serial.printf("interval_s  = %lu\n", (unsigned long)cfg.interval_s);
 }
@@ -561,7 +517,6 @@ void cliPrintStats() {
     Serial.printf("successful_frames     = %lu\n", (unsigned long)stats.successful_frames);
     Serial.printf("failed_frames         = %lu\n", (unsigned long)stats.failed_frames);
     Serial.printf("upload_errors         = %lu\n", (unsigned long)stats.upload_errors);
-    Serial.printf("mqtt_errors           = %lu\n", (unsigned long)stats.mqtt_errors);
     Serial.printf("total_capture_time_ms = %llu\n", stats.total_capture_time_ms);
 }
 
@@ -575,14 +530,6 @@ bool cliHandleSet(char* args) {
 
     if      (strcmp(key, "wifi_ssid")   == 0) cfg.wifi_ssid   = value;
     else if (strcmp(key, "wifi_pass")   == 0) cfg.wifi_pass   = value;
-    else if (strcmp(key, "mqtt_broker") == 0) cfg.mqtt_broker = value;
-    else if (strcmp(key, "mqtt_port")   == 0) {
-        int p = atoi(value);
-        if (p <= 0 || p > 65535) { Serial.println("[CLI] porta non valida"); return true; }
-        cfg.mqtt_port = (uint16_t)p;
-    }
-    else if (strcmp(key, "mqtt_user")   == 0) cfg.mqtt_user   = value;
-    else if (strcmp(key, "mqtt_pass")   == 0) cfg.mqtt_pass   = value;
     else if (strcmp(key, "upload_url")  == 0) cfg.upload_url  = value;
     else if (strcmp(key, "interval_s")  == 0) {
         long s = atol(value);
@@ -657,82 +604,6 @@ void cliTick() {
     }
 }
 
-// -------------------- WEB SERVER (feed MJPEG locale) --------------------
-// Server HTTP su porta 80 raggiungibile dalla rete locale (stesso hotspot):
-//   GET /        pagina HTML con il live feed
-//   GET /stream  MJPEG (multipart/x-mixed-replace)
-//   GET /jpg     singolo frame JPEG
-// Pensato per il debug "compartimento stagno": guardare la pianta dal browser
-// (telefono/PC collegati allo stesso hotspot, all'IP stampato dal seriale).
-#define PART_BOUNDARY "smartvaseframe"
-static const char* STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
-static const char* STREAM_BOUNDARY     = "\r\n--" PART_BOUNDARY "\r\n";
-static const char* STREAM_PART         = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
-
-static esp_err_t handleIndex(httpd_req_t* req) {
-    static const char html[] =
-        "<!doctype html><html><head><meta charset=utf-8>"
-        "<meta name=viewport content='width=device-width,initial-scale=1'>"
-        "<title>SmartVase CAM</title>"
-        "<style>body{font-family:sans-serif;background:#0d130d;color:#bdf0bd;text-align:center;margin:0;padding:14px}"
-        "img{max-width:100%;height:auto;border:2px solid #2e7d32;border-radius:6px}a{color:#9ccc65}</style>"
-        "</head><body><h2>SmartVase Vision &mdash; live feed</h2>"
-        "<img src='/stream' alt='stream'>"
-        "<p><a href='/jpg'>scarica singolo frame</a></p></body></html>";
-    httpd_resp_set_type(req, "text/html");
-    return httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
-}
-
-static esp_err_t handleJpg(httpd_req_t* req) {
-    camera_fb_t* fb = esp_camera_fb_get();
-    if (!fb) { httpd_resp_send_500(req); return ESP_FAIL; }
-    httpd_resp_set_type(req, "image/jpeg");
-    httpd_resp_set_hdr(req, "Content-Disposition", "inline; filename=capture.jpg");
-    esp_err_t res = httpd_resp_send(req, (const char*)fb->buf, fb->len);
-    esp_camera_fb_return(fb);
-    return res;
-}
-
-static esp_err_t handleStream(httpd_req_t* req) {
-    esp_err_t res = httpd_resp_set_type(req, STREAM_CONTENT_TYPE);
-    if (res != ESP_OK) return res;
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    char partBuf[64];
-    while (true) {
-        camera_fb_t* fb = esp_camera_fb_get();
-        if (!fb) { res = ESP_FAIL; break; }
-        size_t hlen = snprintf(partBuf, sizeof(partBuf), STREAM_PART, (unsigned)fb->len);
-        res = httpd_resp_send_chunk(req, STREAM_BOUNDARY, strlen(STREAM_BOUNDARY));
-        if (res == ESP_OK) res = httpd_resp_send_chunk(req, partBuf, hlen);
-        if (res == ESP_OK) res = httpd_resp_send_chunk(req, (const char*)fb->buf, fb->len);
-        esp_camera_fb_return(fb);
-        if (res != ESP_OK) break;   // client disconnesso → esci dal loop
-        delay(1);                   // cede la CPU agli altri task
-    }
-    return res;
-}
-
-void startWebServer() {
-    if (cameraHttpd != NULL) return;     // gia' avviato
-    httpd_config_t config   = HTTPD_DEFAULT_CONFIG();
-    config.server_port      = 80;
-    config.ctrl_port        = 32768;
-    config.max_uri_handlers = 8;
-    config.lru_purge_enable = true;
-    if (httpd_start(&cameraHttpd, &config) != ESP_OK) {
-        Serial.println("[CAM] ERRORE: avvio web server fallito");
-        cameraHttpd = NULL;
-        return;
-    }
-    httpd_uri_t u = {};
-    u.method = HTTP_GET; u.user_ctx = NULL;
-    u.uri = "/";       u.handler = handleIndex;  httpd_register_uri_handler(cameraHttpd, &u);
-    u.uri = "/stream"; u.handler = handleStream; httpd_register_uri_handler(cameraHttpd, &u);
-    u.uri = "/jpg";    u.handler = handleJpg;    httpd_register_uri_handler(cameraHttpd, &u);
-    Serial.printf("[CAM] >>> Live feed: http://%s/   (stream: http://%s/stream)\n",
-                  WiFi.localIP().toString().c_str(), WiFi.localIP().toString().c_str());
-}
-
 // -------------------- DEBUG TELEMETRY (monitor seriale) --------------------
 #define DEBUG_TELEMETRY_INTERVAL_MS 5000UL
 
@@ -740,8 +611,7 @@ void printDebugTelemetry() {
     bool wifiUp = (WiFi.status() == WL_CONNECTED);
     Serial.printf("[DBG] up=%lus | wifi=%s", millis() / 1000UL, wifiUp ? "ON" : "OFF");
     if (wifiUp) Serial.printf(" ip=%s rssi=%ddBm", WiFi.localIP().toString().c_str(), WiFi.RSSI());
-    Serial.printf(" | mqtt=%s | heap=%uB | cam=%s | frames ok/fail=%lu/%lu",
-                  mqttClient.connected() ? "ON" : "OFF",
+    Serial.printf(" | heap=%uB | cam=%s | frames ok/fail=%lu/%lu",
                   (unsigned)ESP.getFreeHeap(),
                   cameraOk ? "OK" : "FAIL",
                   (unsigned long)stats.successful_frames,
@@ -775,9 +645,8 @@ void setup() {
     } else {
         Serial.println("[CAM] Wi-Fi non configurato. Dalla CLI: set wifi_ssid <...>, set wifi_pass <...>, save, reboot");
     }
-    if (cfg.mqtt_broker.length() > 0) {
-        mqttInit();
-    }
+
+    firebaseInit();
 
     Serial.println("[CAM] CLI pronta: digita 'help'");
     Serial.print("> ");
@@ -788,16 +657,6 @@ void loop() {
 
     // Rete in background, mai bloccante per la CLI.
     wifiEnsure();
-    if (cfg.mqtt_broker.length() > 0 && WiFi.status() == WL_CONNECTED) {
-        mqttEnsure();
-        if (mqttClient.connected()) mqttClient.loop();
-    }
-
-    // Avvia il feed web locale appena il Wi-Fi e' su e la camera e' ok.
-    if (!webServerStarted && cameraOk && WiFi.status() == WL_CONNECTED) {
-        startWebServer();
-        webServerStarted = true;
-    }
 
     // Telemetria di debug periodica sul monitor seriale.
     if (millis() - lastDebugMs >= DEBUG_TELEMETRY_INTERVAL_MS) {
@@ -807,7 +666,7 @@ void loop() {
 
     // Cattura periodica automatica: solo a catena completa configurata
     // (Wi-Fi connesso + upload_url presente). I test manuali a banco si
-    // fanno dalla CLI con 'capture' / 'upload'. captureRequested (MQTT)
+    // fanno dalla CLI con 'capture' / 'upload'. captureRequested (firestore)
     // forza una cattura immediata indipendentemente dal timer.
     bool periodicDue = cfg.upload_url.length() > 0 &&
                        WiFi.status() == WL_CONNECTED &&
