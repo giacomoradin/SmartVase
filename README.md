@@ -202,6 +202,9 @@ config                     current config
 sensors                    latest sensor readings
 diag                       guided sensor/motor diagnostics (incl. VNH5019 fault, UVA lights)
 mode <idle|light|shadow>   set operating mode
+plant [shade|medium|sun]   show / apply the plant profile preset
+care [on|off]              autonomous plant care: status + daily KPIs / enable
+wall <left|right|off>      local wall-following (overrides seeking)
 motor <f|b|l|r> <ms>       motor test (max 60000 ms, wheels lifted)
 motortest                  guided f/b/l/r sequence
 pump <ms>                  pump test (max 60000 ms)
@@ -217,16 +220,21 @@ reboot                     soft reset
 
 ## 📈 7. Project Status
 
-- **Firmware** — Mega v5.2, Hub v1.3, CAM v2.1 (serial protocol nanopb v4.0).
+- **Firmware** — Mega v5.3, Hub v1.3, CAM v2.1 (serial protocol nanopb v4.1).
   Aligned to the PIN map in [`docs/PINS - Sheet1.csv`](docs/PINS%20-%20Sheet1.csv).
-  All three build offline; hardware bring-up still pending.
+  All three build offline; hardware bring-up in progress (motors and sensors
+  partially verified on the bench, see `docs/SmartVase_Project_State.md`).
+- **Autonomous care (Mega v5.3)** — the robot can manage the plant's day on
+  its own (`care on`): daily light budget, light-scan relocation, autonomous
+  dose/soak/verify watering, per-plant profiles, UVA top-up. Design document:
+  [`docs/Plant_Care_Design.md`](docs/Plant_Care_Design.md).
 - **Vision** — Single script `vision/pixel_analyzer.py` (green/brown pixel
   analysis) with one test under `vision/tests/`. The full quality-gate /
   leaf-health pipeline is not implemented yet.
 - **Cloud** — The image-upload Cloud Function is a stub; a dev MQTT→Firestore
   bridge lives in `server/mqtt_listener.py`. Production pipeline TBD.
 - **Host tests** — `tests/host/` runs pure-logic unit tests with g++ (CRC16,
-  command/sensor policies).
+  command/sensor/navigation/care policies, EEPROM persistence).
 - **Android app** — Tracked in a separate repository.
 
 Open items (HW-dependent or external) are tracked in

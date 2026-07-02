@@ -18,6 +18,9 @@ run_one test_crc16
 run_one test_crc_utils
 run_one test_command_policy
 run_one test_sensor_policy
+run_one test_nav_policy
+run_one test_care_policy
+run_one test_care_day_sim
 run_one test_persistence
 
 if [ "$FAIL" -ne 0 ]; then echo "SUITE: FAILED"; exit 1; fi

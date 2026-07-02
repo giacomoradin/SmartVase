@@ -92,6 +92,15 @@ typedef struct _smartvase_TelemetryDeep {
     uint32_t light_seeking_sessions;
     uint32_t shadow_seeking_sessions;
     uint32_t escape_attempts;
+    /* KPI della cura autonoma (v4.1, 2026-07-02): contatori GIORNALIERI calcolati
+ dal care layer del Mega (Care/CarePolicy, vedi docs/Plant_Care_Design.md).
+ Aggiunti in coda (tag 22-27) per compatibilita' con i decoder v4.0. */
+    bool care_enabled; /* true se la cura autonoma e' attiva */
+    uint32_t care_state; /* CareState: 0=NIGHT 1=SEEK_SUN 2=BASK 3=SEEK_SHADE 4=SHELTER 5=TOP_UP */
+    uint32_t light_budget_pct; /* % del target luce giornaliero raggiunta (puo' superare 100) */
+    uint32_t relocations_today; /* sessioni di seeking avviate oggi */
+    uint32_t water_doses_today; /* dosi di irrigazione erogate oggi */
+    uint32_t growlight_minutes_today; /* minuti di top-up UVA consumati oggi */
 } smartvase_TelemetryDeep;
 
 typedef struct _smartvase_Log {
@@ -224,7 +233,7 @@ extern "C" {
 
 /* Initializer values for message structs */
 #define smartvase_TelemetryFast_init_default     {0, 0, 0, 0, 0, 0, 0, 0, _smartvase_MovementState_MIN, 0, ""}
-#define smartvase_TelemetryDeep_init_default     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", 0, 0, 0, 0}
+#define smartvase_TelemetryDeep_init_default     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 #define smartvase_Log_init_default               {_smartvase_Log_LogLevel_MIN, "", "", 0, ""}
 #define smartvase_Heartbeat_init_default         {0, 0, ""}
 #define smartvase_Command_init_default           {0, {smartvase_WaterCommand_init_default}, 0}
@@ -238,7 +247,7 @@ extern "C" {
 #define smartvase_SoftResetCommand_init_default  {0}
 #define smartvase_WrapperMessage_init_default    {0, {smartvase_TelemetryFast_init_default}}
 #define smartvase_TelemetryFast_init_zero        {0, 0, 0, 0, 0, 0, 0, 0, _smartvase_MovementState_MIN, 0, ""}
-#define smartvase_TelemetryDeep_init_zero        {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", 0, 0, 0, 0}
+#define smartvase_TelemetryDeep_init_zero        {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 #define smartvase_Log_init_zero                  {_smartvase_Log_LogLevel_MIN, "", "", 0, ""}
 #define smartvase_Heartbeat_init_zero            {0, 0, ""}
 #define smartvase_Command_init_zero              {0, {smartvase_WaterCommand_init_zero}, 0}
@@ -285,6 +294,12 @@ extern "C" {
 #define smartvase_TelemetryDeep_light_seeking_sessions_tag 19
 #define smartvase_TelemetryDeep_shadow_seeking_sessions_tag 20
 #define smartvase_TelemetryDeep_escape_attempts_tag 21
+#define smartvase_TelemetryDeep_care_enabled_tag 22
+#define smartvase_TelemetryDeep_care_state_tag   23
+#define smartvase_TelemetryDeep_light_budget_pct_tag 24
+#define smartvase_TelemetryDeep_relocations_today_tag 25
+#define smartvase_TelemetryDeep_water_doses_today_tag 26
+#define smartvase_TelemetryDeep_growlight_minutes_today_tag 27
 #define smartvase_Log_level_tag                  1
 #define smartvase_Log_event_tag                  2
 #define smartvase_Log_detail_tag                 3
@@ -354,7 +369,13 @@ X(a, STATIC,   SINGULAR, STRING,   device_id,        17) \
 X(a, STATIC,   SINGULAR, FLOAT,    battery_voltage,  18) \
 X(a, STATIC,   SINGULAR, UINT32,   light_seeking_sessions,  19) \
 X(a, STATIC,   SINGULAR, UINT32,   shadow_seeking_sessions,  20) \
-X(a, STATIC,   SINGULAR, UINT32,   escape_attempts,  21)
+X(a, STATIC,   SINGULAR, UINT32,   escape_attempts,  21) \
+X(a, STATIC,   SINGULAR, BOOL,     care_enabled,     22) \
+X(a, STATIC,   SINGULAR, UINT32,   care_state,       23) \
+X(a, STATIC,   SINGULAR, UINT32,   light_budget_pct,  24) \
+X(a, STATIC,   SINGULAR, UINT32,   relocations_today,  25) \
+X(a, STATIC,   SINGULAR, UINT32,   water_doses_today,  26) \
+X(a, STATIC,   SINGULAR, UINT32,   growlight_minutes_today,  27)
 #define smartvase_TelemetryDeep_CALLBACK NULL
 #define smartvase_TelemetryDeep_DEFAULT NULL
 
@@ -497,10 +518,10 @@ extern const pb_msgdesc_t smartvase_WrapperMessage_msg;
 #define smartvase_SetMotionParamsCommand_size    12
 #define smartvase_SoftResetCommand_size          0
 #define smartvase_StopCommand_size               0
-#define smartvase_TelemetryDeep_size             139
+#define smartvase_TelemetryDeep_size             177
 #define smartvase_TelemetryFast_size             77
 #define smartvase_WaterCommand_size              6
-#define smartvase_WrapperMessage_size            142
+#define smartvase_WrapperMessage_size            180
 
 #ifdef __cplusplus
 } /* extern "C" */

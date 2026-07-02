@@ -39,6 +39,12 @@
                (06:00-20:00 by default, see `DAYLIGHT_START_HOUR`/`DAYLIGHT_END_HOUR`
                in GrowLight.cpp): outside this window, or if the RTC time
                is not reliable, the lights stay off even in the dark.
+
+             When the autonomous care layer is active (Care.cpp, `care on`),
+             the main loop bypasses this legacy policy and drives the relay
+             directly through force(): the lights then become the end-of-day
+             light-budget top-up decided by the care state machine
+             (CARE_TOP_UP, see CarePolicy.h), with its own daily cap.
 */
 class GrowLight {
 public:
@@ -66,6 +72,18 @@ public:
     */
     void update(CppMode targetMode, int lux, uint16_t threshold,
                bool timeValid, uint32_t epochS);
+
+    /*!
+        @brief    Directly sets the lights state, bypassing the legacy policy.
+        @details  Used when the autonomous care layer (Care.cpp) is active: the
+                  decision of when to turn the UVA lights on then belongs to the
+                  care state machine (end-of-day budget top-up, see CarePolicy.h)
+                  instead of the simple "IDLE + dark + daylight window" rule of
+                  update(). Writes the relay pin only on a state change, like
+                  update() (no relay chatter).
+        @param[in] on Desired lights state.
+    */
+    void force(bool on);
 
     /*! @brief Returns whether the lights are currently on. */
     bool isOn() const { return _isOn; }

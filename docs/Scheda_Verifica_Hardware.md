@@ -314,10 +314,15 @@ read `sensors`:
   end up swapped)
 
 ### T6 — RTC
-- [ ] `rtc` → rtc_ok = YES; time_valid = ____
+> CR2032 battery **replaced on 2026-07-01** (the previous one was dead: the
+> chip fell back to the software clock). This test verifies the replacement.
+- [ ] `rtc` → rtc_ok = YES; time_valid = ____; fake_clock must be **NO**
 - [ ] `rtc set <epoch>` (epoch from PowerShell: `[DateTimeOffset]::Now.ToUnixTimeSeconds()`)
 - [ ] Power off the Mega for 30 s, power back on → `rtc`: has the time advanced? → YES / NO
       (NO = dead/absent CR2032 battery)
+- [ ] A reliable time matters more from v5.3 on: the autonomous care layer
+      (`care on`) anchors its whole day to the clock (see §1.9 of the
+      bring-up checklist).
 
 ### T7 — VNH5019 motors (wheels lifted, then on the ground)
 - [ ] 🔴 Common GND Mega↔shield verified (continuity < 1 Ω)? → ____ (cause #1 of 0V outputs)

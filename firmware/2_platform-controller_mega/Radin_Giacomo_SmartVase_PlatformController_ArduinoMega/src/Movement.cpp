@@ -1,14 +1,16 @@
 /*!
  * @file Movement.cpp
  * @ingroup MegaMovement
- * @brief Implementation of the Movement class: H-bridge motor driver, navigation FSM,
- *        light/shadow seeking with anti-circling, obstacle avoidance and "stuck" state with backoff.
+ * @brief Implementation of the Movement class: VNH5019 motor driver, navigation FSM,
+ *        light/shadow seeking with anti-circling, rotating light scan ("solar compass"),
+ *        obstacle avoidance and "stuck" state with backoff.
  * @date 2026-04-29
  * @author Giacomo Radin
  */
 
 #include "Movement.h"
 #include "SensorPolicy.h"
+#include "NavPolicy.h"
 #include <avr/wdt.h>
 
 // =================================================================
@@ -35,15 +37,19 @@
 #define MOTOR_LEFT_INA   41  ///< Left motor -> M1INA (direction). Continuity-confirmed 2026-06-30.
 #define MOTOR_LEFT_INB   43  ///< Left motor -> M1INB (direction). Continuity-confirmed 2026-06-30.
 #define MOTOR_RIGHT_PWM  6   ///< Right motor -> M2PWM (speed, PWM pin). Continuity-confirmed 2026-06-30.
-#define MOTOR_RIGHT_INA  45  ///< Right motor -> M2INA (direction). Continuity-confirmed 2026-06-30.
-#define MOTOR_RIGHT_INB  47  ///< Right motor -> M2INB (direction). Continuity-confirmed 2026-06-30.
+// INA/INB swapped vs. the physical M2INA/M2INB continuity mapping: bench test
+// on 2026-06-30 showed the right motor spinning backward on 'motor f' with the
+// direct mapping, so direction is inverted here in firmware instead of
+// re-wiring. If the motor is later re-wired, swap these back and re-test.
+#define MOTOR_RIGHT_INA  47  ///< Right motor direction pin A (wired to shield's M2INB; swapped for correct 'forward').
+#define MOTOR_RIGHT_INB  45  ///< Right motor direction pin B (wired to shield's M2INA; swapped for correct 'forward').
 
 // EN/DIAG (M1EN/M2EN) are NOT wired to the Mega yet (confirmed 2026-06-30):
 // fault reading is disabled below instead of guessing pins. The driver still
 // works fine without it (the shield enables it via its own pull-up); this
 // only disables the optional fault diagnostics in 'diag'. Flip to 1 and set
 // the real pins once EN/DIAG is wired.
-#define MOTOR_EN_DIAG_WIRED 0
+#define MOTOR_EN_DIAG_WIRED 0  ///< 0 = EN/DIAG not wired to the Mega: faultLeft()/faultRight() always report "no fault".
 #if MOTOR_EN_DIAG_WIRED
 #define MOTOR_LEFT_EN    -1  ///< TODO: set once M1EN/DIAG is wired to the Mega.
 #define MOTOR_RIGHT_EN   -1  ///< TODO: set once M2EN/DIAG is wired to the Mega.
@@ -52,6 +58,20 @@
 #define FRONT_OBSTACLE_CM  20.0f    ///< "Nearby obstacle" threshold on the front probes (cm).
 #define SIDE_OBSTACLE_CM   12.0f    ///< "Nearby obstacle" threshold on the side probes (cm), less restrictive.
 #define MOTOR_SAFETY_TIMEOUT_MS  20000UL  ///< Maximum uninterrupted movement time before the safety stop (ms).
+#define SEEK_BIAS_PWM      60.0f    ///< Gentle steering bias (PWM) added while light/shadow seeking wants to turn.
+
+/*! @brief Duration of the full light-scan rotation (ms). Time-based (no encoders):
+           roughly one in-place turn at calibration PWM. BENCH-TUNE: measure a real
+           360° with `motor l/r` and adjust so the scan covers about one full turn.
+           Must stay well under MOTOR_SAFETY_TIMEOUT_MS together with the align phase. */
+#define LIGHT_SCAN_TOTAL_MS  6000UL
+
+/*! @brief Minimum spacing between two LDR samples during the scan rotation (ms).
+           The main loop runs orders of magnitude faster than the LDR EMA evolves:
+           sampling every iteration would only accumulate thousands of duplicated
+           values per sector (risking counter/precision issues) without adding
+           information. 20 ms gives ~25 samples per 500 ms sector. */
+#define LIGHT_SCAN_SAMPLE_MS 20UL
 
 // Initializes the state machine's default values (see Movement.h for field details).
 Movement::Movement() :
@@ -63,8 +83,17 @@ Movement::Movement() :
     stuck_cooldown_start_time(0),
     current_stuck_backoff(30000UL),
     seekTurnStartMs(0),
-    seekRelocateUntilMs(0)
+    seekRelocateUntilMs(0),
+    wallFollowMode(WALL_OFF),
+    scanSeekLight(true),
+    scanStartMs(0),
+    scanAlignUntilMs(0),
+    scanLastSampleMs(0)
 {
+    for (uint8_t i = 0; i < CARE_SCAN_SECTORS; ++i) {
+        scanSectorSum[i] = 0.0f;
+        scanSectorCnt[i] = 0;
+    }
 }
 
 void Movement::init() {
@@ -123,44 +152,55 @@ bool Movement::faultRight() const {
 #endif
 }
 
+void Movement::driveMotors(int16_t left, int16_t right) {
+    // Left wheel.
+    if (left == 0) {
+        digitalWrite(MOTOR_LEFT_INA, LOW);
+        digitalWrite(MOTOR_LEFT_INB, LOW);
+        analogWrite(MOTOR_LEFT_PWM, 0);
+    } else {
+        const bool fwd = (left > 0);
+        int16_t mag = fwd ? left : (int16_t)-left;
+        if (mag > 255) mag = 255;
+        digitalWrite(MOTOR_LEFT_INA, fwd ? HIGH : LOW);
+        digitalWrite(MOTOR_LEFT_INB, fwd ? LOW  : HIGH);
+        analogWrite(MOTOR_LEFT_PWM, (uint8_t)mag);
+    }
+    // Right wheel.
+    if (right == 0) {
+        digitalWrite(MOTOR_RIGHT_INA, LOW);
+        digitalWrite(MOTOR_RIGHT_INB, LOW);
+        analogWrite(MOTOR_RIGHT_PWM, 0);
+    } else {
+        const bool fwd = (right > 0);
+        int16_t mag = fwd ? right : (int16_t)-right;
+        if (mag > 255) mag = 255;
+        digitalWrite(MOTOR_RIGHT_INA, fwd ? HIGH : LOW);
+        digitalWrite(MOTOR_RIGHT_INB, fwd ? LOW  : HIGH);
+        analogWrite(MOTOR_RIGHT_PWM, (uint8_t)mag);
+    }
+    if ((left != 0 || right != 0) && motorActiveStartTime == 0) {
+        motorActiveStartTime = millis();
+    }
+}
+
+// The four fixed maneuvers are thin wrappers over driveMotors (kept for the CLI
+// `motor`/`motortest` and the emergency-recovery FSM). motorCalibLeft/Right are
+// the per-wheel PWM trims for straight driving.
 void Movement::moveForward(const DeviceConfig& config) {
-    analogWrite(MOTOR_LEFT_PWM,  config.motorCalibLeft);
-    digitalWrite(MOTOR_LEFT_INA, HIGH);
-    digitalWrite(MOTOR_LEFT_INB, LOW);
-    analogWrite(MOTOR_RIGHT_PWM, config.motorCalibRight);
-    digitalWrite(MOTOR_RIGHT_INA, HIGH);
-    digitalWrite(MOTOR_RIGHT_INB, LOW);
-    if (motorActiveStartTime == 0) motorActiveStartTime = millis();
+    driveMotors((int16_t)config.motorCalibLeft, (int16_t)config.motorCalibRight);
 }
 
 void Movement::moveBackward(const DeviceConfig& config) {
-    analogWrite(MOTOR_LEFT_PWM,  config.motorCalibLeft);
-    digitalWrite(MOTOR_LEFT_INA, LOW);
-    digitalWrite(MOTOR_LEFT_INB, HIGH);
-    analogWrite(MOTOR_RIGHT_PWM, config.motorCalibRight);
-    digitalWrite(MOTOR_RIGHT_INA, LOW);
-    digitalWrite(MOTOR_RIGHT_INB, HIGH);
-    if (motorActiveStartTime == 0) motorActiveStartTime = millis();
+    driveMotors(-(int16_t)config.motorCalibLeft, -(int16_t)config.motorCalibRight);
 }
 
 void Movement::turnRight(const DeviceConfig& config) {
-    analogWrite(MOTOR_LEFT_PWM,  config.motorCalibLeft);
-    digitalWrite(MOTOR_LEFT_INA, HIGH);
-    digitalWrite(MOTOR_LEFT_INB, LOW);
-    analogWrite(MOTOR_RIGHT_PWM, config.motorCalibRight);
-    digitalWrite(MOTOR_RIGHT_INA, LOW);
-    digitalWrite(MOTOR_RIGHT_INB, HIGH);
-    if (motorActiveStartTime == 0) motorActiveStartTime = millis();
+    driveMotors((int16_t)config.motorCalibLeft, -(int16_t)config.motorCalibRight);
 }
 
 void Movement::turnLeft(const DeviceConfig& config) {
-    analogWrite(MOTOR_LEFT_PWM,  config.motorCalibLeft);
-    digitalWrite(MOTOR_LEFT_INA, LOW);
-    digitalWrite(MOTOR_LEFT_INB, HIGH);
-    analogWrite(MOTOR_RIGHT_PWM, config.motorCalibRight);
-    digitalWrite(MOTOR_RIGHT_INA, HIGH);
-    digitalWrite(MOTOR_RIGHT_INB, LOW);
-    if (motorActiveStartTime == 0) motorActiveStartTime = millis();
+    driveMotors(-(int16_t)config.motorCalibLeft, (int16_t)config.motorCalibRight);
 }
 
 bool Movement::frontBlocked(const ObstacleView& v) const {
@@ -206,7 +246,15 @@ void Movement::handleMovementSM(const ObstacleView& v, int cached_lux,
             }
             break;
 
-        case CPP_M_MOVING:
+        case CPP_M_MOVING: {
+            // Target back to IDLE (care layer settling, CLI/Hub 'mode idle'):
+            // stop immediately instead of waiting for the 20 s safety timeout.
+            if (targetMode == CPP_IDLE) {
+                stopMotors(stats);
+                currentMovementState = CPP_M_IDLE;
+                break;
+            }
+
             // After 60 s of driving without obstacles, the anti-stuck backoff
             // resets to the base value: past stuck events must not permanently
             // penalize future recoveries.
@@ -215,43 +263,45 @@ void Movement::handleMovementSM(const ObstacleView& v, int cached_lux,
                 avoidance_attempts    = 0;
                 current_stuck_backoff = 30000UL;
             }
-            if (front_obs) {
+
+            // Proportional differential drive (NavPolicy.h): continuous steering
+            // away from obstacles instead of the old bang-bang stop-and-turn. The
+            // hard emergency case (a front sensor < emergency threshold) is still
+            // handled by the reverse/turn recovery FSM below.
+            NavDistances nd;
+            nd.top = v.top; nd.front_right = v.front_right; nd.front_left = v.front_left;
+            nd.left = v.left; nd.right = v.right;
+            const NavParams np = navDefaultParams();
+
+            WheelCmd cmd;
+            if (wallFollowMode != WALL_OFF) {
+                // Wall-following overrides seeking: keep a constant distance from
+                // the chosen wall using the side sensor (US5/US6).
+                cmd = wallFollowDrive(nd, (int16_t)config.motorCalibLeft,
+                                      (int16_t)config.motorCalibRight, np,
+                                      wallFollowMode == WALL_LEFT);
+            } else {
+                // Light/shadow seeking as a gentle steering bias: with a single
+                // LDR there is no left/right light gradient, so while below/above
+                // threshold we add a fixed bias and let obstacle avoidance shape
+                // the rest (virtual-force-field style composition).
+                float seekBias = 0.0f;
+                if (seekWantsTurn(targetMode == CPP_LIGHT, targetMode == CPP_SHADOW,
+                                  cached_lux, lightThr)) {
+                    seekBias = (targetMode == CPP_LIGHT) ? SEEK_BIAS_PWM : -SEEK_BIAS_PWM;
+                }
+                cmd = proportionalDrive(nd, (int16_t)config.motorCalibLeft,
+                                        (int16_t)config.motorCalibRight, np, seekBias);
+            }
+
+            if (cmd.emergency) {
                 stats.obstacles_avoided++;
-                seekTurnStartMs     = 0;   // reset anti-circling before avoidance
-                seekRelocateUntilMs = 0;
                 currentMovementState = CPP_M_AVOID_START;
             } else {
-                // Light/shadow seeking with ANTI-CIRCLING: if the rotation towards
-                // the source lasts too long without reaching the threshold (e.g.
-                // uniform light), instead of spinning in circles forever the robot
-                // "relocates" by driving forward for a moment and then retries. Never
-                // riskier than moveForward (which only starts with a clear front).
-                // Timings tunable on the bench.
-                const unsigned long SEEK_TURN_MAX_MS = 8000UL;  // ~1 slow turn
-                const unsigned long SEEK_RELOCATE_MS = 2000UL;
-                const bool wantTurn = seekWantsTurn(targetMode == CPP_LIGHT,
-                                                    targetMode == CPP_SHADOW,
-                                                    cached_lux, lightThr);
-
-                if (millis() < seekRelocateUntilMs) {
-                    moveForward(config);                  // relocation phase
-                } else if (wantTurn) {
-                    if (seekTurnStartMs == 0) seekTurnStartMs = millis();
-                    if (millis() - seekTurnStartMs > SEEK_TURN_MAX_MS) {
-                        seekTurnStartMs     = 0;
-                        seekRelocateUntilMs = millis() + SEEK_RELOCATE_MS;
-                        moveForward(config);
-                    } else if (targetMode == CPP_LIGHT) {
-                        turnRight(config);                // too dark -> seek light
-                    } else {
-                        turnLeft(config);                 // too bright -> seek shadow
-                    }
-                } else {
-                    seekTurnStartMs = 0;                  // threshold reached / IDLE
-                    moveForward(config);
-                }
+                driveMotors(cmd.left, cmd.right);
             }
             break;
+        }
 
         case CPP_M_AVOID_START:
             stopMotors(stats);
@@ -302,7 +352,95 @@ void Movement::handleMovementSM(const ObstacleView& v, int cached_lux,
                 current_stuck_backoff += 10000UL; // exponential backoff (linear 10 s increment)
             }
             break;
+
+        case CPP_M_SCAN_ROTATE: {
+            // Light scan, phase 1: rotate in place for ~one full turn while
+            // accumulating the LDR ADC per time sector ("solar compass" with a
+            // single fixed sensor). Obstacles are not evaluated here: the
+            // rotation is in place (no translation), and the global motor
+            // safety timeout still bounds the whole maneuver.
+            if (targetMode == CPP_IDLE) {           // scan aborted (mode change)
+                stopMotors(stats);
+                currentMovementState = CPP_M_IDLE;
+                break;
+            }
+            turnRight(config);
+            const unsigned long elapsed  = millis() - scanStartMs;
+            const unsigned long sectorMs = LIGHT_SCAN_TOTAL_MS / CARE_SCAN_SECTORS;
+            if (cached_lux >= 0 &&
+                millis() - scanLastSampleMs >= LIGHT_SCAN_SAMPLE_MS) {
+                scanLastSampleMs = millis();
+                uint8_t idx = (uint8_t)(elapsed / sectorMs);
+                if (idx >= CARE_SCAN_SECTORS) idx = CARE_SCAN_SECTORS - 1;
+                scanSectorSum[idx] += (float)cached_lux;
+                scanSectorCnt[idx]++;
+            }
+            if (elapsed >= LIGHT_SCAN_TOTAL_MS) {
+                float mean[CARE_SCAN_SECTORS];
+                for (uint8_t i = 0; i < CARE_SCAN_SECTORS; ++i) {
+                    mean[i] = scanSectorCnt[i] ? (scanSectorSum[i] / (float)scanSectorCnt[i])
+                                               : NAN;
+                }
+                const int8_t best = careBestScanSector(mean, CARE_SCAN_SECTORS, scanSeekLight);
+                if (best < 0) {
+                    // No valid light data collected (LDR blind): give up on the
+                    // scan and fall back to plain seeking-biased driving.
+                    currentMovementState = CPP_M_MOVING;
+                    stateStartTime       = millis();
+                } else {
+                    // Phase 2: rotate again (same direction, time-based dead
+                    // reckoning) up to the middle of the best sector.
+                    scanAlignUntilMs = millis() + (unsigned long)best * sectorMs + sectorMs / 2;
+                    currentMovementState = CPP_M_SCAN_ALIGN;
+                }
+            }
+            break;
+        }
+
+        case CPP_M_SCAN_ALIGN:
+            if (targetMode == CPP_IDLE) {           // scan aborted (mode change)
+                stopMotors(stats);
+                currentMovementState = CPP_M_IDLE;
+                break;
+            }
+            turnRight(config);
+            if ((long)(millis() - scanAlignUntilMs) >= 0) {
+                // Aligned with the chosen sector: resume normal driving. The
+                // residual heading error of the time-based alignment is
+                // corrected naturally by the gradient climb that follows.
+                currentMovementState = CPP_M_MOVING;
+                stateStartTime       = millis();
+            }
+            break;
     }
+}
+
+void Movement::startLightScan(bool seekLight, CumulativeStats& stats) {
+    // Only from benign states: the avoidance/stuck recovery keeps priority,
+    // and a scan over a scan simply restarts the rotation.
+    if (currentMovementState != CPP_M_IDLE &&
+        currentMovementState != CPP_M_MOVING &&
+        !scanInProgress()) {
+        return;
+    }
+    scanSeekLight    = seekLight;
+    scanStartMs      = millis();
+    scanLastSampleMs = 0;   // accept the first sample immediately
+    for (uint8_t i = 0; i < CARE_SCAN_SECTORS; ++i) {
+        scanSectorSum[i] = 0.0f;
+        scanSectorCnt[i] = 0;
+    }
+    // Count the seeking session here: the care-driven path enters MOVING via
+    // the scan states, skipping the M_IDLE bookkeeping.
+    if (currentMovementState == CPP_M_IDLE) {
+        if (seekLight) stats.light_seeking_sessions++;
+        else           stats.shadow_seeking_sessions++;
+        motorActiveStartTime  = millis();
+        avoidance_attempts    = 0;
+        current_stuck_backoff = 30000UL;
+    }
+    stateStartTime       = millis();
+    currentMovementState = CPP_M_SCAN_ROTATE;
 }
 
 void Movement::setTargetMode(CppMode mode) {
