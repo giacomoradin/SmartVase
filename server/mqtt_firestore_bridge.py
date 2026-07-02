@@ -110,36 +110,41 @@ def on_message(client, userdata, msg):
 
 # --- Firestore Listener Callback (Firestore -> MQTT) ---
 
-def on_config_snapshot(col_snapshot, changes, read_time):
-    """Callback triggered whenever a configuration document changes in Firestore."""
-    try:
-        for change in changes:
-            # We only care if the Flutter app added or modified the document
-            if change.type.name in ['ADDED', 'MODIFIED']:
-                doc = change.document
+def on_command_snapshot(col_snapshot, changes, read_time):
+    """Callback triggered whenever a command document changes in Firestore."""
+    for change in changes:
+        # We only care if the Flutter app added or modified the document
+        if change.type.name in ['ADDED', 'MODIFIED']:
+            doc = change.document
+            path_parts = doc.reference.path.split('/')
+            
+            # Expected path: smartvase/{vase_id}/command/{doc_id}
+            if len(path_parts) != 4:
+                print(f"WARN: Unexpected document path structure: {doc.reference.path}. Ignoring.")
+                continue
                 
-                # Ensure we are only reacting to documents actually named 'config'
-                if doc.id == 'config':
-                    path_parts = doc.reference.path.split('/')
-                    # Expected path: smartvase/{vase_id}/command/config
-                    if len(path_parts) >= 4:
-                        vase_id = path_parts[1]
-                        payload_dict = doc.to_dict()
-                        
-                        # Convert Firestore dict back to JSON string for MQTT
-                        payload_json = json.dumps(payload_dict)
-                        mqtt_topic = f"smartvase/{vase_id}/command/config"
-                        
-                        print(f"\nFirestore Trigger: Config updated for {vase_id}. Publishing to MQTT...")
-                        # thread-safe publish, using QoS 1 and Retain=True for config data
-                        client.publish(mqtt_topic, payload_json, qos=1, retain=True)
-    except Exception as e:
-        print(f"ERROR: Exception in Firestore configuration listener: {e}")
+            print(f"\nFirestore trigger: Document {doc.id} changed in {doc.reference.path}")
+
+            vase_id = path_parts[1]
+            payload_dict = doc.to_dict()
+            
+            # Convert Firestore dict back to JSON string for MQTT
+            payload_json = json.dumps(payload_dict)
+            mqtt_topic = f"smartvase/{vase_id}/command/{doc.id}"
+            
+            # Ensure we are only reacting to documents actually named 'config'
+            if doc.id == 'config':
+                print(f"\nFirestore Trigger: Config updated for {vase_id}. Publishing to MQTT...")
+                # thread-safe publish, using QoS 1 and Retain=True for config data
+                client.publish(mqtt_topic, payload_json, qos=1, retain=True)
+            else:
+                print(f"Got command: {doc.id}")
+                client.publish(mqtt_topic, payload_json)
 
 # Attach the Firestore background listener
 # Using a collection_group query to listen to ALL subcollections named 'command'
-print("Attaching Firestore listener for configuration commands...")
-config_watch = db.collection_group("command").on_snapshot(on_config_snapshot)
+print("Attaching Firestore listener for commands...")
+config_watch = db.collection_group("command").on_snapshot(on_command_snapshot)
 
 # --- Finalize MQTT Configuration and Run ---
 
