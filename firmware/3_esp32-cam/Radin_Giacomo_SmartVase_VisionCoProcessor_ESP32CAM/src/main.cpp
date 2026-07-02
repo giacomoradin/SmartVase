@@ -47,6 +47,8 @@
 #include <ArduinoJson.h>
 #include <time.h>
 
+# include "secrets.h"
+
 #define ENABLE_USER_AUTH
 #define ENABLE_CLOUD_STORAGE
 #define ENABLE_FIRESTORE
@@ -176,8 +178,12 @@ void loadConfig() {
     // BENCH ONLY — Hardcoded credentials for testing.
     // Overwrites NVS settings in memory on each boot.
     // ============================================================
-    cfg.wifi_ssid   = "GiacomoPhone";
-    cfg.wifi_pass   = "giacomonoretaaleinternet";
+    cfg.wifi_ssid   = SECRET_WIFI_SSID;
+    cfg.wifi_pass   = SECRET_WIFI_PASS;
+    cfg.firebase_api_key = SECRET_FIREBASE_API_KEY;
+    cfg.firebase_project_id = SECRET_FIREBASE_PROJECT_ID;
+    cfg.firebase_email = SECRET_FIREBASE_EMAIL;
+    cfg.firebase_password = SECRET_FIREBASE_PASSWORD;
     // ============ End bench block ============
 }
 
