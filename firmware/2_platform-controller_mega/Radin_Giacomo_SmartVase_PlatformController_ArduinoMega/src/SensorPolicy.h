@@ -120,6 +120,42 @@ static inline bool withinDaylightWindow(bool timeValid, uint8_t hourOfDay,
     return hourOfDay >= startHour && hourOfDay < endHour;
 }
 
+/*!
+    @brief    Median of three samples, NaN-aware (anti-bounce sonar pre-filter).
+
+    @details  A single spurious ultrasonic echo (a "bounce") shows up as one
+              isolated out-of-trend sample; a median of 3 rejects it without the
+              lag an average/EMA would add, which matters for proportional
+              steering (one bad reading would otherwise jerk the robot). NaN
+              handling: NaNs are dropped; the median is taken over the remaining
+              valid samples (2 valid → their average; 1 valid → that value; 0
+              valid → NaN).
+
+    @param[in] a First sample (cm, may be NaN).
+    @param[in] b Second sample (cm, may be NaN).
+    @param[in] c Third sample (cm, may be NaN).
+
+    @return   The NaN-aware median, or NaN if all three are invalid.
+*/
+static inline float medianOf3(float a, float b, float c) {
+    // Collect the valid samples.
+    float v[3];
+    int n = 0;
+    if (!isnan(a)) v[n++] = a;
+    if (!isnan(b)) v[n++] = b;
+    if (!isnan(c)) v[n++] = c;
+    if (n == 0) return NAN;
+    if (n == 1) return v[0];
+    if (n == 2) return 0.5f * (v[0] + v[1]);
+    // n == 3: the median is the total minus the min and the max.
+    float mn = v[0], mx = v[0];
+    for (int i = 1; i < 3; ++i) {
+        if (v[i] < mn) mn = v[i];
+        if (v[i] > mx) mx = v[i];
+    }
+    return (v[0] + v[1] + v[2]) - mn - mx;
+}
+
 /*! @} */ // MegaSensors
 
 #endif // SENSOR_POLICY_H

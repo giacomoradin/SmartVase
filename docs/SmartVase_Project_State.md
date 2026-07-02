@@ -8,7 +8,70 @@
 > cloud / Python vision / Android app are not discussed unless strictly
 > necessary.
 >
-> Updated as of **2026-06-30** (lab bring-up in progress).
+> Updated as of **2026-07-02** (lab bring-up in progress).
+
+---
+
+## 0-ter. 2026-07-02 update — autonomous plant care (Mega v5.3)
+
+The Mega gains the behavioral layer the project was missing: instead of only
+*executing* modes commanded from the app, it can now *decide* them from the
+plant's needs. Design document (product thesis, layered model, decision
+table): **`docs/Plant_Care_Design.md`**. Offline build SUCCESS
+(RAM 66.7% / Flash 25.2%); host test suite all green (7 test binaries,
+including the new `test_care_policy`).
+
+- **`CarePolicy.h` (new, pure)** — plant profiles (shade/medium/sun presets),
+  daily **light budget** (LDR ADC normalized against the auto-calibrated room
+  maximum, integrated into "full-light minutes" — a relative DLI proxy),
+  light-scan sector selection, dose/soak/verify watering decision, and the
+  `careStep()` daily state machine
+  (`NIGHT → SEEK_SUN → BASK → SEEK_SHADE/SHELTER → TOP_UP`). 50 host checks in
+  `tests/host/test_care_policy.cpp`.
+- **`Care.{h,cpp}` (new module)** — runs the policy at 1 Hz: KPI counters
+  (budget %, doses, relocations, UVA minutes), watering cycle over `Pump`
+  (doses well under the caps, soak wait between doses, daily dose cap as a
+  broken-probe fail-safe, tank guard), **manual-override suspension** (a
+  CLI/Hub `setMode` pauses autonomy for 30 min — the operator always wins),
+  `care_day_end` daily KPI log toward the Hub. **Disabled by default**
+  (`care on` to enable); requires a valid clock (RTC or software fallback).
+- **`Movement`** — new **rotating light scan** (`startLightScan`,
+  `M_SCAN_ROTATE`/`M_SCAN_ALIGN` internal states, reported as `MOVING` in
+  telemetry): ~one in-place turn sampling the LDR over 12 time sectors, then
+  align to the best sector and resume the gradient climb. `LIGHT_SCAN_TOTAL_MS`
+  (6 s) is time-based and **must be bench-tuned** to a real 360°. Fix: target
+  mode back to `IDLE` now stops `M_MOVING` immediately (previously the robot
+  kept driving until the 20 s motor safety timeout).
+- **`GrowLight`** — new `force()` entry point; with care active the UVA lights
+  become the **end-of-day budget top-up** (deficit > 20% within the last hour
+  of the daylight window, daily cap), replacing the legacy "IDLE + dark" rule
+  (which still applies with care off).
+- **`DeviceConfig`** extended with the care fields (enable flag + profile);
+  EEPROM layout still fits the 64 B slot (34 B used). ⚠️ The struct change
+  invalidates both stored slots via CRC on the first boot of v5.3: config
+  falls back to factory defaults → re-run `calib`, `tank`, `light` on the
+  bench.
+- **CLI** — new `plant [shade|medium|sun]` (profile show/apply) and
+  `care [on|off]` (enable + status with daily KPIs); `status`/`config`
+  extended.
+- **Hardware notes** — RTC CR2032 battery **replaced on 2026-07-01** (not yet
+  bench-verified: `rtc` must show a valid time without the software fallback);
+  BME680 wiring planned next (then set `BME680_ENABLED 1`).
+- **Proto v4.1 — care KPIs in `TelemetryDeep`** (done in a second pass the
+  same night): `care_enabled`, `care_state`, `light_budget_pct`,
+  `relocations_today`, `water_doses_today`, `growlight_minutes_today`
+  appended as tags 22-27 (backward compatible with v4.0 decoders). Regenerated
+  offline with the local nanopb venv, canonical files in
+  `infra/smartvase-proto/` (the pre-build hook syncs Hub and Mega copies).
+  The Mega fills the fields from the Care module in the deep-telemetry
+  scheduler; the Hub publishes them as a `care` object in the telemetry JSON
+  (see `SmartVase_data_structure.md` §1). Both builds verified: Mega SUCCESS
+  (RAM 66.7% / Flash 25.3%), Hub SUCCESS (RAM 15.6% / Flash 80.5%).
+- **Whole-day simulation test** (`tests/host/test_care_day_sim.cpp`, second
+  pass): drives the pure care layer through simulated days at 1-minute ticks
+  and asserts the emergent behavior (sunny-day arc with 2 relocations and a
+  100-130% budget; dim-day UVA top-up bounded by window and cap; watering
+  cycle convergence and stuck-dry-probe cap). Host suite now at 8 binaries.
 
 ---
 
@@ -137,7 +200,7 @@ dangerous patterns: no debug print on Serial1 (framing preserved), no
 | Platform Controller Mega  | **v5.1** | `firmware/2_platform-controller_mega/.../src/`          | ✅ SUCCESS (offline) |
 | ESP32 Hub                 | **v1.2** | `firmware/1_esp32-hub/.../src/` + `include/`            | ✅ SUCCESS (offline) |
 | ESP32-CAM                 | **v2.1** | `firmware/3_esp32-cam/.../src/main.cpp`                 | ✅ SUCCESS (offline) |
-| nanopb protocol           | **v4.0** | `firmware/.../src/smartvase.proto` + `infra/smartvase-proto/` | unchanged |
+| nanopb protocol           | **v4.1** | `infra/smartvase-proto/` (canonical) + synced copies in Hub/Mega | care KPIs appended (tags 22-27), 2026-07-02 |
 
 No firmware has been **flashed** on real hardware yet: the bring-up is
 planned for 2026-06-12 following
@@ -383,7 +446,7 @@ Persistent stats (namespace `cam_stats`): `succ_frames`, `fail_frames`,
 
 ---
 
-## 5. Hub ↔ Mega serial protocol (`smartvase.proto` v4.0)
+## 5. Hub ↔ Mega serial protocol (`smartvase.proto` v4.1)
 
 Canonical file: [`infra/smartvase-proto/smartvase.proto`](../infra/smartvase-proto/smartvase.proto)
 (identical copy also in `firmware/.../src/smartvase.proto` and

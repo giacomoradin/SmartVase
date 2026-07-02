@@ -1,30 +1,40 @@
 # SmartVase — Architecture and project context
 
 > Technical onboarding document for the SmartVase team.
-> State consolidated as of **2026-05-19**. Aligned with the PIN map
+> State consolidated as of **2026-07-02**. Aligned with the PIN map
 > `docs/PINS - Sheet1.csv` and the current architectural decisions.
+> The behavioral/product design of the autonomous care layer lives in
+> `docs/Plant_Care_Design.md`.
 
 ---
 
 ## 1. Current project status (TL;DR)
 
-- The hardware prototype is under **active rebuild** (May 2026). The physical
-  robot is being built *right now*: the PIN map (`docs/PINS - Sheet1.csv`) is the
-  authoritative wiring reference.
-- **Full firmware refactor completed** on 2026-05-19, aligned with the new
-  PIN map + architectural decisions (see §11). Versions:
-  - Mega: **v5.0** — 6 HC-SR04, pump via relay, RTC DS3232, dedicated `Pump`
-    module, `Communication` now actually executes commands end-to-end.
-    SRAM hysteresis (800/1200 B) for a clean recovery from degraded mode.
-  - Hub: **v1.1** — `MainLogic.cpp` no longer has stubs; it publishes telemetry,
-    logs, alarms and **command/ack** (dedicated topic); the deadman switch is active.
-  - ESP32-CAM: **v2.0** — completely rewritten from bench-code to
-    Wi-Fi STA + NTP + MQTT TLS + **streaming** HTTP upload to a Cloud Function.
-  - Protocol: **proto v4.0** — `TelemetryFast` with 5 nav distances
-    + soil moisture + epoch_s; `CommandResponse` with a `value` field.
-- **Python vision pipeline** extended with `metrics`, `leaf_health` (rule-based
-  v0.2) and `pipeline.analyze_image()`. JSON output conforming to
-  `SmartVase_data_structure.md`. 18 pytest tests pass.
+- The hardware prototype is in **lab bring-up** (June–July 2026): motors and
+  sensors partially verified on the bench, the PIN map (`docs/PINS - Sheet1.csv`)
+  is the authoritative wiring reference.
+- Firmware versions (all build offline):
+  - Mega: **v5.3** — 6 HC-SR04, pump via relay with tank protection, RTC
+    DS3232 (+ software fallback clock), UVA grow lights, VNH5019 motor driver,
+    proportional steering + wall-following, and the **autonomous plant-care
+    layer** (`Care` + `CarePolicy.h`: daily light budget, rotating light scan,
+    dose/soak/verify watering, plant profiles — see
+    `docs/Plant_Care_Design.md`). SRAM hysteresis (800/1200 B) for a clean
+    recovery from degraded mode.
+  - Hub: **v1.3** — publishes telemetry, logs, alarms and **command/ack**;
+    deadman switch active; TLS to HiveMQ with NTP kick; non-blocking MQTT
+    reconnect; OTA (to be bench-validated); AP provisioning + captive portal.
+  - ESP32-CAM: **v2.1** — Wi-Fi STA + NTP + MQTT TLS + **streaming** HTTP
+    upload to a Cloud Function.
+  - Protocol: **proto v4.1** — `TelemetryFast` with 5 nav distances
+    + soil moisture + epoch_s; `CommandResponse` with a `value` field;
+    `TelemetryDeep` extended with the autonomous-care daily KPIs
+    (state, light-budget %, relocations, doses, UVA minutes — tags 22-27,
+    published by the Hub as the `care` JSON object).
+- **Python vision**: today the repo contains `vision/pixel_analyzer.py`
+  (green/brown pixel analysis on RGB565 + one pytest); the full
+  quality-gate / leaf-health pipeline described in
+  `SmartVase_data_structure.md` is still to be built.
 - **Cloud Function stub** `upload-image` added in `infra/cloud-functions/`
   (Node 20 + Firebase Storage). To be refined with Fia.
 
@@ -34,11 +44,14 @@
 
 SmartVase is a **mobile, autonomous IoT pot/greenhouse**:
 
-- It moves on wheels seeking light or shade depending on the selected mode
-  (`LIGHT` / `SHADOW` / `IDLE`) — light-seeking / shadow-seeking behavior
-  driven by the photoresistor.
-- It waters the plant on command (relay-controlled pump) or, in the future,
-  autonomously based on soil moisture (fork sensor).
+- It moves on wheels seeking light or shade, either on command
+  (`LIGHT` / `SHADOW` / `IDLE` modes) or **autonomously**: with the care layer
+  enabled (Mega v5.3, `care on`) the robot manages the plant's day on its own,
+  keeping a daily **light budget** and the soil moisture inside the range of
+  the selected plant profile (design: `docs/Plant_Care_Design.md`).
+- It waters the plant on command (relay-controlled pump) or autonomously in
+  **dose/soak/verify** cycles based on soil moisture (fork sensor), always
+  under the tank-protection and duration-cap safeties.
 - It periodically captures images of the plant with the ESP32-CAM and evaluates
   frame quality and leaf health via the Python vision pipeline.
 - It is controlled by an **Android app** (MVVM + Compose, developed by Francesco).
@@ -160,11 +173,16 @@ pull-up on the shield → driver enabled at rest).
   `WaterCommand` is implemented end-to-end.
 - **UVA lights** ([GrowLight.cpp](firmware/2_platform-controller_mega/Radin_Giacomo_SmartVase_PlatformController_ArduinoMega/src/GrowLight.cpp)):
   relay D11, lights wired on the **NC** contact (with the relay at rest they are
-  ON, polarity inverted compared to the pump). Turned on automatically only if:
-  `IDLE` mode **and** `lux < light_threshold` **and** within the daylight window
-  **06:00–20:00** (gated via RTC/software clock; outside that window or without a
-  valid time they stay off). Pure logic in
-  [`growLightWanted()` / `withinDaylightWindow()`](firmware/2_platform-controller_mega/Radin_Giacomo_SmartVase_PlatformController_ArduinoMega/src/SensorPolicy.h).
+  ON, polarity inverted compared to the pump). Two driving policies:
+  - **care layer active** (v5.3): the lights are the **end-of-day budget
+    top-up** — on only when, near the close of the daylight window, the daily
+    light budget is still in deficit, with a per-day cap (`CARE_TOP_UP` state,
+    see `docs/Plant_Care_Design.md` §6);
+  - **care layer off** (legacy rule): on only if `IDLE` mode **and**
+    `lux < light_threshold` **and** within the daylight window **06:00–20:00**
+    (gated via RTC/software clock; outside that window or without a valid time
+    they stay off). Pure logic in
+    [`growLightWanted()` / `withinDaylightWindow()`](firmware/2_platform-controller_mega/Radin_Giacomo_SmartVase_PlatformController_ArduinoMega/src/SensorPolicy.h).
 
 ### 4.5 "Fork" soil-moisture sensor
 
@@ -318,18 +336,52 @@ SmartVase/
   with `watchdog_resets` counting, `degradedMode` handling if `freeRam<800`
   or if the Hub is silent for > 120 s.
 - **`Movement`** — state machine `M_IDLE → M_MOVING → M_AVOID_START →
-  M_AVOID_REVERSING → M_AVOID_TURNING → M_STUCK`. Light/shadow seeking
-  via the photoresistor (`light_threshold`, default **500**, tunable from the
-  CLI with `light <adc>`). Avoidance with 3 attempts before entering `M_STUCK`
-  (auto-incrementing cooldown). **Pololu Dual VNH5019** driver (see §4.2):
-  PWM/INA/INB + EN/DIAG fault read (`faultLeft()`/`faultRight()`).
-- **`Sensors`** — readings of the **6** round-robin HC-SR04 with an EMA filter
-  (α=0.4) + validity thresholds (2–200/120 cm) + invalid-reading streaks. RTC
-  DS3232 with a **software fallback clock** (see §4.3). BME680 and battery behind
-  flags (not mounted).
+  M_AVOID_REVERSING → M_AVOID_TURNING → M_STUCK` (+ the internal
+  `M_SCAN_ROTATE / M_SCAN_ALIGN` light-scan states, reported as `MOVING` in
+  telemetry). In `M_MOVING` it uses **proportional differential steering**
+  (`NavPolicy.h`, see below) instead of the old bang-bang stop-and-turn:
+  continuous steering away from the closer side, speed ramped down in the slow
+  zone, with the hard `< emergencyCm` case still handled by the reverse/turn
+  recovery FSM; a target mode back to `IDLE` now stops immediately (no longer
+  waits for the 20 s safety timeout). Light/shadow seeking (`light_threshold`,
+  default **500**, tunable via `light <adc>`) becomes a gentle steering bias.
+  **Rotating light scan** (`startLightScan`, v5.3): with a single fixed LDR the
+  light direction is obtained by rotating in place for ~one turn while
+  accumulating the mean ADC over 12 time sectors, then rotating again to the
+  best sector (brightest/darkest) and resuming the gradient climb — the "solar
+  compass" used by the care layer on every relocation. Optional
+  **wall-following** sub-mode (`wall <left|right|off>`, bench-only) via the
+  side sensors. All maneuvers route through a signed `driveMotors(left,right)`
+  primitive. Driver: **Pololu Dual VNH5019** (see §4.2), PWM/INA/INB
+  (+ EN/DIAG fault read when wired).
+- **`NavPolicy.h`** — pure, host-testable navigation logic (no HW):
+  `proportionalDrive` (zone-based differential command + emergency flag),
+  `wallFollowDrive` (side-sensor P controller), NaN-safe. Unit-tested in
+  `tests/host/test_nav_policy.cpp`.
+- **`Care` / `CarePolicy.h`** (v5.3) — the **autonomous plant-care layer**
+  (homeostasis, L2 in the layered model of `docs/Plant_Care_Design.md` §2).
+  `CarePolicy.h` is pure and host-testable (`tests/host/test_care_policy.cpp`):
+  plant profiles with shade/medium/sun presets, daily **light budget**
+  (relative DLI proxy — LDR ADC normalized against the auto-calibrated room
+  maximum and integrated over time), scan sector selection, dose/soak/verify
+  watering decision, and the `careStep()` daily state machine
+  (`NIGHT → SEEK_SUN → BASK → SEEK_SHADE/SHELTER → TOP_UP`). `Care.cpp` runs
+  it at 1 Hz and applies it to the actuators, adding: daily KPI counters
+  (budget %, doses, relocations, UVA minutes — `care` CLI + `care_day_end`
+  log), a **manual-override suspension** (a CLI/Hub `setMode` pauses autonomy
+  for 30 min), and full deference to the L0 safeties (degraded mode, tank
+  guard, caps). Profile and enable flag persisted in `DeviceConfig`
+  (EEPROM); **disabled by default**, enabled with `care on`.
+- **`Sensors`** — readings of the **6** round-robin HC-SR04 with a **median-of-3
+  anti-bounce pre-filter** (`medianOf3`) feeding an EMA filter (α=0.4) +
+  validity thresholds (2–200/120 cm) + invalid-reading streaks. RTC DS3232 with
+  a **software fallback clock** (see §4.3). BME680 and battery behind flags
+  (not mounted).
 - **`Pump`** — relay D10 (active-LOW), 60 s cap, empty-tank protection.
-- **`GrowLight`** — relay D11, UVA lights on the NC contact; on in IDLE +
-  insufficient light + daylight window 06:00–20:00 (see §4.4).
+- **`GrowLight`** — relay D11, UVA lights on the NC contact; with the care
+  layer active they are the end-of-day budget top-up, otherwise the legacy
+  rule applies: on in IDLE + insufficient light + daylight window
+  06:00–20:00 (see §4.4).
 - **`Communication`** — serial framing (SOF/len/payload/CRC16-CCITT),
   circular log queue (20 slots), encode/decode `WrapperMessage`, `cmd_id`
   idempotency + command clamp/rate-limit (`CommandPolicy.h`).
@@ -337,9 +389,10 @@ SmartVase/
   rotation (wear leveling) + magic number + CRC16 for `DeviceConfig`
   and `CumulativeStats`. Write throttling (60s config, 300s stats).
 - **Debug CLI** over USB at 115200 baud: `status`, `stats`, `config`,
-  `sensors`, `diag`, `reboot`, `mode`, `motor <dir> <ms>` (max 60 s),
-  `motortest`, `pump <ms>`, `tank <cm>`, `light <adc>`, `calib`, `rtc`/`rtc set`,
-  `standalone`, `help`.
+  `sensors`, `diag`, `reboot`, `mode`, `plant [shade|medium|sun]`,
+  `care [on|off]`, `wall <left|right|off>`, `motor <dir> <ms>`
+  (max 60 s), `motortest`, `pump <ms>`, `tank <cm>`, `light <adc>`, `calib`,
+  `rtc`/`rtc set`, `standalone`, `help`.
 
 ### 7.2 ESP32 Hub — `1_esp32-hub`
 

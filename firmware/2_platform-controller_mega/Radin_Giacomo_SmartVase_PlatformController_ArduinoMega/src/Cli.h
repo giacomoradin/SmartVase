@@ -3,32 +3,38 @@
 
     @ingroup MegaCli
 
-    @brief  CLI seriale di debug del Mega, sulla porta USB.
+    @brief  Debug serial CLI of the Mega, on the USB port.
 
-    @details Usa `Serial` (115200 baud, terminatore `\n`) e non interferisce
-             con la seriale verso l'Hub (`Serial1`, vedi `Communication`).
-             Comandi disponibili:
+    @details Uses `Serial` (115200 baud, `\n` terminator) and does not interfere
+             with the serial link toward the Hub (`Serial1`, see `Communication`).
+             Available commands:
 
-             | Comando                    | Effetto |
+             | Command                    | Effect |
              |-----------------------------|---------|
-             | `help` / `?`                | Lista comandi |
-             | `version`                   | Versione firmware |
-             | `status`                    | Modalità operativa + stato runtime + RAM |
-             | `stats`                     | Statistiche cumulative dalla EEPROM |
-             | `config`                    | Configurazione corrente |
-             | `sensors`                   | Ultime letture sensori |
-             | `diag`                      | Diagnostica guidata: per ogni sensore/motore, stato + cosa controllare se non funziona |
-             | `tank`                      | Stato tanica (livello, soglia, verdetto) |
-             | `tank <cm>`                 | Imposta soglia tanica-vuota (persistita) |
-             | `light <adc>`               | Imposta soglia luminosità 0..1023 (persistita): usata sia dal seeking LIGHT/SHADOW sia dalle luci UVA |
-             | `rtc`                       | Epoch corrente + validità oscillatore (chip reale o clock software) |
-             | `rtc set <epoch>`           | Imposta l'ora (epoch Unix in s); se il chip DS3232 non risponde, attiva un clock software di fallback (`millis()`-based, si perde al reset) |
-             | `mode <idle\|light\|shadow>` | Cambio modalità operativa |
-             | `motor <f\|b\|l\|r> <ms>`    | Test motori (max 60000 ms, ruote sollevate) |
-             | `motortest`                 | Sequenza guidata f/b/l/r per verificare versi/mapping |
-             | `calib <left> <right>`      | Calibrazione PWM motori 0..255 (persistita) |
-             | `pump <ms>`                 | Test pompa (max 60000 ms, blocco se tanica vuota) |
-             | `standalone <on\|off>`       | Sospende il deadman Hub per test a banco |
+             | `help` / `?`                | Command list |
+             | `version`                   | Firmware version |
+             | `status`                    | Operating mode + runtime state + RAM |
+             | `stats`                     | Cumulative statistics from EEPROM |
+             | `config`                    | Current configuration |
+             | `sensors`                   | Latest sensor readings |
+             | `diag`                      | Guided diagnostics: for each sensor/motor, state + what to check if it does not work |
+             | `tank`                      | Tank status (level, threshold, verdict) |
+             | `tank <cm>`                 | Sets the tank-empty threshold (persisted) |
+             | `light <adc>`               | Sets the brightness threshold 0..1023 (persisted): used both by LIGHT/SHADOW seeking and by the UVA lights |
+             | `rtc`                       | Current epoch + oscillator validity (real chip or software clock) |
+             | `rtc set <epoch>`           | Sets the time (Unix epoch in s); if the DS3232 chip does not respond, activates a software fallback clock (`millis()`-based, lost on reset) |
+             | `mode <idle\|light\|shadow>` | Operating mode change |
+             | `plant`                     | Current plant profile (preset, light target, soil thresholds, doses) |
+             | `plant <shade\|medium\|sun>` | Applies a plant preset (persisted) |
+             | `care`                      | Autonomous care layer status: FSM state, light budget, doses, relocations |
+             | `care <on\|off>`            | Enables/disables autonomous care (persisted; default off) |
+             | `wall <left\|right\|off>`   | Local side wall-following (US5/US6); overrides seeking while active |
+             | `motor <f\|b\|l\|r> <ms>`    | Motor test (max 60000 ms, wheels lifted) |
+             | `mfp0`                      | Continuous forward motor test (10 min, any key stops) for electrical checks |
+             | `motortest`                 | Guided f/b/l/r sequence to verify directions/mapping |
+             | `calib <left> <right>`      | Motor PWM calibration 0..255 (persisted) |
+             | `pump <ms>`                 | Pump test (max 60000 ms, blocked if the tank is empty) |
+             | `standalone <on\|off>`       | Suspends the Hub deadman for bench tests |
              | `reboot`                    | Soft reset via WDT |
 
     @date   2026-05-20
@@ -46,6 +52,7 @@ class Sensors;
 class Pump;
 class GrowLight;
 class Persistence;
+class Care;
 struct SystemStatus;
 
 /*!
@@ -55,36 +62,41 @@ struct SystemStatus;
 
 /*!
     @class  Cli
-    @brief  Parser e dispatcher dei comandi CLI seriali su USB (vedi tabella comandi in Cli.h).
+    @brief  Parser and dispatcher of the USB serial CLI commands (see the command table in Cli.h).
 */
 class Cli {
 public:
-    /*! @brief Costruttore: inizializza il buffer di linea vuoto. */
+    /*! @brief Constructor: initializes the empty line buffer. */
     Cli();
 
     /*!
-        @brief    Legge i caratteri disponibili da `Serial` senza bloccare e, a fine
-                   linea (`\n`), esegue il comando corrispondente.
-        @details  Va chiamato ad ogni iterazione del main loop. Accumula i caratteri
-                   in un buffer fisso (`BUF_SIZE`) finché non riceve il terminatore.
-        @param[in,out] mv  Stato/comandi del modulo Movement.
-        @param[in,out] sn  Stato/letture del modulo Sensors.
-        @param[in,out] pp  Stato/comandi del modulo Pump.
-        @param[in,out] gl  Stato del relè luci di coltivazione (GrowLight).
-        @param[in,out] ps  Configurazione/statistiche persistite (Persistence).
-        @param[in,out] sys Stato di sistema condiviso (SystemStatus).
+        @brief    Reads the available characters from `Serial` without blocking and, at
+                   end of line (`\n`), executes the corresponding command.
+        @details  To be called on every main-loop iteration. Accumulates the characters
+                   in a fixed buffer (`BUF_SIZE`) until the terminator is received.
+        @param[in,out] mv  State/commands of the Movement module.
+        @param[in,out] sn  State/readings of the Sensors module.
+        @param[in,out] pp  State/commands of the Pump module.
+        @param[in,out] gl  State of the grow-light relay (GrowLight).
+        @param[in,out] cr  Autonomous care layer (Care), for the `plant`/`care` commands.
+        @param[in,out] ps  Persisted configuration/statistics (Persistence).
+        @param[in,out] sys Shared system state (SystemStatus).
     */
-    void tick(Movement& mv, Sensors& sn, Pump& pp, GrowLight& gl,
+    void tick(Movement& mv, Sensors& sn, Pump& pp, GrowLight& gl, Care& cr,
               Persistence& ps, SystemStatus& sys);
 
 private:
-    /*! @brief Effettua il parsing di una linea di comando completa e ne esegue l'azione. */
+    /*! @brief Parses a complete command line and executes its action. */
     void execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLight& gl,
-                 Persistence& ps, SystemStatus& sys);
+                 Care& cr, Persistence& ps, SystemStatus& sys);
     /*! @brief Prints the list of available commands (`help`/`?` command). */
     void printHelp();
     /*! @brief Prints operating mode, runtime state and free RAM (`status` command). */
-    void printStatus(Movement& mv, Pump& pp, GrowLight& gl, SystemStatus& sys);
+    void printStatus(Movement& mv, Pump& pp, GrowLight& gl, Care& cr, SystemStatus& sys);
+    /*! @brief Prints the current plant profile (`plant` command). */
+    void printPlant(Persistence& ps);
+    /*! @brief Prints the autonomous-care status and daily KPIs (`care` command). */
+    void printCare(Care& cr, Persistence& ps);
     /*! @brief Prints the cumulative statistics read from EEPROM (`stats` command). */
     void printStats(Persistence& ps);
     /*! @brief Prints the current configuration read from EEPROM (`config` command). */

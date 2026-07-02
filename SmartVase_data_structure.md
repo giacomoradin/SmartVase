@@ -17,18 +17,51 @@ The system employs a hybrid communication model to optimize for hardware capabil
 **MQTT Topic:** `smartvase/{vase_id}/telemetry`
 **Firestore Path:** `smartvase/{vase_id}/telemetry/telemetry` *(Document ID: telemetry)*
 
-**JSON Payload Example:**
+**JSON Payload Example** (Hub v1.3 / proto v4.1; ambient fields such as
+`temperature_c`, `humidity_percent`, `pressure_hpa` and `battery_voltage` are
+included only when the corresponding sensor is fitted and returns a valid
+reading):
 {
   "timestamp_utc": 1678886400,
   "uptime_s": 12345,
-  "battery_voltage": 4.1,
-  "water_level_cm": 14.5,
+  "device_id": "HUB_123456",
+  "fw_version": "1.3.0",
+  "movement_state": "IDLE",
+  "lux": 540,
   "soil_moisture": 550,
-  "temperature_c": 22.5,
-  "humidity_percent": 45.0,
-  "lux": 800,
-  "device_status": "NOMINAL"
+  "water_level_cm": 14.5,
+  "distances_cm": { "top": 87.2, "front_right": 120.5, "front_left": 95.1, "left": 44.0, "right": 61.3 },
+  "free_ram_bytes": 2729,
+  "counters": {
+    "watchdog_resets": 0,
+    "total_irrigations": 12,
+    "total_irrigation_duration_s": 48,
+    "total_motor_active_time_s": 310,
+    "obstacles_avoided": 7,
+    "stuck_events": 0,
+    "bme_read_errors": 0,
+    "log_overflows": 0,
+    "pb_decode_failures": 0,
+    "light_seeking_sessions": 5,
+    "shadow_seeking_sessions": 2,
+    "escape_attempts": 1
+  },
+  "care": {
+    "enabled": true,
+    "state": "BASK",
+    "light_budget_pct": 62,
+    "relocations_today": 2,
+    "water_doses_today": 1,
+    "growlight_min_today": 0
+  }
 }
+
+The `care` object (proto v4.1, Mega v5.3+) carries the daily KPIs of the
+autonomous care layer: `state` is one of `NIGHT | SEEK_SUN | BASK |
+SEEK_SHADE | SHELTER | TOP_UP`, `light_budget_pct` is the percentage of the
+plant profile's daily light target achieved so far (may exceed 100), and the
+remaining fields are today's actuation counters. `enabled: false` means the
+care layer is off and the values are static zeros.
 
 ## 2. Log Events
 
@@ -44,6 +77,26 @@ The system employs a hybrid communication model to optimize for hardware capabil
   "event": "WATER_LEVEL_LOW",
   "detail": "Water level below 5cm"
 }
+
+### 2.1 Autonomous-care events (Mega v5.3)
+
+With the autonomous care layer enabled (`care on`, see
+`docs/Plant_Care_Design.md`), the Mega emits the following events through the
+normal log pipeline (same topic/path as above). They complement the `care`
+object of the telemetry (§1): the telemetry carries the current KPI snapshot,
+these logs carry the discrete events and the end-of-day summary:
+
+| `event` | `level` | `detail` | Meaning |
+|---|---|---|---|
+| `care_day_end` | INFO | `b<pct> d<n> r<n> g<min>` | Daily KPI summary at day rollover: light-budget % achieved, water doses, relocations, UVA top-up minutes. Example: `b82 d2 r3 g15` |
+| `care_state` | INFO | `SEEK_SUN` / `BASK` / `SEEK_SHADE` / `SHELTER` / `TOP_UP` / `NIGHT` | Care state transition |
+| `care_water` | INFO | `dose` / `cycle_done` | One irrigation dose delivered / dose-soak-verify cycle completed (wet target reached) |
+| `care_water` | WARN | `tank_empty` / `dose_cap` | Dose skipped: empty tank (refill needed) / daily dose cap hit (possible soil-probe fault) |
+| `care_paused` | INFO | `manual_override` | A manual `setMode` (app/CLI) suspended autonomy for 30 minutes |
+| `care_resumed` | INFO | `override_expired` | Autonomy resumed after the override grace period |
+
+The app can parse `care_day_end` to render the daily "plant wellness"
+summary (budget ring + doses + relocations) without any schema change.
 
 ## 3. Configuration Command
 

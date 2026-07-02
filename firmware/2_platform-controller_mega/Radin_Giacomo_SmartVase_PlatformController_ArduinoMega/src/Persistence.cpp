@@ -12,6 +12,7 @@
 
 #include "Persistence.h"
 #include "Crc16.h"
+#include "CarePolicy.h"
 
 // Guards: if adding fields makes a struct exceed its slot's space, it would
 // overlap with the next one (a silent bug). These fail at compile time.
@@ -123,6 +124,22 @@ void Persistence::loadConfig() {
         // Conservative default, to be tuned on the bench with `tank <cm>` (CLI):
         // US4->water distance beyond which the pump is blocked.
         config.tank_empty_cm      = 20;
+        // Autonomous care defaults: MEDIUM plant preset, care DISABLED until
+        // explicitly enabled from the CLI (`care on`) — a freshly flashed robot
+        // must never start moving/watering on its own on the bench.
+        {
+            const PlantProfile mp = carePresetProfile(CARE_PLANT_MEDIUM);
+            config.care_enabled           = 0;
+            config.care_plant_kind        = CARE_PLANT_MEDIUM;
+            config.care_light_target_min  = mp.light_target_min;
+            config.care_lux_high_adc      = mp.lux_high_adc;
+            config.care_soil_wet_adc      = mp.soil_wet_adc;
+            config.care_dose_ms           = mp.dose_ms;
+            config.care_soak_min          = mp.soak_min;
+            config.care_max_doses         = mp.max_doses_per_day;
+            config.care_max_reloc         = mp.max_reloc_per_day;
+            config.care_growlight_max_min = mp.grow_light_max_min;
+        }
         current_config_slot      = 0;
 
         config.crc16 = configCrc(config);

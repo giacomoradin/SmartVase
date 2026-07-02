@@ -29,6 +29,13 @@ static const char* movementStateToStr(MovementState s);
  *  unrecognized value, including Log_LogLevel_INFO itself. */
 static const char* logLevelToStr(Log_LogLevel l);
 
+/*! @brief Converts the Mega care-layer state code (proto v4.1
+ *  `TelemetryDeep.care_state`) into the string published in the `care.state`
+ *  field of the JSON telemetry.
+ *  @param[in] s CareState code (0=NIGHT .. 5=TOP_UP, see the Mega's CarePolicy.h).
+ *  @return Constant string; "NIGHT" for any unrecognized value. */
+static const char* careStateToStr(uint32_t s);
+
 /*! @brief Telemetry publish period over MQTT (ms). */
 #define TELEMETRY_PUBLISH_INTERVAL_MS  (60 * 1000)
 /*! @brief Deadman switch: Mega silent beyond this time => alarm. Kept slightly
@@ -285,6 +292,21 @@ static const char* movementStateToStr(MovementState s) {
     }
 }
 
+static const char* careStateToStr(uint32_t s) {
+    // Codes mirror the CareState enum in the Mega's CarePolicy.h; kept as a
+    // plain uint32 on the wire (no shared enum) so a v4.0 decoder simply
+    // ignores the field.
+    switch (s) {
+        case 1:  return "SEEK_SUN";
+        case 2:  return "BASK";
+        case 3:  return "SEEK_SHADE";
+        case 4:  return "SHELTER";
+        case 5:  return "TOP_UP";
+        case 0:
+        default: return "NIGHT";
+    }
+}
+
 static const char* logLevelToStr(Log_LogLevel l) {
     switch (l) {
         case Log_LogLevel_WARN:     return "WARN";
@@ -340,6 +362,17 @@ void MainLogic::publishTelemetryJson(const TelemetryFast& tf, const TelemetryDee
     c["light_seeking_sessions"]       = td.light_seeking_sessions;
     c["shadow_seeking_sessions"]      = td.shadow_seeking_sessions;
     c["escape_attempts"]              = td.escape_attempts;
+
+    // Autonomous-care daily KPIs (proto v4.1, Mega v5.3+). Always published,
+    // with the enabled flag, so the app can render the "plant wellness"
+    // summary and distinguish "care off" from "care idle".
+    JsonObject care = doc.createNestedObject("care");
+    care["enabled"]            = td.care_enabled;
+    care["state"]              = careStateToStr(td.care_state);
+    care["light_budget_pct"]   = td.light_budget_pct;
+    care["relocations_today"]  = td.relocations_today;
+    care["water_doses_today"]  = td.water_doses_today;
+    care["growlight_min_today"] = td.growlight_minutes_today;
 
     size_t n = serializeJson(doc, out.payload, sizeof(out.payload));
     if (n == 0 || n >= sizeof(out.payload)) {

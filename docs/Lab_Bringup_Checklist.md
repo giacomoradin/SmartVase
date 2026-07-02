@@ -1,7 +1,7 @@
 # SmartVase — Lab bring-up checklist
 
 > Step-by-step procedure for the first flash and testing of the three
-> firmwares (Mega v5.1, Hub v1.2, CAM v2.1) on the new prototype.
+> firmwares (Mega v5.3, Hub v1.3, CAM v2.1) on the new prototype.
 > The order is designed to be **safe**: each actuator is first verified
 > "unloaded", and only then is the load connected.
 >
@@ -167,6 +167,41 @@ Flash + serial monitor. At boot, `Platform Controller v5.1 boot` appears.
       high → set `light <adc>` lower than the ambient light value (see §1.3).
 - [ ] Check the time window: if `time_valid=NO` the lights stay off forever
       (no time available); set `rtc set <epoch>` or rely on the 08:00 fallback.
+
+### 1.9 Autonomous care layer (Mega v5.3, `care on`)
+
+> Full behavior description and decision table: `docs/Plant_Care_Design.md`.
+> ⚠️ First boot of v5.3: the extended `DeviceConfig` invalidates the stored
+> EEPROM config (CRC) → factory defaults. Re-apply `calib`, `tank`, `light`
+> before this section. Prerequisites: `standalone on` (no Hub), a valid time
+> (`rtc` → `time_valid=YES` — verify the new CR2032 here: it must NOT need the
+> software fallback), pump and motors already verified in §1.5–1.7.
+
+- [ ] **Scan rotation calibration**: `motor l 6000` with wheels on the ground —
+      the robot should complete roughly ONE full turn. If not, adjust
+      `LIGHT_SCAN_TOTAL_MS` in `Movement.cpp` (time-based, no encoders) and
+      re-flash. The light scan depends on it.
+- [ ] `plant medium` (or the preset matching the test plant) → `plant` shows
+      the profile; `config` shows `care_enabled=NO`.
+- [ ] `care on` → `care` shows `state = NIGHT` or the morning decision within
+      ~1 s ticks; with a light source on one side, the robot should perform the
+      scan rotation (`status` → `movementState=SCAN_ROTATE/SCAN_ALIGN`), then
+      drive toward the light and settle (`state = BASK`).
+- [ ] `care` KPIs: `light_budget` must grow while basking under light;
+      `day_max_adc` must match the brightest reading seen.
+- [ ] Re-seek test: shade the LDR at the basking spot for >10 min (or lower
+      `light <adc>`… patience) → the robot relocates (relocations counter +1).
+      For a quick bench check it is acceptable to just verify that covering
+      the LDR does NOT cause an immediate relocation (10 min hysteresis).
+- [ ] Watering: with the fork in dry soil (ADC below `soil_dry_adc`) and the
+      robot stationary → one dose of `dose_ms`, then `care` shows
+      `soak_remaining_s` counting down; no second dose before the soak ends.
+      Tank empty → WARN `care_water tank_empty`, no dose.
+- [ ] Manual override: `mode light` while care is active → `status` shows
+      `careActive=PAUSED (manual override)`; care resumes alone after 30 min
+      (or immediately with `care on`).
+- [ ] `care off` → the robot stops (target mode IDLE) and the UVA lights go
+      back to the legacy rule of §1.8.
 
 ---
 

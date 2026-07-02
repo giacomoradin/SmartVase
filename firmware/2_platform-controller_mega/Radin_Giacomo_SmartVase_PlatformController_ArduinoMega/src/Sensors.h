@@ -191,6 +191,17 @@ private:
      */
     void  sampleNextUltrasonic();
     /**
+     * @brief Median-of-3 anti-bounce pre-filter for a single ultrasonic probe.
+     * @details Keeps the last 2 raw readings per probe (indexed by @p sensorIdx) and returns the
+     *          NaN-aware median of {new, prev, prev2} (see `medianOf3` in SensorPolicy.h) before the
+     *          EMA. Rejects an isolated spurious echo without the EMA's lag, which matters for the
+     *          proportional steering (NavPolicy.h).
+     * @param[in] sensorIdx Probe index 0..5 (matches `us_cycle_idx`).
+     * @param[in] raw       New raw reading in cm (NaN on timeout).
+     * @return The median-filtered value in cm (NaN if the last 3 raws are all invalid).
+     */
+    float medianPrefilter(uint8_t sensorIdx, float raw);
+    /**
      * @brief Samples the analog ADC channels (lux, hygrometer, battery voltage if enabled).
      * @note Applies a light EMA filter on lux and soil moisture to stabilize noisy readings; the
      *       battery reading is gated by the #BATTERY_MONITORING_ENABLED flag.
@@ -211,6 +222,9 @@ private:
 
     uint8_t us_cycle_idx;        /**< Index for managing sequential polling (0..5) */
     unsigned long last_us_sample_ms;/**< Timestamp of the last ultrasonic sensor sample */
+
+    float raw_hist0[6];          /**< Previous raw reading per probe (median-of-3 pre-filter, see medianPrefilter()). */
+    float raw_hist1[6];          /**< Raw reading two samples ago per probe (median-of-3 pre-filter). */
 
     float cached_top_dist_cm;          /**< Latest filtered (EMA) US1 distance, in cm; NAN if invalid. */
     float cached_front_right_dist_cm;  /**< Latest filtered (EMA) US2 distance, in cm; NAN if invalid. */

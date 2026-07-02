@@ -92,6 +92,21 @@ Sensors::Sensors() :
     fake_clock_base_epoch(0),
     fake_clock_set_millis(0)
 {
+    for (uint8_t i = 0; i < 6; ++i) {
+        raw_hist0[i] = NAN;
+        raw_hist1[i] = NAN;
+    }
+}
+
+float Sensors::medianPrefilter(uint8_t sensorIdx, float raw) {
+    // NaN-aware median over {new, previous, two-samples-ago}: rejects a single
+    // spurious echo without the EMA's lag. History is a 2-slot shift register
+    // per probe. See medianOf3() in SensorPolicy.h.
+    if (sensorIdx >= 6) return raw;
+    float med = medianOf3(raw, raw_hist0[sensorIdx], raw_hist1[sensorIdx]);
+    raw_hist1[sensorIdx] = raw_hist0[sensorIdx];
+    raw_hist0[sensorIdx] = raw;
+    return med;
 }
 
 void Sensors::init() {
@@ -162,35 +177,36 @@ void Sensors::sampleNextUltrasonic() {
     const float MAX_NAV   = (float)US_NAV_MAX_CM;
     const float MAX_WATER = (float)US_WATER_MAX_CM;
 
+    // Pipeline per probe: raw read -> median-of-3 anti-bounce -> EMA + range check.
     float raw = NAN;
     switch (us_cycle_idx) {
         case 0:
-            raw = us1_top.readCm();
+            raw = medianPrefilter(0, us1_top.readCm());
             cached_top_dist_cm = applyEmaFilter(raw, cached_top_dist_cm,
                                                 invalid_streak_top, MIN_DIST, MAX_NAV);
             break;
         case 1:
-            raw = us2_front_right.readCm();
+            raw = medianPrefilter(1, us2_front_right.readCm());
             cached_front_right_dist_cm = applyEmaFilter(raw, cached_front_right_dist_cm,
                                                         invalid_streak_fr, MIN_DIST, MAX_NAV);
             break;
         case 2:
-            raw = us3_front_left.readCm();
+            raw = medianPrefilter(2, us3_front_left.readCm());
             cached_front_left_dist_cm = applyEmaFilter(raw, cached_front_left_dist_cm,
                                                        invalid_streak_fl, MIN_DIST, MAX_NAV);
             break;
         case 3:
-            raw = us4_water.readCm();
+            raw = medianPrefilter(3, us4_water.readCm());
             cached_water_level_cm = applyEmaFilter(raw, cached_water_level_cm,
                                                    invalid_streak_water, MIN_DIST, MAX_WATER);
             break;
         case 4:
-            raw = us5_left.readCm();
+            raw = medianPrefilter(4, us5_left.readCm());
             cached_left_dist_cm = applyEmaFilter(raw, cached_left_dist_cm,
                                                  invalid_streak_left, MIN_DIST, MAX_NAV);
             break;
         case 5:
-            raw = us6_right.readCm();
+            raw = medianPrefilter(5, us6_right.readCm());
             cached_right_dist_cm = applyEmaFilter(raw, cached_right_dist_cm,
                                                   invalid_streak_right, MIN_DIST, MAX_NAV);
             break;

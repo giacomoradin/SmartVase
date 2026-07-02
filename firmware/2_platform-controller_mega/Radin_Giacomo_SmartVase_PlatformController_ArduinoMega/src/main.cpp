@@ -5,11 +5,14 @@
 
     @brief  Setup/loop del Platform Controller (Arduino Mega) — "The Brawn".
 
-    @details Versione 5.2:
+    @details Versione 5.3:
              - 6 sensori HC-SR04 con pin del PIN map autoritativo (driver locale Ultrasonic)
              - Forcella umidità suolo su A0, LDR su A1
              - Pompa irrigazione via relè D10 con protezione tanica vuota (US4)
-             - Luci di coltivazione (UVA) via relè D11, accese automaticamente in IDLE con luce insufficiente
+             - Luci di coltivazione (UVA) via relè D11: top-up di fine giornata quando
+               la cura autonoma è attiva, regola legacy (IDLE + buio) altrimenti
+             - Cura autonoma della pianta (layer L2, `care on`): budget luce giornaliero,
+               light scan rotante, irrigazione dose-attesa-verifica, profili pianta (Care/CarePolicy)
              - RTC DS3232 (I2C 0x68) per timestamp epoch nei messaggi
              - WDT 4s, doppio slot EEPROM con CRC16 (wear-leveling), log queue
              - Comunicazione Serial1 Protobuf+framing verso ESP32 Hub
@@ -30,6 +33,7 @@
 #include "Persistence.h"
 #include "Pump.h"
 #include "GrowLight.h"
+#include "Care.h"
 #include "SystemStatus.h"
 #include "Cli.h"
 
@@ -42,6 +46,7 @@ Communication comm;         /**< Protobuf serial framing to the Hub + log queue.
 Persistence   persistence;  /**< Config and statistics on dual-slot EEPROM. */
 Pump          pump;         /**< Irrigation pump relay (non-blocking). */
 GrowLight     growLight;    /**< UVA grow light relay (non-blocking). */
+Care          care;         /**< Autonomous plant-care layer (light budget, watering, top-up). */
 Cli           cli;          /**< Debug CLI over USB. */
 SystemStatus  systemStatus = {false, false, false, true, false, false, false, "", "MEGA_01"}; /**< Shared system state (initialized with hubIsMissing=true until the Hub checks in). */
 
@@ -255,7 +260,7 @@ void loop() {
     const unsigned long now = millis();
 
     // 0) CLI debug su USB Serial (Serial != Serial1)
-    cli.tick(movement, sensors, pump, growLight, persistence, systemStatus);
+    cli.tick(movement, sensors, pump, growLight, care, persistence, systemStatus);
 
     // 1) RX seriale (drain + eventuale esecuzione comandi)
     comm.handleSerial(movement, persistence, sensors, pump, systemStatus);
@@ -286,13 +291,25 @@ void loop() {
                               persistence.getConfig(), persistence.getStats(),
                               systemStatus.degradedModeActive);
 
-    // 5b) Grow lights (UVA): turned on only if the robot is IDLE, the ambient
-    //     light is insufficient AND we are within the simulated daylight window
+    // 4b) Autonomous care layer (L2, 1 Hz internally): light-budget accounting,
+    //     care state machine, seeking/scan requests, dose/soak/verify watering.
+    //     Passive unless enabled from the CLI (`care on`); every L0 safety
+    //     (degraded mode, tank guard, pump caps) stays in charge below it.
+    care.tick(movement, sensors, pump, persistence, comm, systemStatus);
+
+    // 5b) Grow lights (UVA). With the care layer active they become the
+    //     end-of-day budget top-up decided by the care state machine
+    //     (CARE_TOP_UP); otherwise the legacy rule applies: on only if IDLE,
+    //     ambient light insufficient AND within the simulated daylight window
     //     (see growLightWanted/withinDaylightWindow in SensorPolicy.h). Without
     //     a reliable RTC time they stay off, for fail-safe.
-    growLight.update(movement.getTargetMode(), sensors.getLux(),
-                     persistence.getConfig().light_threshold,
-                     sensors.timeIsValid(), sensors.getEpoch());
+    if (care.isActive()) {
+        growLight.force(care.growLightWanted() && !systemStatus.degradedModeActive);
+    } else {
+        growLight.update(movement.getTargetMode(), sensors.getLux(),
+                         persistence.getConfig().light_threshold,
+                         sensors.timeIsValid(), sensors.getEpoch());
+    }
 
     // 5) Scheduler trasmissioni periodiche
     if (now - lastFastTelemetryMs >= INTERVAL_FAST_TELEMETRY_MS) {
@@ -304,6 +321,19 @@ void loop() {
     if (now - lastDeepTelemetryMs >= INTERVAL_DEEP_TELEMETRY_MS) {
         TelemetryDeep td = sensors.buildDeepTelemetry(persistence.getStats(),
                                                       systemStatus.deviceId);
+        // Autonomous-care KPIs (proto v4.1): daily counters owned by the Care
+        // module, filled here because Sensors has no visibility on the care
+        // layer (layer separation, see docs/Plant_Care_Design.md §2).
+        {
+            const DeviceConfig& cfg = persistence.getConfig();
+            td.care_enabled = (cfg.care_enabled != 0);
+            td.care_state   = care.stateCode();
+            const float pct = care.budgetPct(cfg);
+            td.light_budget_pct        = (pct <= 0.0f) ? 0 : (uint32_t)pct;
+            td.relocations_today       = care.relocationsToday();
+            td.water_doses_today       = care.dosesToday();
+            td.growlight_minutes_today = care.growLightMinutesToday();
+        }
         comm.sendDeepTelemetry(td);
         lastDeepTelemetryMs = now;
     }

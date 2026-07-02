@@ -1,4 +1,8 @@
 // Autore: Giacomo Radin
+// Versione 4.1 (2026-07-02): KPI della cura autonoma in TelemetryDeep
+// - TelemetryDeep: aggiunti i contatori giornalieri del care layer del Mega
+//   (tag 22-27, in coda per compatibilita' con i decoder v4.0): stato care,
+//   budget luce %, ricollocazioni, dosi acqua, minuti UVA, flag abilitazione.
 // Versione 4.0 (2026-05-19): Refactor totale per il nuovo prototipo
 // - TelemetryFast: 5 distanze di navigazione (US1, US2, US3, US5, US6)
 //   + livello acqua (US4) + umidita' suolo (forcella A0) + lux + stato + ts
@@ -77,6 +81,16 @@ message TelemetryDeep {
   uint32 light_seeking_sessions  = 19;
   uint32 shadow_seeking_sessions = 20;
   uint32 escape_attempts         = 21;
+
+  // KPI della cura autonoma (v4.1, 2026-07-02): contatori GIORNALIERI calcolati
+  // dal care layer del Mega (Care/CarePolicy, vedi docs/Plant_Care_Design.md).
+  // Aggiunti in coda (tag 22-27) per compatibilita' con i decoder v4.0.
+  bool   care_enabled            = 22;  // true se la cura autonoma e' attiva
+  uint32 care_state              = 23;  // CareState: 0=NIGHT 1=SEEK_SUN 2=BASK 3=SEEK_SHADE 4=SHELTER 5=TOP_UP
+  uint32 light_budget_pct        = 24;  // % del target luce giornaliero raggiunta (puo' superare 100)
+  uint32 relocations_today       = 25;  // sessioni di seeking avviate oggi
+  uint32 water_doses_today       = 26;  // dosi di irrigazione erogate oggi
+  uint32 growlight_minutes_today = 27;  // minuti di top-up UVA consumati oggi
 }
 
 message Log {

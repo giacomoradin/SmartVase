@@ -10,6 +10,9 @@ call :run_one test_crc16
 call :run_one test_crc_utils
 call :run_one test_command_policy
 call :run_one test_sensor_policy
+call :run_one test_nav_policy
+call :run_one test_care_policy
+call :run_one test_care_day_sim
 call :run_one test_persistence
 if !FAIL! neq 0 ( echo SUITE: FAILED & exit /b 1 )
 echo SUITE: ALL PASSED

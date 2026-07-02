@@ -111,6 +111,17 @@ typedef struct {
     uint16_t soil_dry_threshold;  /**< Soglia ADC suolo sotto la quale il terreno è considerato 'dry'. */
     uint16_t light_threshold;     /**< Soglia ADC di luminosità per l'inversione light/shadow seeking. */
     uint16_t tank_empty_cm;       /**< Distanza US4→acqua (cm) oltre la quale la tanica è considerata vuota (pompa bloccata). */
+    // --- Cura autonoma della pianta (layer L2, vedi CarePolicy.h / Care.cpp) ---
+    uint8_t  care_enabled;            /**< 1 = cura autonoma attiva (default 0: si abilita esplicitamente con `care on`). */
+    uint8_t  care_plant_kind;         /**< Preset pianta attivo (CarePlantKind: 0=shade, 1=medium, 2=sun). */
+    uint16_t care_light_target_min;   /**< Target giornaliero di luce, in minuti di luce piena equivalente. */
+    uint16_t care_lux_high_adc;       /**< ADC oltre il quale l'esposizione prolungata fa cercare ombra (1024 = mai). */
+    uint16_t care_soil_wet_adc;       /**< ADC suolo al/oltre il quale il ciclo di irrigazione si ferma (isteresi con soil_dry_threshold). */
+    uint16_t care_dose_ms;            /**< Durata di una singola dose di irrigazione (ms). */
+    uint8_t  care_soak_min;           /**< Attesa di assorbimento tra due dosi (minuti). */
+    uint8_t  care_max_doses;          /**< Tetto giornaliero di dosi (fail-safe forcella guasta). */
+    uint8_t  care_max_reloc;          /**< Tetto giornaliero di ricollocazioni (anti-nomadismo). */
+    uint8_t  care_growlight_max_min;  /**< Tetto giornaliero del top-up con luci UVA (minuti). */
 } DeviceConfig;
 
 /*!
@@ -150,7 +161,9 @@ typedef enum {
     CPP_M_AVOID_START,      /**< Ingresso nella sequenza di obstacle avoidance. */
     CPP_M_AVOID_REVERSING,  /**< Fase di retromarcia dell'obstacle avoidance. */
     CPP_M_AVOID_TURNING,    /**< Fase di rotazione dell'obstacle avoidance. */
-    CPP_M_STUCK             /**< Robot bloccato, in attesa di backoff prima di un nuovo tentativo. */
+    CPP_M_STUCK,            /**< Robot bloccato, in attesa di backoff prima di un nuovo tentativo. */
+    CPP_M_SCAN_ROTATE,      /**< Light scan: rotazione sul posto campionando l'LDR per settori (vedi startLightScan). */
+    CPP_M_SCAN_ALIGN        /**< Light scan: seconda rotazione fino al settore migliore individuato. */
 } CppMovementState;
 
 /*!
@@ -175,6 +188,10 @@ typedef enum {
 static inline MovementState cppMovementStateToProto(CppMovementState s) {
     switch (s) {
         case CPP_M_MOVING:          return MS_MOVING;
+        // Gli stati interni di light scan sono una forma di movimento attivo:
+        // verso lo schema di rete (v4.0, senza stati scan) si riportano come MOVING.
+        case CPP_M_SCAN_ROTATE:     return MS_MOVING;
+        case CPP_M_SCAN_ALIGN:      return MS_MOVING;
         case CPP_M_AVOID_START:     return MS_AVOID_START;
         case CPP_M_AVOID_REVERSING: return MS_AVOID_REVERSING;
         case CPP_M_AVOID_TURNING:   return MS_AVOID_TURNING;

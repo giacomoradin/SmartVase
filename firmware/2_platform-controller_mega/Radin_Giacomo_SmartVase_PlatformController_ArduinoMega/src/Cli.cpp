@@ -3,7 +3,7 @@
 
     @ingroup MegaCli
 
-    @brief  Implementazione del parser/dispatcher CLI (vedi Cli.h per la tabella comandi).
+    @brief  Implementation of the CLI parser/dispatcher (see Cli.h for the command table).
 
     @date   2026-05-20
 
@@ -11,10 +11,12 @@
 */
 
 #include "Cli.h"
+#include <avr/wdt.h>
 #include "Movement.h"
 #include "Sensors.h"
 #include "Pump.h"
 #include "GrowLight.h"
+#include "Care.h"
 #include "Persistence.h"
 #include "SystemStatus.h"
 #include <TimeLib.h>
@@ -23,11 +25,11 @@
 extern int freeRam();
 
 /*!
-    @brief    Nome leggibile (stringa in flash) dello stato di movimento.
-    @details  Usato dal comando `diag` per stampare lo stato corrente della FSM senza
-              tenere una stringa duplicata in RAM (`F()` la mette in PROGMEM su AVR).
-    @param[in] s Stato di movimento da convertire.
-    @return   Puntatore a stringa flash con il nome dello stato.
+    @brief    Human-readable name (flash string) of a movement state.
+    @details  Used by the `diag` command to print the current FSM state without
+              keeping a duplicate string in RAM (`F()` puts it in PROGMEM on AVR).
+    @param[in] s Movement state to convert.
+    @return   Flash-string pointer with the state name.
 */
 static const __FlashStringHelper* movStateName(CppMovementState s) {
     switch (s) {
@@ -36,20 +38,38 @@ static const __FlashStringHelper* movStateName(CppMovementState s) {
         case CPP_M_AVOID_REVERSING: return F("AVOID_REVERSING");
         case CPP_M_AVOID_TURNING:   return F("AVOID_TURNING");
         case CPP_M_STUCK:           return F("STUCK");
+        case CPP_M_SCAN_ROTATE:     return F("SCAN_ROTATE");
+        case CPP_M_SCAN_ALIGN:      return F("SCAN_ALIGN");
         case CPP_M_IDLE:
         default:                    return F("IDLE");
     }
 }
 
 /*!
-    @brief    Stampa una riga di diagnostica per una sonda ad ultrasuoni.
-    @details  Usata dal comando `diag` per ciascuna delle 6 sonde HC-SR04: mostra
-              pin TRIG/ECHO, valore letto e un suggerimento di troubleshooting se
-              la lettura è `NaN` (nessun eco, possibile problema di cablaggio/alimentazione).
-    @param[in] label Etichetta della sonda (stringa flash, es. "US1 top").
-    @param[in] trig  Numero del pin TRIG (solo per la stampa diagnostica).
-    @param[in] echo  Numero del pin ECHO (solo per la stampa diagnostica).
-    @param[in] cm    Distanza misurata in cm (`NaN` se la lettura non è valida).
+    @brief    Human-readable name (flash string) of a plant preset (CarePlantKind).
+    @details  Used by `config`/`plant`; unknown codes fall back to "medium",
+              consistent with carePresetProfile() in CarePolicy.h.
+    @param[in] kind Preset code (0=shade, 1=medium, 2=sun).
+    @return   Flash-string pointer with the preset name.
+*/
+static const __FlashStringHelper* plantKindName(uint8_t kind) {
+    switch (kind) {
+        case CARE_PLANT_SHADE: return F("shade");
+        case CARE_PLANT_SUN:   return F("sun");
+        case CARE_PLANT_MEDIUM:
+        default:               return F("medium");
+    }
+}
+
+/*!
+    @brief    Prints one diagnostic line for an ultrasonic probe.
+    @details  Used by the `diag` command for each of the 6 HC-SR04 probes: shows
+              the TRIG/ECHO pins, the value read and a troubleshooting hint when
+              the reading is `NaN` (no echo, possible wiring/power issue).
+    @param[in] label Probe label (flash string, e.g. "US1 top").
+    @param[in] trig  TRIG pin number (for the diagnostic printout only).
+    @param[in] echo  ECHO pin number (for the diagnostic printout only).
+    @param[in] cm    Measured distance in cm (`NaN` if the reading is not valid).
 */
 static void diagUs(const __FlashStringHelper* label, uint8_t trig, uint8_t echo, float cm) {
     Serial.print(F("  "));
@@ -66,14 +86,14 @@ static void diagUs(const __FlashStringHelper* label, uint8_t trig, uint8_t echo,
 
 Cli::Cli() : pos(0) { buf[0] = '\0'; }
 
-void Cli::tick(Movement& mv, Sensors& sn, Pump& pp, GrowLight& gl,
+void Cli::tick(Movement& mv, Sensors& sn, Pump& pp, GrowLight& gl, Care& cr,
                Persistence& ps, SystemStatus& sys) {
     while (Serial.available()) {
         char c = (char)Serial.read();
         if (c == '\r') continue;
         if (c == '\n') {
             buf[pos] = '\0';
-            if (pos > 0) execute(buf, mv, sn, pp, gl, ps, sys);
+            if (pos > 0) execute(buf, mv, sn, pp, gl, cr, ps, sys);
             pos = 0;
             buf[0] = '\0';
             Serial.print(F("> "));
@@ -98,14 +118,14 @@ void Cli::tick(Movement& mv, Sensors& sn, Pump& pp, GrowLight& gl,
 }
 
 void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLight& gl,
-                  Persistence& ps, SystemStatus& sys) {
+                  Care& cr, Persistence& ps, SystemStatus& sys) {
     if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) { printHelp(); return; }
     if (strcmp(line, "version") == 0) {
         Serial.println(F("SmartVase Platform Controller v" SMARTVASE_FW_VERSION
                          " (" __DATE__ " " __TIME__ ")"));
         return;
     }
-    if (strcmp(line, "status")  == 0) { printStatus(mv, pp, gl, sys); return; }
+    if (strcmp(line, "status")  == 0) { printStatus(mv, pp, gl, cr, sys); return; }
     if (strcmp(line, "stats")   == 0) { printStats(ps);            return; }
     if (strcmp(line, "config")  == 0) { printConfig(ps);           return; }
     if (strcmp(line, "sensors") == 0) { printSensors(sn);          return; }
@@ -197,6 +217,120 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLig
         else { Serial.println(F("[CLI] usage: mode <idle|light|shadow>")); return; }
         Serial.print(F("[CLI] mode set to "));
         Serial.println(arg);
+        return;
+    }
+
+    // plant — profilo pianta corrente
+    if (strcmp(line, "plant") == 0) { printPlant(ps); return; }
+
+    // plant <shade|medium|sun> — applica un preset pianta (persistito)
+    if (strncmp(line, "plant ", 6) == 0) {
+        const char* arg = line + 6;
+        uint8_t kind;
+        if      (strcmp(arg, "shade")  == 0) kind = CARE_PLANT_SHADE;
+        else if (strcmp(arg, "medium") == 0) kind = CARE_PLANT_MEDIUM;
+        else if (strcmp(arg, "sun")    == 0) kind = CARE_PLANT_SUN;
+        else { Serial.println(F("[CLI] usage: plant <shade|medium|sun>")); return; }
+        const PlantProfile p = carePresetProfile(kind);
+        DeviceConfig& c = ps.getConfig();
+        c.care_plant_kind        = kind;
+        c.care_light_target_min  = p.light_target_min;
+        c.care_lux_high_adc      = p.lux_high_adc;
+        c.soil_dry_threshold     = p.soil_dry_adc;
+        c.care_soil_wet_adc      = p.soil_wet_adc;
+        c.care_dose_ms           = p.dose_ms;
+        c.care_soak_min          = p.soak_min;
+        c.care_max_doses         = p.max_doses_per_day;
+        c.care_max_reloc         = p.max_reloc_per_day;
+        c.care_growlight_max_min = p.grow_light_max_min;
+        ps.saveConfig(true);
+        Serial.print(F("[CLI] plant preset = "));
+        Serial.println(arg);
+        printPlant(ps);
+        return;
+    }
+
+    // care — stato del layer di cura autonoma
+    if (strcmp(line, "care") == 0) { printCare(cr, ps); return; }
+
+    // care <on|off> — abilita/disabilita la cura autonoma (persistito)
+    if (strncmp(line, "care ", 5) == 0) {
+        const char* arg = line + 5;
+        if (strcmp(arg, "on") == 0) {
+            ps.getConfig().care_enabled = 1;
+            ps.saveConfig(true);
+            cr.notifyEnabledChanged(mv, ps);
+            Serial.println(F("[CLI] care ON: cura autonoma attiva (profilo: 'plant')"));
+            Serial.println(F("[CLI] nota: serve un'ora valida ('rtc') e, a banco senza Hub, 'standalone on'"));
+        } else if (strcmp(arg, "off") == 0) {
+            ps.getConfig().care_enabled = 0;
+            ps.saveConfig(true);
+            cr.notifyEnabledChanged(mv, ps);
+            Serial.println(F("[CLI] care OFF: torna il controllo manuale (mode/pump)"));
+        } else {
+            Serial.println(F("[CLI] usage: care <on|off>"));
+        }
+        return;
+    }
+
+    // wall <left|right|off> — wall-following locale (usa i sensori laterali US5/US6)
+    if (strncmp(line, "wall ", 5) == 0) {
+        const char* arg = line + 5;
+        if      (strcmp(arg, "left")  == 0) mv.setWallFollow(Movement::WALL_LEFT);
+        else if (strcmp(arg, "right") == 0) mv.setWallFollow(Movement::WALL_RIGHT);
+        else if (strcmp(arg, "off")   == 0) mv.setWallFollow(Movement::WALL_OFF);
+        else { Serial.println(F("[CLI] usage: wall <left|right|off>")); return; }
+        Serial.print(F("[CLI] wall-follow = "));
+        Serial.println(arg);
+        Serial.println(F("[CLI] nota: attivo solo in 'mode light/shadow' (durante M_MOVING); sovrascrive il seeking"));
+        return;
+    }
+
+    // mfp0 — test continuo motori in avanti (10 min)
+    if (strcmp(line, "mfp0") == 0) {
+        if (sys.degradedModeActive) {
+            Serial.println(F("[CLI] Impossibile avviare: modalita degraded attiva (motori bloccati)"));
+            return;
+        }
+        Serial.println(F("[CLI] Avvio test motori continuativo (10 minuti, avanti) per verifiche elettriche..."));
+        Serial.println(F("[CLI] PREMI UN TASTO QUALSIASI per interrompere il test e spegnere i motori."));
+        
+        mv.moveForward(ps.getConfig());
+        
+        unsigned long startMs = millis();
+        unsigned long durationMs = 10UL * 60UL * 1000UL; // 10 min
+        unsigned long lastFeedbackSec = 0;
+        bool stoppedByUser = false;
+        
+        while (millis() - startMs < durationMs) {
+            wdt_reset(); // Impedisce il reset dell'Arduino (watchdog a 4 secondi)
+            
+            if (Serial.available()) {
+                while (Serial.available()) Serial.read(); // Svuota buffer seriale
+                stoppedByUser = true;
+                break;
+            }
+            
+            unsigned long elapsedSec = (millis() - startMs) / 1000UL;
+            if (elapsedSec != lastFeedbackSec && elapsedSec % 10 == 0) {
+                lastFeedbackSec = elapsedSec;
+                Serial.print(F("[mfp0] Tempo: "));
+                Serial.print(elapsedSec / 60UL);
+                Serial.print(F(" min "));
+                Serial.print(elapsedSec % 60UL);
+                Serial.println(F(" sec / 10 min"));
+            }
+            
+            delay(50);
+        }
+        
+        mv.stopMotors(ps.getStats());
+        
+        if (stoppedByUser) {
+            Serial.println(F("[CLI] Test mfp0 INTERROTTO dall'utente. Motori spenti."));
+        } else {
+            Serial.println(F("[CLI] Test mfp0 COMPLETATO. Motori spenti."));
+        }
         return;
     }
 
@@ -304,7 +438,13 @@ void Cli::printHelp() {
     Serial.println(F("rtc                       stato orologio DS3232"));
     Serial.println(F("rtc set <epoch>           imposta ora (epoch Unix)"));
     Serial.println(F("mode <idle|light|shadow>  cambia modalita'"));
-    Serial.println(F("motor <f|b|l|r> <ms>      test motori (max 60000 ms)"));
+    Serial.println(F("plant                     profilo pianta corrente"));
+    Serial.println(F("plant <shade|medium|sun>  applica preset pianta (persistito)"));
+    Serial.println(F("care                      stato cura autonoma + KPI giornalieri"));
+    Serial.println(F("care <on|off>             cura autonoma della pianta (default off)"));
+    Serial.println(F("wall <left|right|off>     wall-following laterale (sovrascrive seeking)"));
+    Serial.println(F("motor <f|b|l|r> <ms>      test motori (max 5000 ms)"));
+    Serial.println(F("mfp0                      test continuo motori avanti (10 min)"));
     Serial.println(F("motortest                 sequenza guidata f/b/l/r"));
     Serial.println(F("calib <left> <right>      PWM motori 0..255"));
     Serial.println(F("pump <ms>                 test pompa (max 60000 ms)"));
@@ -312,7 +452,7 @@ void Cli::printHelp() {
     Serial.println(F("reboot                    soft reset"));
 }
 
-void Cli::printStatus(Movement& mv, Pump& pp, GrowLight& gl, SystemStatus& sys) {
+void Cli::printStatus(Movement& mv, Pump& pp, GrowLight& gl, Care& cr, SystemStatus& sys) {
     Serial.print(F("fw_version="));
     Serial.println(F(SMARTVASE_FW_VERSION));
     Serial.print(F("targetMode="));
@@ -334,6 +474,16 @@ void Cli::printStatus(Movement& mv, Pump& pp, GrowLight& gl, SystemStatus& sys) 
     }
     Serial.print(F("pumpActive="));     Serial.println(pp.isActive() ? F("YES") : F("NO"));
     Serial.print(F("growLight="));      Serial.println(gl.isOn() ? F("ON") : F("OFF"));
+    Serial.print(F("careActive="));
+    if (cr.isActive())                 Serial.println(cr.stateName());
+    else if (cr.overrideActive())      Serial.println(F("PAUSED (manual override)"));
+    else                               Serial.println(F("OFF"));
+    Serial.print(F("wallFollow="));
+    switch (mv.getWallFollow()) {
+        case Movement::WALL_LEFT:  Serial.println(F("LEFT"));  break;
+        case Movement::WALL_RIGHT: Serial.println(F("RIGHT")); break;
+        default:                   Serial.println(F("OFF"));   break;
+    }
     Serial.print(F("degradedMode="));   Serial.println(sys.degradedModeActive ? F("YES") : F("NO"));
     if (sys.degradedModeActive) {
         Serial.print(F("  reason="));
@@ -374,6 +524,49 @@ void Cli::printConfig(Persistence& ps) {
     Serial.print(F("soil_dry_threshold=")); Serial.println(c.soil_dry_threshold);
     Serial.print(F("light_threshold="));    Serial.println(c.light_threshold);
     Serial.print(F("tank_empty_cm="));      Serial.println(c.tank_empty_cm);
+    Serial.print(F("care_enabled="));       Serial.println(c.care_enabled ? F("YES") : F("NO"));
+    Serial.print(F("plant_preset="));       Serial.println(plantKindName(c.care_plant_kind));
+}
+
+void Cli::printPlant(Persistence& ps) {
+    DeviceConfig& c = ps.getConfig();
+    Serial.println(F("--- plant profile ---"));
+    Serial.print(F("preset               = ")); Serial.println(plantKindName(c.care_plant_kind));
+    Serial.print(F("light_target_min     = ")); Serial.print(c.care_light_target_min);
+    Serial.println(F("  (minuti di luce piena equivalente/giorno)"));
+    Serial.print(F("lux_high_adc         = ")); Serial.print(c.care_lux_high_adc);
+    Serial.println(c.care_lux_high_adc > 1023 ? F("  (mai ombra per troppa luce)") : F(""));
+    Serial.print(F("soil_dry_adc         = ")); Serial.print(c.soil_dry_threshold);
+    Serial.println(F("  (sotto: parte un ciclo di irrigazione)"));
+    Serial.print(F("soil_wet_adc         = ")); Serial.print(c.care_soil_wet_adc);
+    Serial.println(F("  (sopra: il ciclo si ferma)"));
+    Serial.print(F("dose_ms              = ")); Serial.println(c.care_dose_ms);
+    Serial.print(F("soak_min             = ")); Serial.println(c.care_soak_min);
+    Serial.print(F("max_doses/day        = ")); Serial.println(c.care_max_doses);
+    Serial.print(F("max_reloc/day        = ")); Serial.println(c.care_max_reloc);
+    Serial.print(F("growlight_max_min    = ")); Serial.println(c.care_growlight_max_min);
+}
+
+void Cli::printCare(Care& cr, Persistence& ps) {
+    DeviceConfig& c = ps.getConfig();
+    Serial.println(F("--- care ---"));
+    Serial.print(F("enabled          = ")); Serial.println(c.care_enabled ? F("YES") : F("NO"));
+    if (cr.overrideActive())
+        Serial.println(F("suspended        = YES (manual override: riprende da sola)"));
+    Serial.print(F("state            = ")); Serial.println(cr.stateName());
+    Serial.print(F("light_budget     = ")); Serial.print(cr.budgetPct(c));
+    Serial.print(F(" %  (target ")); Serial.print(c.care_light_target_min);
+    Serial.println(F(" min luce piena)"));
+    Serial.print(F("day_max_adc      = ")); Serial.print(cr.dayMaxAdc());
+    Serial.println(F("  (riferimento auto-calibrazione LDR)"));
+    Serial.print(F("relocations      = ")); Serial.print(cr.relocationsToday());
+    Serial.print(F(" / "));                 Serial.println(c.care_max_reloc);
+    Serial.print(F("water_doses      = ")); Serial.print(cr.dosesToday());
+    Serial.print(F(" / "));                 Serial.println(c.care_max_doses);
+    Serial.print(F("dose_cycle       = ")); Serial.println(cr.doseCycleActive() ? F("ACTIVE") : F("idle"));
+    Serial.print(F("soak_remaining_s = ")); Serial.println(cr.soakRemainingS());
+    Serial.print(F("growlight_min    = ")); Serial.print(cr.growLightMinutesToday());
+    Serial.print(F(" / "));                 Serial.println(c.care_growlight_max_min);
 }
 
 void Cli::printSensors(Sensors& sn) {

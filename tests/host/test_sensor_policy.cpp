@@ -33,6 +33,13 @@ int main() {
     CHECK(seekWantsTurn(false, true,  700, 600),  "SHADOW + luminoso (700>600) -> turn");
     CHECK(!seekWantsTurn(false, true,  500, 600), "SHADOW + buio -> no turn");
 
+    // --- medianOf3(a,b,c) — anti-bounce sonar pre-filter (NaN-aware) ---
+    CHECK(medianOf3(10.0f, 200.0f, 11.0f) == 11.0f, "spike 200 in {10,200,11} -> median 11 (rejected)");
+    CHECK(medianOf3(30.0f, 31.0f, 32.0f) == 31.0f,  "sorted {30,31,32} -> median 31");
+    CHECK(medianOf3(50.0f, NAN, 60.0f) == 55.0f,    "one NaN -> average of the 2 valid (55)");
+    CHECK(medianOf3(42.0f, NAN, NAN) == 42.0f,      "two NaN -> the single valid value (42)");
+    CHECK(std::isnan(medianOf3(NAN, NAN, NAN)),      "all NaN -> NaN");
+
     if (g_failures == 0) { printf("RESULT: ALL PASSED\n"); return 0; }
     printf("RESULT: %d FAILED\n", g_failures);
     return 1;

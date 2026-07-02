@@ -56,6 +56,13 @@ void GrowLight::init() {
     _isOn = false;
 }
 
+void GrowLight::force(bool on) {
+    if (on == _isOn) return;
+    if (on) lightsOn();
+    else    lightsOff();
+    _isOn = on;
+}
+
 void GrowLight::update(CppMode targetMode, int lux, uint16_t threshold,
                        bool timeValid, uint32_t epochS) {
     uint8_t hourOfDay = timeValid ? (uint8_t)hour((time_t)epochS) : 0;
