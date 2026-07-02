@@ -5,7 +5,7 @@ This document outlines the communication pathways, MQTT topics, and Firestore pa
 ### Architectural Overview
 The system employs a hybrid communication model to optimize for hardware capabilities:
 1. **ESP32-HUB (Telemetry & Control):** Communicates exclusively via lightweight MQTT. An Oracle Linux server running `mqtt_firestore_bridge.py` acts as a secure bi-directional bridge, translating MQTT payloads to/from Cloud Firestore.
-2. **ESP32-CAM (Vision & Storage):** Communicates exclusively via HTTPS/TLS directly to Firebase Storage and Firestore, bypassing MQTT entirely.
+2. **ESP32-CAM (Vision & Storage):** Communicates with Firebase Storage and Firestore, bypassing MQTT entirely.
 3. **Flutter App:** Communicates exclusively with Firebase (real-time listeners for UI updates via Firestore, and loading images from Firebase Storage)
 
 ---
@@ -100,45 +100,62 @@ summary (budget ring + doses + relocations) without any schema change.
 
 ## 3. Configuration Command
 
-**Purpose:** Settings sent from the Flutter App to configure the ESP32 Hub's behavior (e.g., plant type, sensor thresholds). 
+**Purpose:** Settings sent from the Flutter App to configure the ESP32 Hub's behavior (sensor thresholds). 
 **Direction:** Flutter App -> Firestore -> Oracle Server (`mqtt_firestore_bridge.py` Listener) -> MQTT Broker -> ESP32 Hub
 **Firestore Path:** `smartvase/{vase_id}/command/config`
 **MQTT Topic:** `smartvase/{vase_id}/command/config`
 
 **JSON Payload Example:**
 {
-  "plant_api_id": 451,
-  "min_lux": 300,
-  "max_lux": 1500,
-  "target_soil_moisture": 600
+  "soil_dry_threshold": 450,
+  "light_threshold": 400
 }
 
-## 4. Vision Analysis & Image Ready (Edge Computed)
+## 4 Action Commands
 
-**Purpose:** The ESP32-CAM executes a lightweight pixel-counting algorithm on the edge device to determine plant health, and concurrently uploads the image to Firebase Storage. 
+**Purpose:** Commands sent from the Flutter App to trigger specific physical actions or request diagnostics on the SmartVase.
+**Direction:** Flutter App -> Firestore -> Oracle Server (`mqtt_firestore_bridge.py` Listener) -> MQTT Broker -> ESP32 Hub -> Arduino Mega
+**Firestore Path:** `smartvase/{vase_id}/command/{action}`
+**MQTT Topic:** `smartvase/{vase_id}/command/{action}`
+
+Supported actions:
+- **Water (Start Irrigation):**
+  - Path: `smartvase/{vase_id}/command/water`
+  - JSON: `{"cmd_id": 101, "type": "water", "duration_ms": 5000}`
+- **Set Mode:**
+  - Path: `smartvase/{vase_id}/command/setMode`
+  - JSON: `{"cmd_id": 102, "type": "setMode", "mode": "LIGHT"}` *(mode can be "LIGHT", "SHADOW", or "IDLE")*
+- **Emergency Stop:**
+  - Path: `smartvase/{vase_id}/command/stop`
+  - JSON: `{"cmd_id": 103, "type": "stop"}`
+- **Request Diagnostics:**
+  - Path: `smartvase/{vase_id}/command/requestDiagnostics`
+  - JSON: `{"cmd_id": 104, "type": "requestDiagnostics"}`
+- **Set Motion/Turn Parameters:**
+  - Path: `smartvase/{vase_id}/command/setMotionParams`
+  - JSON: `{"cmd_id": 105, "type": "setMotionParams", "reverse_ms": 1000, "turn_ms": 1200}`
+- **Read Soil Humidity:**
+  - Path: `smartvase/{vase_id}/command/readSoil`
+  - JSON: `{"cmd_id": 106, "type": "readSoil"}`
+- **Soft Reset Arduino Mega:**
+  - Path: `smartvase/{vase_id}/command/softReset`
+  - JSON: `{"cmd_id": 107, "type": "softReset"}`
+
+## 5. Image Ready Notification (Edge Computed)
+
+**Purpose:** This gets updated when a new image has been uploaded to Firebase Cloud Storage AND the leaf health analysis has been completed (by the lightweight vision algorithm on the edge).
 **Direction:** ESP32-CAM -> Firebase (Storage & Firestore) -> Flutter App
 *Note: This data path bypasses MQTT entirely.*
-**Firestore Path:** `smartvase/{vase_id}/vision/result`
+**Firestore Path:** `smartvase/{cam_id}/vision/image_ready`
 
-**Asynchronous Write Behavior:** Because analysis is CPU-bound (fast) and image uploading is Network-bound (slow), the ESP32-CAM performs two asynchronous writes to this document using a **merge** operation.
-
-**Write 1: Analysis Payload Example (Arrives First)**
-{
-  "timestamp_utc": 1678886405,
-  "schema_version": 2,
-  "algorithm": "edge_rgb_threshold",
-  "frame_quality": "ok",
-  "leaf_health": "warning",
-  "metrics": {
-    "color_dominant_hex": "#2f7d2a",
-    "green_index": 0.61,
-    "yellow_ratio": 0.18,
-    "brown_ratio": 0.02
-  }
-}
-
-**Write 2: Image Payload Example (Arrives Second)**
+**JSON Payload Example:**
 {
   "image_url": "gs://smartvase-7cfd9.appspot.com/images/VASE_01_1678886405.jpg",
-  "resolution": "144x144"
+  "timestamp_utc": 31288,
+  "resolution": "640x480",
+  "size_bytes": 397847,
+  "crc32": 1239082,
+  "capture_time_ms": 254,
+  "plant_healthy": true,
+  "message": "Plant is ok, no need to worry!"
 }
