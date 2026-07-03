@@ -18,6 +18,8 @@
              | `config`                    | Current configuration |
              | `sensors`                   | Latest sensor readings |
              | `diag`                      | Guided diagnostics: for each sensor/motor, state + what to check if it does not work |
+             | `i2cscan`                   | Hardware I²C bus scan (pins 20/21) with hints on the expected devices (RTC 0x68, HW-084 module EEPROM 0x50-0x57, BME680 0x76/0x77) |
+             | `stats reset`               | Clears the cumulative EEPROM statistics (fresh baseline after debug sessions) |
              | `tank`                      | Tank status (level, threshold, verdict) |
              | `tank <cm>`                 | Sets the tank-empty threshold (persisted) |
              | `light <adc>`               | Sets the brightness threshold 0..1023 (persisted): used both by LIGHT/SHADOW seeking and by the UVA lights |

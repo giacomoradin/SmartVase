@@ -322,7 +322,12 @@ void MainLogic::publishTelemetryJson(const TelemetryFast& tf, const TelemetryDee
     snprintf(out.topic, sizeof(out.topic), "smartvase/%s/telemetry", _deviceId);
 
     StaticJsonDocument<MAX_JSON_MESSAGE_LENGTH> doc;
-    doc["timestamp_utc"]    = tf.epoch_s != 0 ? tf.epoch_s : td.epoch_s;
+    const uint32_t epochS   = tf.epoch_s != 0 ? tf.epoch_s : td.epoch_s;
+    doc["timestamp_utc"]    = epochS;
+    // Plausibility flag for consumers: with the Mega's software fallback clock
+    // (RTC absent/unset) epochs restart from 1970-01-01 08:00, so historical
+    // data would be mis-dated. Anything before 2020-09-13 (1.6e9) is not real.
+    doc["time_valid"]       = epochS >= 1600000000UL;
     doc["uptime_s"]         = td.uptime_s;
     doc["device_id"]        = _deviceId;
     doc["fw_version"]       = HUB_FW_VERSION;

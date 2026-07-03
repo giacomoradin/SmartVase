@@ -316,6 +316,12 @@ read `sensors`:
 ### T6 — RTC
 > CR2032 battery **replaced on 2026-07-01** (the previous one was dead: the
 > chip fell back to the software clock). This test verifies the replacement.
+> Module: **HW-084** (DS3231 + AT24C32 EEPROM on the same board). ⚠️ Its
+> charging circuit is meant for rechargeable LIR2032 cells: with a
+> non-rechargeable CR2032, remove the ~200 Ω charging resistor (or diode).
+- [ ] `i2cscan` (CLI) → expected **0x68** (RTC) **and** **0x57** (module EEPROM).
+      Both missing = wiring/power (check the mapping SDA→20 / SCL→21, not just
+      wire continuity); only 0x57 = bus fine but DS3231 silent (module fault).
 - [ ] `rtc` → rtc_ok = YES; time_valid = ____; fake_clock must be **NO**
 - [ ] `rtc set <epoch>` (epoch from PowerShell: `[DateTimeOffset]::Now.ToUnixTimeSeconds()`)
 - [ ] Power off the Mega for 30 s, power back on → `rtc`: has the time advanced? → YES / NO

@@ -126,7 +126,7 @@ Equivalent to `pio run -d firmware/2_platform-controller_mega/...`.
 ## Debug CLI (Serial USB, 115200, newline)
 
 `help` shows the full menu: `status`, `stats`, `config`, `sensors`, `diag`,
-`tank [cm]`, `light <adc>`, `rtc [set <epoch>]`, `mode <idle|light|shadow>`,
+`i2cscan`, `tank [cm]`, `light <adc>`, `rtc [set <epoch>]`, `mode <idle|light|shadow>`,
 `plant [shade|medium|sun]`, `care [on|off]`, `wall <left|right|off>`,
 `motor <f|b|l|r> <ms>`, `motortest`, `calib <l> <r>`, `pump <ms>`,
 `standalone <on|off>`, `version`, `reboot`.

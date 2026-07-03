@@ -20,9 +20,12 @@ The system employs a hybrid communication model to optimize for hardware capabil
 **JSON Payload Example** (Hub v1.3 / proto v4.1; ambient fields such as
 `temperature_c`, `humidity_percent`, `pressure_hpa` and `battery_voltage` are
 included only when the corresponding sensor is fitted and returns a valid
-reading):
+reading; `time_valid` is false while the Mega runs on its software fallback
+clock — RTC absent or never set — meaning `timestamp_utc` restarts from
+1970-01-01 08:00 and must not be used to date historical data):
 {
   "timestamp_utc": 1678886400,
+  "time_valid": true,
   "uptime_s": 12345,
   "device_id": "HUB_123456",
   "fw_version": "1.3.0",

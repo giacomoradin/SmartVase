@@ -12,6 +12,7 @@
 
 #include "Cli.h"
 #include <avr/wdt.h>
+#include <Wire.h>
 #include "Movement.h"
 #include "Sensors.h"
 #include "Pump.h"
@@ -127,6 +128,20 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLig
     }
     if (strcmp(line, "status")  == 0) { printStatus(mv, pp, gl, cr, sys); return; }
     if (strcmp(line, "stats")   == 0) { printStats(ps);            return; }
+
+    // stats reset — azzera le statistiche cumulative in EEPROM (i contatori
+    // storici accumulati nelle sessioni di debug falserebbero il report).
+    if (strcmp(line, "stats reset") == 0) {
+        CumulativeStats& s = ps.getStats();
+        const uint32_t magic = s.magic_number;
+        const uint16_t wc    = s.write_counter;   // continuita' del wear-leveling
+        memset(&s, 0, sizeof(s));
+        s.magic_number  = magic;
+        s.write_counter = wc;
+        ps.saveStats(true);
+        Serial.println(F("[CLI] statistiche cumulative azzerate (EEPROM)"));
+        return;
+    }
     if (strcmp(line, "config")  == 0) { printConfig(ps);           return; }
     if (strcmp(line, "sensors") == 0) { printSensors(sn);          return; }
     if (strcmp(line, "diag")    == 0) { printDiag(sn, mv, pp, gl, ps, sys); return; }
@@ -149,6 +164,44 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLig
     if (strcmp(line, "reboot")  == 0) {
         Serial.println(F("[CLI] reboot requested"));
         sys.softResetRequested = true;
+        return;
+    }
+
+    // i2cscan — scansione del bus I2C hardware (pin 20/21), con hint sui
+    // dispositivi attesi. Evita di dover flashare sketch-scanner esterni.
+    if (strcmp(line, "i2cscan") == 0) {
+        Serial.println(F("[i2cscan] bus hardware SDA=20 / SCL=21, indirizzi 0x08-0x77..."));
+        uint8_t found = 0;
+        for (uint8_t addr = 0x08; addr <= 0x77; ++addr) {
+            wdt_reset();   // a bus guasto ogni probe attende il timeout Wire (25 ms)
+            Wire.beginTransmission(addr);
+            if (Wire.endTransmission() != 0) continue;
+            found++;
+            Serial.print(F("  0x"));
+            if (addr < 0x10) Serial.print('0');
+            Serial.print(addr, HEX);
+            switch (addr) {
+                case 0x68: Serial.println(F("  DS3231/DS3232 RTC")); break;
+                case 0x76:
+                case 0x77: Serial.println(F("  BME680"));            break;
+                default:
+                    if (addr >= 0x50 && addr <= 0x57)
+                        Serial.println(F("  AT24C32 EEPROM (a bordo del modulo RTC HW-084)"));
+                    else
+                        Serial.println(F("  (sconosciuto)"));
+                    break;
+            }
+        }
+        if (found == 0) {
+            Serial.println(F("[i2cscan] NESSUN dispositivo: verifica VCC/GND del modulo,"));
+            Serial.println(F("          SDA->pin 20 e SCL->pin 21 (non solo continuita': MAPPATURA)"));
+        } else {
+            Serial.print(F("[i2cscan] trovati "));
+            Serial.print(found);
+            Serial.println(F(" dispositivi."));
+            Serial.println(F("  Modulo HW-084: attesi 0x68 (RTC) + 0x57 (EEPROM)."));
+            Serial.println(F("  Solo 0x57 senza 0x68 -> bus ok ma chip DS3231 muto (modulo/saldature)."));
+        }
         return;
     }
 
@@ -429,9 +482,11 @@ void Cli::printHelp() {
     Serial.println(F("version                   versione firmware"));
     Serial.println(F("status                    modalita' + stato runtime + RAM"));
     Serial.println(F("stats                     statistiche cumulative EEPROM"));
+    Serial.println(F("stats reset               azzera le statistiche cumulative"));
     Serial.println(F("config                    configurazione corrente"));
     Serial.println(F("sensors                   ultime letture sensori"));
     Serial.println(F("diag                      diagnostica guidata sensori/motori"));
+    Serial.println(F("i2cscan                   scansione bus I2C (RTC 0x68, EEPROM 0x50-57, BME 0x76)"));
     Serial.println(F("tank                      stato tanica acqua"));
     Serial.println(F("tank <cm>                 soglia tanica-vuota (3..120)"));
     Serial.println(F("light <adc>               soglia luminosita' (0..1023): seeking + luci UVA"));
@@ -443,7 +498,7 @@ void Cli::printHelp() {
     Serial.println(F("care                      stato cura autonoma + KPI giornalieri"));
     Serial.println(F("care <on|off>             cura autonoma della pianta (default off)"));
     Serial.println(F("wall <left|right|off>     wall-following laterale (sovrascrive seeking)"));
-    Serial.println(F("motor <f|b|l|r> <ms>      test motori (max 5000 ms)"));
+    Serial.println(F("motor <f|b|l|r> <ms>      test motori (max 60000 ms, ruote sollevate)"));
     Serial.println(F("mfp0                      test continuo motori avanti (10 min)"));
     Serial.println(F("motortest                 sequenza guidata f/b/l/r"));
     Serial.println(F("calib <left> <right>      PWM motori 0..255"));

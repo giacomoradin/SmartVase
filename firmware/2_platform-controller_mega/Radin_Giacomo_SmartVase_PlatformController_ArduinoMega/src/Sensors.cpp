@@ -62,6 +62,11 @@
  *         so the system starts in a plausible "daytime" state instead of being stuck at night. */
 #define DEFAULT_BOOT_HOUR 8
 
+/*! @brief Runtime RTC re-probe period (ms): while the chip is undetected, one
+           address probe per minute recovers it after a flaky contact comes
+           good, without waiting for a reboot (see sampleSensors()). */
+#define RTC_REPROBE_INTERVAL_MS 60000UL
+
 Sensors::Sensors() :
     us1_top         (US1_TOP_TRIG,         US1_TOP_ECHO,         US_NAV_MAX_CM),
     us2_front_right (US2_FRONT_RIGHT_TRIG, US2_FRONT_RIGHT_ECHO, US_NAV_MAX_CM),
@@ -71,6 +76,7 @@ Sensors::Sensors() :
     us6_right       (US6_RIGHT_TRIG,       US6_RIGHT_ECHO,       US_NAV_MAX_CM),
     us_cycle_idx(0),
     last_us_sample_ms(0),
+    last_rtc_reprobe_ms(0),
     cached_top_dist_cm(NAN),
     cached_front_right_dist_cm(NAN),
     cached_front_left_dist_cm(NAN),
@@ -140,20 +146,29 @@ void Sensors::init() {
     }
 #endif
 
-    // RTC DS3232 (I2C 0x68)
-    rtc_status = rtc.begin();
+    // RTC DS3232 (I2C 0x68). The single-shot probe proved fragile on the
+    // bench (chip missed at boot but answering a later i2cscan): retry a few
+    // times with a short settle delay before giving up. A periodic re-probe
+    // in sampleSensors() then keeps recovering it at runtime.
+    for (uint8_t attempt = 0; attempt < 3 && !rtc_status; ++attempt) {
+        if (attempt) delay(50);
+        rtc_status = rtc.begin();
+    }
 
     // No real time available (chip absent from the bus, or present but with a
-    // stopped oscillator due to a low/absent backup battery): we still start
-    // from a plausible default time (8:00, inside GrowLight's 06:00-20:00
-    // daylight window) instead of staying stuck waiting for a manual
-    // 'rtc set' on every boot. The day is arbitrary: only the hour extracted
-    // from hour(epoch) matters, see getEpoch()/timeIsValid().
-    // setEpoch() still tries to write to the real chip if reachable
-    // (it can "self-heal" a stopped oscillator as long as the Mega stays
-    // powered on VCC); otherwise it activates the software fallback clock.
+    // stopped oscillator due to a low/absent backup battery): start from a
+    // plausible default time (8:00, inside GrowLight's 06:00-20:00 daylight
+    // window) instead of staying stuck waiting for a manual 'rtc set' on
+    // every boot. The day is arbitrary: only the hour matters.
+    // SOFTWARE clock only, deliberately: writing the boot default to the chip
+    // would corrupt its year register (epochs before 2000 underflow the
+    // year-offset encoding in RtcDs3232::set) and a bogus-but-ticking chip
+    // time would then take precedence over the fallback. The real chip is
+    // adopted by the first user `rtc set` (which also clears the OSF flag).
     if (!rtc_status || rtc.oscillatorStopped()) {
-        setEpoch(DEFAULT_BOOT_HOUR * 3600UL);
+        fake_clock_base_epoch = DEFAULT_BOOT_HOUR * 3600UL;
+        fake_clock_set_millis = millis();
+        fake_clock_active     = true;
     }
 }
 
@@ -240,12 +255,27 @@ void Sensors::sampleSensors() {
         sampleNextUltrasonic();
         last_us_sample_ms = now;
     }
+
+    // RTC contact recovery: the boot probe is a snapshot, and a flaky wire
+    // that comes good later would otherwise leave rtc_status=false until the
+    // next reboot. One address probe per minute is negligible bus traffic;
+    // getEpoch() keeps preferring the software clock (if active) until a
+    // user `rtc set` hands the time over to the recovered chip.
+    if (!rtc_status && now - last_rtc_reprobe_ms >= RTC_REPROBE_INTERVAL_MS) {
+        last_rtc_reprobe_ms = now;
+        rtc_status = rtc.begin();
+    }
     // Fast ADCs: on every call.
     sampleAdcChannels();
 }
 
 uint32_t Sensors::getEpoch() {
-    if (rtc_status) {
+    // The chip takes precedence only while the software fallback is NOT in
+    // use: a chip that (re)appears at runtime with an unset time (OSF set,
+    // registers at the 2000-01-01 reset defaults) must not hijack a running
+    // software clock with a bogus epoch. `rtc set` remains the clean
+    // hand-over: on a successful chip write it disables the fallback.
+    if (rtc_status && !fake_clock_active) {
         time_t t = rtc.get();
         if (t != 0) return (uint32_t)t;
     }

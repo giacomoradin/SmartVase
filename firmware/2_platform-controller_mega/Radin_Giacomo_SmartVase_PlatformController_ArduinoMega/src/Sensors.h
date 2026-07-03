@@ -222,6 +222,7 @@ private:
 
     uint8_t us_cycle_idx;        /**< Index for managing sequential polling (0..5) */
     unsigned long last_us_sample_ms;/**< Timestamp of the last ultrasonic sensor sample */
+    unsigned long last_rtc_reprobe_ms; /**< Timestamp of the last runtime RTC re-probe (contact recovery, see sampleSensors()). */
 
     float raw_hist0[6];          /**< Previous raw reading per probe (median-of-3 pre-filter, see medianPrefilter()). */
     float raw_hist1[6];          /**< Raw reading two samples ago per probe (median-of-3 pre-filter). */

@@ -72,6 +72,18 @@ including the new `test_care_policy`).
   and asserts the emergent behavior (sunny-day arc with 2 relocations and a
   100-130% budget; dim-day UVA top-up bounded by window and cap; watering
   cycle convergence and stuck-dry-probe cap). Host suite now at 8 binaries.
+- **New CLI `i2cscan`** (bench session 2026-07-02): hardware I²C bus scan with
+  hints on the expected devices. First bench run found **0x68 (DS3231) +
+  0x57 (AT24C32)** → the HW-084 RTC module is wired and alive; remaining T6
+  steps: `rtc set`, 30 s power-off retention test, removal of the module's
+  LIR2032 charging resistor (a non-rechargeable CR2032 is fitted).
+- ⚠️ **Known regression — CAM no longer builds offline** (verified
+  2026-07-02): commit `279da08` added `mobizt/FirebaseClient @ ^2.2.9` to the
+  CAM `platformio.ini` and the library is neither in the offline PlatformIO
+  cache nor vendored → `build_cam.bat` fails with `HTTPClientError`.
+  Remediation (CAM owner): one-time `pio pkg install` from the CAM project
+  directory with network access, or vendorize the library like the other
+  offline dependencies. Mega and Hub builds are unaffected.
 
 ---
 

@@ -85,6 +85,7 @@ Movement::Movement() :
     seekTurnStartMs(0),
     seekRelocateUntilMs(0),
     wallFollowMode(WALL_OFF),
+    seekSessionCounted(false),
     scanSeekLight(true),
     scanStartMs(0),
     scanAlignUntilMs(0),
@@ -241,8 +242,14 @@ void Movement::handleMovementSM(const ObstacleView& v, int cached_lux,
                 stateStartTime            = millis();
                 avoidance_attempts        = 0;
                 current_stuck_backoff     = 30000UL;
-                if (targetMode == CPP_LIGHT)  stats.light_seeking_sessions++;
-                if (targetMode == CPP_SHADOW) stats.shadow_seeking_sessions++;
+                // One session per continuous target-mode period: the 20 s motor
+                // safety timeout bounces MOVING->IDLE->MOVING during long seeks,
+                // and re-counting each bounce used to inflate the statistics.
+                if (!seekSessionCounted) {
+                    if (targetMode == CPP_LIGHT)  stats.light_seeking_sessions++;
+                    if (targetMode == CPP_SHADOW) stats.shadow_seeking_sessions++;
+                    seekSessionCounted = true;
+                }
             }
             break;
 
@@ -433,8 +440,11 @@ void Movement::startLightScan(bool seekLight, CumulativeStats& stats) {
     // Count the seeking session here: the care-driven path enters MOVING via
     // the scan states, skipping the M_IDLE bookkeeping.
     if (currentMovementState == CPP_M_IDLE) {
-        if (seekLight) stats.light_seeking_sessions++;
-        else           stats.shadow_seeking_sessions++;
+        if (!seekSessionCounted) {
+            if (seekLight) stats.light_seeking_sessions++;
+            else           stats.shadow_seeking_sessions++;
+            seekSessionCounted = true;
+        }
         motorActiveStartTime  = millis();
         avoidance_attempts    = 0;
         current_stuck_backoff = 30000UL;
@@ -444,6 +454,9 @@ void Movement::startLightScan(bool seekLight, CumulativeStats& stats) {
 }
 
 void Movement::setTargetMode(CppMode mode) {
+    // A real mode change opens a new seeking period for the session counters
+    // (see the M_IDLE bookkeeping in handleMovementSM / startLightScan).
+    if (mode != targetMode) seekSessionCounted = false;
     targetMode = mode;
 }
 

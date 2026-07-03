@@ -236,6 +236,9 @@ private:
     unsigned long    seekTurnStartMs;         /**< Timestamp of the start of seeking rotation (to avoid circling) */
     unsigned long    seekRelocateUntilMs;     /**< Time limit within which to complete the relocation */
     uint8_t          wallFollowMode;          /**< Wall-following sub-mode (WallFollow: 0=off, 1=left, 2=right) */
+    bool             seekSessionCounted;      /**< One seeking session counted for the current continuous target-mode
+                                                    period; reset on a real mode change (prevents the 20 s safety-timeout
+                                                    restarts from inflating the session statistics). */
 
     // --- Light scan (see startLightScan) ---
     bool             scanSeekLight;                     /**< true = current scan seeks light, false = shade. */
