@@ -8,7 +8,7 @@
 /*
  * =================================================================
  * SmartVase - Vision Co-Processor (ESP32-CAM)
- * Version 2.1 — 2026-06-11 (hardening pre-bring-up)
+ * Version 2.2 — 2026-07-02 (Zenithal HSV + Circular ROI)
  * =================================================================
  *  Architecture:
  *   - Autonomous STA Wi-Fi (credentials stored in NVS via Preferences),
@@ -16,11 +16,13 @@
  *   - Serial CLI for provisioning and bench testing (115200, 'help').
  *   - Periodic JPEG capture when network and Firebase are configured.
  *   - Direct upload to Firebase Storage using mobizt/FirebaseClient v2.
- *   - Onboard plant health analysis (PixelAnalyzer) using PSRAM buffer.
+ *   - Onboard plant health analysis (PixelAnalyzer) using PSRAM buffer:
+ *     - Converts decoded RGB888 pixels inside Circular ROI into HSV space.
+ *     - Measures foliage coverage ratio to detect leaf wilting/shrinking.
+ *     - Classifies healthy green vs yellow/brown chlorosis/necrosis.
  *   - Firestore update on smartvase/{device_id}/vision/latest with
- *     image URL, plant health classification, green/brown ratios, and CRC32.
+ *     image URL, plant health classification, ratios, coverage, and CRC32.
  *   - Cumulative stats persisted in NVS.
- *   - Periodic debug telemetry on Serial Monitor (every 5 s).
  *
  *  Configuration (NVS namespace "cam", writable from CLI via `set`):
  *     wifi_ssid           string
@@ -29,11 +31,11 @@
  *     firebase_project_id string
  *     firebase_email      string
  *     firebase_password   string
- *     upload_url          string  (legacy endpoint / optional fallback)
- *     interval_s          uint32  (capture interval in seconds, default 300)
- *
- *  Stats (namespace "cam_stats"):
- *     succ_frames, fail_frames, upload_err, fb_err, total_cap_ms
+ *     upload_url          string
+ *     interval_s          uint32  (default 300)
+ *     roi_center_x        uint16  (default 400 for SVGA center)
+ *     roi_center_y        uint16  (default 300 for SVGA center)
+ *     roi_radius          uint16  (default 280, covers pot + overflow)
  * =================================================================
  */
 
@@ -46,15 +48,16 @@
 #include <Preferences.h>
 #include <ArduinoJson.h>
 #include <time.h>
+#include <math.h>
+#include "secrets.h"
 
-# include "secrets.h"
 
 #define ENABLE_USER_AUTH
-#define ENABLE_CLOUD_STORAGE
+#define ENABLE_STORAGE
 #define ENABLE_FIRESTORE
 #include <FirebaseClient.h>
 
-#define CAM_FW_VERSION "2.1.0"
+#define CAM_FW_VERSION "2.2.0"
 
 // -------------------- DEVICE IDENTITY --------------------
 #define DEVICE_ID_PREFIX "CAM_"
@@ -92,6 +95,9 @@ struct CamConfig {
     String firebase_password;
     String upload_url;
     uint32_t interval_s;
+    uint16_t roi_center_x;
+    uint16_t roi_center_y;
+    uint16_t roi_radius;
 } cfg;
 
 // -------------------- FIREBASE GLOBALS --------------------
@@ -101,7 +107,7 @@ AsyncClient aClient(ssl_client);
 
 FirebaseApp app;
 UserAuth user_auth("", "", "");
-CloudStorage cstorage;
+Storage fbStorage;
 Firestore::Documents Docs;
 
 // -------------------- NVS PREFERENCES --------------------
@@ -128,9 +134,10 @@ struct AnalysisResult {
     bool valid;
     uint32_t green_pixels;
     uint32_t brown_pixels;
-    uint32_t total_pixels;
+    uint32_t total_roi_pixels;
     float green_ratio;
     float brown_ratio;
+    float foliage_coverage;
     bool plant_healthy;
     String status_message;
 };
@@ -138,10 +145,6 @@ struct AnalysisResult {
 // -------------------- UTILITIES --------------------
 /**
  * @brief Computes CRC32 checksum (Little Endian) of a data buffer.
- * @param crc Initial CRC value.
- * @param buf Pointer to data buffer.
- * @param len Data length in bytes.
- * @return uint32_t Calculated CRC32 checksum.
  */
 uint32_t crc32_le(uint32_t crc, const uint8_t *buf, size_t len) {
     static const uint32_t table[16] = {
@@ -172,18 +175,25 @@ void loadConfig() {
     cfg.firebase_project_id = prefs.getString("firebase_project_id", "");
     cfg.firebase_email      = prefs.getString("firebase_email",      "");
     cfg.firebase_password   = prefs.getString("firebase_password",   "");
+    cfg.roi_center_x        = prefs.getUInt  ("roi_cx",              400);
+    cfg.roi_center_y        = prefs.getUInt  ("roi_cy",              300);
+    cfg.roi_radius          = prefs.getUInt  ("roi_r",               280);
     prefs.end();
 
     // ============================================================
-    // BENCH ONLY — Hardcoded credentials for testing.
-    // Overwrites NVS settings in memory on each boot.
+    // BENCH / SECRETS — Load credentials from secrets.h
     // ============================================================
-    cfg.wifi_ssid   = SECRET_WIFI_SSID;
-    cfg.wifi_pass   = SECRET_WIFI_PASS;
-    cfg.firebase_api_key = SECRET_FIREBASE_API_KEY;
+#ifdef SMARTVASE_CAM_SECRETS_H
+    cfg.wifi_ssid           = SECRET_WIFI_SSID;
+    cfg.wifi_pass           = SECRET_WIFI_PASS;
+    cfg.firebase_api_key    = SECRET_FIREBASE_API_KEY;
     cfg.firebase_project_id = SECRET_FIREBASE_PROJECT_ID;
-    cfg.firebase_email = SECRET_FIREBASE_EMAIL;
-    cfg.firebase_password = SECRET_FIREBASE_PASSWORD;
+    cfg.firebase_email      = SECRET_FIREBASE_EMAIL;
+    cfg.firebase_password   = SECRET_FIREBASE_PASSWORD;
+#else
+    cfg.wifi_ssid   = "XXL";
+    cfg.wifi_pass   = "pomodoro";
+#endif
     // ============ End bench block ============
 }
 
@@ -200,6 +210,9 @@ void saveConfig() {
     prefs.putString("firebase_password",   cfg.firebase_password);
     prefs.putString("upload_url",          cfg.upload_url);
     prefs.putUInt  ("interval_s",          cfg.interval_s);
+    prefs.putUInt  ("roi_cx",              cfg.roi_center_x);
+    prefs.putUInt  ("roi_cy",              cfg.roi_center_y);
+    prefs.putUInt  ("roi_r",               cfg.roi_radius);
     prefs.end();
 }
 
@@ -230,7 +243,6 @@ void saveStats() {
 }
 
 void makeDeviceId() {
-    // For now, let deviceId be hardcoded; when deploying multiple devices, derive from MAC address.
     snprintf(deviceId, sizeof(deviceId), "CAM_123456");
 }
 
@@ -255,7 +267,7 @@ bool initCamera() {
     c.pixel_format = PIXFORMAT_JPEG;
     if (psramFound()) {
         c.frame_size   = FRAMESIZE_SVGA;  // 800x600 resolution
-        c.jpeg_quality = 12;              // 0..63 (lower number = higher quality)
+        c.jpeg_quality = 12;
         c.fb_count     = 2;
     } else {
         c.frame_size   = FRAMESIZE_VGA;   // 640x480 resolution
@@ -283,22 +295,31 @@ void wifiStartAttempt() {
         Serial.print('.');
     }
     Serial.printf("\n[CAM] Wi-Fi OK. IP=%s\n", WiFi.localIP().toString().c_str());
-    // NTP synchronization required for valid UTC timestamp in Firestore
     configTime(0, 0, "pool.ntp.org", "time.google.com");
     t0 = millis();
-    while (time(nullptr) < NTP_VALID_EPOCH && millis() - t0 < 3000) {
+    while (time(nullptr) < NTP_VALID_EPOCH && millis() - t0 < 5000) {
         delay(100);
     }
 }
 
 void wifiEnsure() {
     if (cfg.wifi_ssid.length() == 0) return;
-    if (WiFi.status() == WL_CONNECTED) return;
+    if (WiFi.status() != WL_CONNECTED) {
+        if (millis() - lastWifiAttemptMs > WIFI_RETRY_INTERVAL_MS || lastWifiAttemptMs == 0) {
+            lastWifiAttemptMs = millis();
+            Serial.println("[CAM] Wi-Fi disconnected, attempting reconnection...");
+            WiFi.reconnect();
+        }
+    } else {
+        if (time(nullptr) < NTP_VALID_EPOCH) {
+            configTime(0, 0, "pool.ntp.org", "time.google.com");
+        }
+    }
+}
 
-    if (millis() - lastWifiAttemptMs > WIFI_RETRY_INTERVAL_MS || lastWifiAttemptMs == 0) {
-        lastWifiAttemptMs = millis();
-        Serial.println("[CAM] Wi-Fi disconnected, attempting reconnection...");
-        WiFi.reconnect();
+void authDebugCallback(AsyncResult &aResult) {
+    if (aResult.isError()) {
+        Serial.printf("[AUTH ERROR] %s: %s (code %d)\n", aResult.uid().c_str(), aResult.error().message().c_str(), aResult.error().code());
     }
 }
 
@@ -306,28 +327,34 @@ void wifiEnsure() {
 void firebaseInit() {
     if (cfg.firebase_api_key.length() == 0 || app.isInitialized()) return;
     
+    if (time(nullptr) < NTP_VALID_EPOCH) {
+        Serial.println("[CAM] Waiting for NTP time sync before Firebase init...");
+        unsigned long t0 = millis();
+        while (time(nullptr) < NTP_VALID_EPOCH && millis() - t0 < 5000) {
+            delay(100);
+        }
+    }
+    
     Serial.println("[CAM] Initializing Firebase...");
     ssl_client.setInsecure(); 
     
     user_auth = UserAuth(cfg.firebase_api_key, cfg.firebase_email, cfg.firebase_password);
-    initializeApp(aClient, app, getAuth(user_auth));
+    initializeApp(aClient, app, getAuth(user_auth), authDebugCallback, "auth_task");
     
-    // Bind Storage and Firestore modules to the app instance
-    app.getApp<CloudStorage>(cstorage);
+    app.getApp<Storage>(fbStorage);
     app.getApp<Firestore::Documents>(Docs);
     
     Serial.println("[CAM] Firebase App Initialized.");
 }
 
-// -------------------- ONBOARD PIXEL ANALYSIS --------------------
+// -------------------- ONBOARD HSV & CIRCULAR ROI ANALYSIS --------------------
 /**
- * @brief Analyzes image pixels using PSRAM buffer to classify plant health.
+ * @brief Analyzes image inside Circular ROI using HSV space to classify health and wilting.
  */
 AnalysisResult doAnalysis(camera_fb_t* fb) {
-    AnalysisResult res = {false, 0, 0, 0, 0.0f, 0.0f, true, "Cannot analyze frame (invalid buffer)"};
+    AnalysisResult res = {false, 0, 0, 0, 0.0f, 0.0f, 0.0f, true, "Cannot analyze frame (invalid buffer)"};
     if (!fb || fb->len == 0) return res;
 
-    // Allocate RGB888 decode buffer in PSRAM (approx 1.44 MB for 800x600)
     uint8_t* rgb_buf = (uint8_t*)heap_caps_malloc(fb->width * fb->height * 3, MALLOC_CAP_SPIRAM);
     if (!rgb_buf) {
         res.status_message = "Insufficient PSRAM memory for RGB decoding";
@@ -336,30 +363,68 @@ AnalysisResult doAnalysis(camera_fb_t* fb) {
 
     bool decoded = fmt2rgb888(fb->buf, fb->len, fb->format, rgb_buf);
     if (decoded) {
-        uint32_t num_pixels = fb->width * fb->height;
-        for (uint32_t i = 0; i < num_pixels * 3; i += 3) {
-            uint8_t r = rgb_buf[i];
-            uint8_t g = rgb_buf[i+1];
-            uint8_t b = rgb_buf[i+2];
-            
-            // Empirical color thresholds for green vs brown/dry foliage
-            if (g > r * 1.15f && g > b * 1.15f && g > 50) {
-                res.green_pixels++;
-            } else if (r > g && g > b && r > 60 && g > 35 && b < 90) {
-                res.brown_pixels++;
+        uint32_t cx = cfg.roi_center_x;
+        uint32_t cy = cfg.roi_center_y;
+        uint32_t r_sq = (uint32_t)cfg.roi_radius * (uint32_t)cfg.roi_radius;
+
+        for (uint32_t y = 0; y < fb->height; y++) {
+            uint32_t dy = (y > cy) ? (y - cy) : (cy - y);
+            for (uint32_t x = 0; x < fb->width; x++) {
+                uint32_t dx = (x > cx) ? (x - cx) : (cx - x);
+                if (dx * dx + dy * dy > r_sq) {
+                    continue; // Skip pixels outside the configured circular ROI
+                }
+
+                res.total_roi_pixels++;
+
+                uint32_t idx = (y * fb->width + x) * 3;
+                float rf = rgb_buf[idx] / 255.0f;
+                float gf = rgb_buf[idx+1] / 255.0f;
+                float bf = rgb_buf[idx+2] / 255.0f;
+
+                float cmax = rf > gf ? (rf > bf ? rf : bf) : (gf > bf ? gf : bf);
+                float cmin = rf < gf ? (rf < bf ? rf : bf) : (gf < bf ? gf : bf);
+                float delta = cmax - cmin;
+
+                float h = 0.0f;
+                if (delta > 0.0001f) {
+                    if (cmax == rf)      h = 60.0f * fmodf((gf - bf) / delta, 6.0f);
+                    else if (cmax == gf) h = 60.0f * (((bf - rf) / delta) + 2.0f);
+                    else                 h = 60.0f * (((rf - gf) / delta) + 4.0f);
+                    if (h < 0.0f) h += 360.0f;
+                }
+                float s = (cmax > 0.0001f) ? (delta / cmax) : 0.0f;
+                float v = cmax;
+
+                // Healthy green basil foliage (Hue ~35..95 deg, sufficient color & brightness)
+                if (h >= 35.0f && h <= 95.0f && s >= 0.20f && v >= 0.15f) {
+                    res.green_pixels++;
+                }
+                // Yellow/brown/dry foliage (Hue ~10..35 deg)
+                else if (h >= 10.0f && h < 35.0f && s >= 0.25f && v >= 0.15f) {
+                    res.brown_pixels++;
+                }
             }
         }
-        res.total_pixels = num_pixels;
-        res.green_ratio = (float)res.green_pixels / num_pixels;
-        res.brown_ratio = (float)res.brown_pixels / num_pixels;
-        res.valid = true;
 
-        if (res.brown_ratio > 0.12f || (res.green_ratio < 0.05f && res.total_pixels > 0)) {
-            res.plant_healthy = false;
-            res.status_message = "Warning: detected dry leaves or plant stress!";
+        if (res.total_roi_pixels > 0) {
+            res.green_ratio = (float)res.green_pixels / res.total_roi_pixels;
+            res.brown_ratio = (float)res.brown_pixels / res.total_roi_pixels;
+            res.foliage_coverage = (float)(res.green_pixels + res.brown_pixels) / res.total_roi_pixels;
+            res.valid = true;
+
+            if (res.foliage_coverage < 0.05f) {
+                res.plant_healthy = false;
+                res.status_message = "Warning: Very low foliage coverage (possible wilting or missing plant)!";
+            } else if (res.brown_pixels > res.green_pixels * 0.25f) {
+                res.plant_healthy = false;
+                res.status_message = "Warning: Detected dry, yellowing, or sick foliage!";
+            } else {
+                res.plant_healthy = true;
+                res.status_message = "Healthy: Basil plant has good turgor and green foliage!";
+            }
         } else {
-            res.plant_healthy = true;
-            res.status_message = "Healthy: basil plant looks great!";
+            res.status_message = "Invalid circular ROI (0 pixels evaluated)";
         }
     } else {
         res.status_message = "JPEG to RGB888 frame decoding failed";
@@ -376,19 +441,23 @@ String uploadImageToStorage(const uint8_t* buf, size_t len) {
         return "";
     }
 
+    if (time(nullptr) < NTP_VALID_EPOCH) {
+        Serial.println("[CAM] Waiting for NTP time sync before upload...");
+        unsigned long t0 = millis();
+        while (time(nullptr) < NTP_VALID_EPOCH && millis() - t0 < 5000) {
+            delay(100);
+        }
+    }
+
     time_t nowEpoch = time(nullptr);
     String filename = "images/" + String(deviceId) + "_" + String(nowEpoch) + ".jpg";
-    String bucket = cfg.firebase_project_id + ".appspot.com";
-    
+    String bucket = cfg.firebase_project_id + ".firebasestorage.app";
+
     Serial.printf("[CAM] Uploading to Storage: %s...\n", filename.c_str());
 
     BlobConfig blob((uint8_t*)buf, len);
-    GoogleCloudStorage::UploadOptions options;
-    options.mime = "image/jpeg";
-    options.uploadType = GoogleCloudStorage::upload_type_simple;
 
-    // Perform synchronous upload from memory buffer
-    bool status = cstorage.upload(aClient, GoogleCloudStorage::Parent(bucket, filename), getBlob(blob), options);
+    bool status = fbStorage.upload(aClient, FirebaseStorage::Parent(bucket, filename), getBlob(blob), "image/jpeg");
 
     if (status) {
         String gsUrl = "gs://" + bucket + "/" + filename;
@@ -396,7 +465,7 @@ String uploadImageToStorage(const uint8_t* buf, size_t len) {
         return gsUrl;
     } else {
         stats.upload_errors++;
-        Serial.printf("[CAM] Upload failed. Error: %s\n", aClient.lastError().message().c_str());
+        Serial.printf("[CAM] Upload failed. Error: %s (code %d)\n", aClient.lastError().message().c_str(), aClient.lastError().code());
         return "";
     }
 }
@@ -415,15 +484,21 @@ void notifyFirestore(const String& imageUrl, size_t bytes, uint32_t crc, uint32_
     Values::IntegerValue capVal(capMs);
     Values::BooleanValue healthVal(analysis.plant_healthy);
     Values::StringValue  msgVal(analysis.status_message);
+    Values::StringValue  covVal(String(analysis.foliage_coverage * 100.0f, 1) + "%");
+    Values::StringValue  grnVal(String(analysis.green_ratio * 100.0f, 1) + "%");
+    Values::StringValue  brnVal(String(analysis.brown_ratio * 100.0f, 1) + "%");
 
     Document<Values::Value> doc("timestamp_utc", Values::Value(tsVal));
-    doc.add("image_url",       Values::Value(urlVal));
-    doc.add("resolution",      Values::Value(resVal));
-    doc.add("size_bytes",      Values::Value(sizeVal));
-    doc.add("crc32",           Values::Value(crcVal));
-    doc.add("capture_time_ms", Values::Value(capVal));
-    doc.add("plant_healthy",   Values::Value(healthVal));
-    doc.add("status_message",  Values::Value(msgVal));
+    doc.add("image_url",        Values::Value(urlVal));
+    doc.add("resolution",       Values::Value(resVal));
+    doc.add("size_bytes",       Values::Value(sizeVal));
+    doc.add("crc32",            Values::Value(crcVal));
+    doc.add("capture_time_ms",  Values::Value(capVal));
+    doc.add("plant_healthy",    Values::Value(healthVal));
+    doc.add("status_message",   Values::Value(msgVal));
+    doc.add("foliage_coverage", Values::Value(covVal));
+    doc.add("green_ratio",      Values::Value(grnVal));
+    doc.add("brown_ratio",      Values::Value(brnVal));
 
     Serial.printf("[CAM] Updating Firestore document at: %s\n", documentPath.c_str());
 
@@ -460,17 +535,15 @@ bool doCapture(bool uploadAndPublish) {
     stats.successful_frames++;
     stats.total_capture_time_ms += capMs;
 
-    // Perform onboard plant health analysis
-    Serial.println("[CAM] Performing onboard foliage pixel analysis...");
+    Serial.println("[CAM] Performing onboard HSV & Circular ROI foliage analysis...");
     AnalysisResult analysis = doAnalysis(fb);
-    Serial.printf("[CAM] Analysis result: Healthy=%d | Green ratio=%.2f | Brown ratio=%.2f | Msg=%s\n",
-                  analysis.plant_healthy, analysis.green_ratio, analysis.brown_ratio, analysis.status_message.c_str());
+    Serial.printf("[CAM] Analysis result: Healthy=%d | Coverage=%.1f%% | Green=%.1f%% | Brown=%.1f%% | Msg=%s\n",
+                  analysis.plant_healthy, analysis.foliage_coverage * 100.0f,
+                  analysis.green_ratio * 100.0f, analysis.brown_ratio * 100.0f,
+                  analysis.status_message.c_str());
 
     if (uploadAndPublish && cfg.firebase_project_id.length() > 0 && WiFi.status() == WL_CONNECTED) {
-        // 1. UPLOAD IMAGE TO STORAGE
         String url = uploadImageToStorage(fb->buf, frameLen);
-        
-        // 2. UPDATE FIRESTORE DOCUMENT
         if (url.length() > 0) {
             notifyFirestore(url, frameLen, crc, (uint32_t)capMs, analysis);
         }
@@ -490,11 +563,11 @@ void cliPrintHelp() {
     Serial.println("help                  show this menu");
     Serial.println("version               firmware version");
     Serial.println("status                Wi-Fi, camera, free heap");
-    Serial.println("show                  show NVS config");
-    Serial.println("set <key> <val>       wifi_ssid|wifi_pass|firebase_api_key|firebase_project_id|firebase_email|firebase_password|interval_s");
+    Serial.println("show                  show NVS config & circular ROI settings");
+    Serial.println("set <key> <val>       wifi_ssid|wifi_pass|firebase_project_id|firebase_api_key|roi_center_x|roi_center_y|roi_radius");
     Serial.println("save                  save current config to NVS");
     Serial.println("wifi connect          trigger STA Wi-Fi connection attempt");
-    Serial.println("capture               test capture & onboard analysis (no upload)");
+    Serial.println("capture               test capture & onboard HSV circular ROI analysis");
     Serial.println("upload                capture + analysis + upload + Firestore update");
     Serial.println("stats                 show cumulative statistics");
     Serial.println("reboot                reboot the camera module");
@@ -525,9 +598,11 @@ void cliPrintShow() {
     Serial.printf("wifi_pass           = %s\n", cfg.wifi_pass.length() ? "***" : "(empty)");
     Serial.printf("firebase_api_key    = %s\n", cfg.firebase_api_key.length() ? "***" : "(empty)");
     Serial.printf("firebase_project_id = %s\n", cfg.firebase_project_id.c_str());
-    Serial.printf("firebase_email      = %s\n", cfg.firebase_email.c_str());
     Serial.printf("upload_url          = %s\n", cfg.upload_url.c_str());
     Serial.printf("interval_s          = %lu\n", (unsigned long)cfg.interval_s);
+    Serial.printf("roi_center_x        = %u\n", (unsigned)cfg.roi_center_x);
+    Serial.printf("roi_center_y        = %u\n", (unsigned)cfg.roi_center_y);
+    Serial.printf("roi_radius          = %u\n", (unsigned)cfg.roi_radius);
 }
 
 void cliPrintStats() {
@@ -559,6 +634,9 @@ bool cliHandleSet(char* args) {
         if (s < 10) { Serial.println("[CLI] minimum interval is 10 s"); return true; }
         cfg.interval_s = (uint32_t)s;
     }
+    else if (strcmp(key, "roi_center_x")        == 0) cfg.roi_center_x = (uint16_t)atoi(value);
+    else if (strcmp(key, "roi_center_y")        == 0) cfg.roi_center_y = (uint16_t)atoi(value);
+    else if (strcmp(key, "roi_radius")          == 0) cfg.roi_radius   = (uint16_t)atoi(value);
     else return false;
 
     Serial.printf("[CLI] %s set successfully (remember to 'save' and 'reboot')\n", key);
@@ -612,13 +690,14 @@ void cliExecute(char* line) {
 void cliTick() {
     while (Serial.available()) {
         char c = (char)Serial.read();
-        if (c == '\r') continue;
-        if (c == '\n') {
+        Serial.write(c); // Hardware echo
+        if (c == '\r' || c == '\n') {
             cliBuf[cliPos] = '\0';
             if (cliPos > 0) cliExecute(cliBuf);
             cliPos = 0;
             cliBuf[0] = '\0';
             Serial.print("> ");
+
         } else if (cliPos < sizeof(cliBuf) - 1) {
             cliBuf[cliPos++] = c;
         } else {
@@ -646,8 +725,7 @@ void printDebugTelemetry() {
 
 // -------------------- SETUP / LOOP --------------------
 void setup() {
-    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // disable brown-out detector (known ESP32-CAM power issue)
-    pinMode(3, INPUT_PULLUP); // Prevent RXD0 from floating when USB/FTDI disconnected
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
     Serial.begin(115200);
     delay(200);
     Serial.println("\n[CAM] SmartVase Vision Co-Processor v" CAM_FW_VERSION);
@@ -676,20 +754,14 @@ void setup() {
 
 void loop() {
     cliTick();
-
-    // Maintain network connectivity non-blocking in background
     wifiEnsure();
-
-    // Maintain async Firebase tasks and token refresh loop
     app.loop();
 
-    // Periodic debug telemetry on serial console
     if (millis() - lastDebugMs >= DEBUG_TELEMETRY_INTERVAL_MS) {
         lastDebugMs = millis();
         printDebugTelemetry();
     }
 
-    // Periodic capture execution when network and Firebase project ID are ready
     bool periodicDue = (cfg.firebase_project_id.length() > 0 || cfg.upload_url.length() > 0) &&
                        WiFi.status() == WL_CONNECTED &&
                        millis() - lastCaptureMs >= (cfg.interval_s * 1000UL);

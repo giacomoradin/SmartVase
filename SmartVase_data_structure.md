@@ -146,16 +146,19 @@ Supported actions:
 **Purpose:** This gets updated when a new image has been uploaded to Firebase Cloud Storage AND the leaf health analysis has been completed (by the lightweight vision algorithm on the edge).
 **Direction:** ESP32-CAM -> Firebase (Storage & Firestore) -> Flutter App
 *Note: This data path bypasses MQTT entirely.*
-**Firestore Path:** `smartvase/{cam_id}/vision/image_ready`
+**Firestore Path:** `smartvase/{cam_id}/vision/latest`
 
 **JSON Payload Example:**
 {
-  "image_url": "gs://smartvase-7cfd9.appspot.com/images/VASE_01_1678886405.jpg",
-  "timestamp_utc": 31288,
-  "resolution": "640x480",
+  "timestamp_utc": 1678886405,
+  "image_url": "gs://smartvase-7cfd9.firebasestorage.app/images/CAM_123456_1678886405.jpg",
+  "resolution": "800x600",
   "size_bytes": 397847,
   "crc32": 1239082,
   "capture_time_ms": 254,
   "plant_healthy": true,
-  "message": "Plant is ok, no need to worry!"
+  "status_message": "Healthy: Basil plant has good turgor and green foliage!",
+  "foliage_coverage": "45.2%",
+  "green_ratio": "85.1%",
+  "brown_ratio": "4.3%"
 }
