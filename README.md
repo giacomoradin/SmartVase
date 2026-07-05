@@ -11,7 +11,7 @@
 SmartVase is a mobile, self-watering planter that seeks light or shade
 according to its operating mode, captures images of the plant for leaf-health
 analysis, and reports telemetry and logs to a cloud backbone. The system is
-distributed across three microcontrollers, a Python vision pipeline, and an
+distributed across three microcontrollers, a vision pipeline, and an
 Android companion app.
 
 For the full architectural reference (PIN map, FreeRTOS task layout,
