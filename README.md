@@ -79,7 +79,7 @@ used by the ESP32-CAM (see `infra/cloud-functions/upload-image/`).
 The actual leaf-health analysis (quality gate, HSV metrics, foliage coverage, and
 green/brown ratio classifier) is executed directly on the edge in C++ within the
 ESP32-CAM firmware (`firmware/3_esp32-cam/.../src/VisionBotanist.cpp`). The
-Python script (`vision/pixel_analyzer.py`, owned by Antonio) is used offline
+Python script (`vision/pixel_analyzer.py`) is used offline
 exclusively for prototyping, testing, and calibrating the C++ edge vision algorithm.
 
 ---
