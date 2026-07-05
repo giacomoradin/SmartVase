@@ -76,11 +76,11 @@ used by the ESP32-CAM (see `infra/cloud-functions/upload-image/`).
 
 ### Vision Pipeline
 
-A Python script (`vision/pixel_analyzer.py`, owned by Antonio) downsamples a
-frame to 160×120 RGB565 and counts green/brown pixels to produce a biomass /
-disease index. The richer rule-based pipeline (quality gate, HSV metrics,
-leaf-health classifier) targeted by the `vision/result` schema in
-`SmartVase_data_structure.md` is **not implemented yet**.
+The actual leaf-health analysis (quality gate, HSV metrics, foliage coverage, and
+green/brown ratio classifier) is executed directly on the edge in C++ within the
+ESP32-CAM firmware (`firmware/3_esp32-cam/.../src/VisionBotanist.cpp`). The
+Python script (`vision/pixel_analyzer.py`, owned by Antonio) is used offline
+exclusively for prototyping, testing, and calibrating the C++ edge vision algorithm.
 
 ---
 
@@ -137,7 +137,7 @@ A hybrid strategy is used to balance interoperability and performance:
 | Member     | Role                                | Key Responsibilities                                                  |
 |------------|-------------------------------------|----------------------------------------------------------------------|
 | Giacomo    | PM & Lead Firmware Eng              | System architecture, firmware (ESP32 Hub & CAM, Mega)                |
-| Antonio    | Computer Vision Specialist          | Image processing pipeline (Python OpenCV) and on-device pre-checks   |
+| Antonio    | Computer Vision Specialist          | Edge vision algorithm (C++ on CAM) and Python prototyping/calibration|
 | Fia        | Backend & Cloud Architect           | HiveMQ, Cloud Functions, Firestore schema                            |
 | Francesco  | Android Application Developer       | Native Android app (Kotlin, Compose, MVVM, MQTT integration)         |
 
@@ -220,7 +220,7 @@ reboot                     soft reset
 
 ## 📈 7. Project Status
 
-- **Firmware** — Mega v5.3, Hub v1.3, CAM v2.1 (serial protocol nanopb v4.1).
+- **Firmware** — Mega v5.3, Hub v1.3, CAM v2.2 (serial protocol nanopb v4.1).
   Aligned to the PIN map in [`docs/PINS - Sheet1.csv`](docs/PINS%20-%20Sheet1.csv).
   All three build offline; hardware bring-up in progress (motors and sensors
   partially verified on the bench, see `docs/SmartVase_Project_State.md`).
@@ -228,11 +228,12 @@ reboot                     soft reset
   its own (`care on`): daily light budget, light-scan relocation, autonomous
   dose/soak/verify watering, per-plant profiles, UVA top-up. Design document:
   [`docs/Plant_Care_Design.md`](docs/Plant_Care_Design.md).
-- **Vision** — Single script `vision/pixel_analyzer.py` (green/brown pixel
-  analysis) with one test under `vision/tests/`. The full quality-gate /
-  leaf-health pipeline is not implemented yet.
+- **Vision** — On-device leaf-health analysis (HSV metrics, foliage coverage,
+  green/brown ratios) is implemented in C++ on the ESP32-CAM (`VisionBotanist.cpp`).
+  The `vision/` directory (`pixel_analyzer.py` and `vision/tests/`) is used
+  offline for prototyping, testing, and calibrating the edge algorithm.
 - **Cloud** — The image-upload Cloud Function is a stub; a dev MQTT→Firestore
-  bridge lives in `server/mqtt_listener.py`. Production pipeline TBD.
+  bridge lives in `server/mqtt_firestore_bridge.py`. Production pipeline TBD.
 - **Host tests** — `tests/host/` runs pure-logic unit tests with g++ (CRC16,
   command/sensor/navigation/care policies, EEPROM persistence).
 - **Android app** — Tracked in a separate repository.
