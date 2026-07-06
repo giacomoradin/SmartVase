@@ -1,9 +1,7 @@
 #include "CameraDriver.h"
 
-//global flag tracking camera hardware status
 bool cameraOk = false;
 
-//configure and initialize ov2640 camera sensor
 bool initCamera() {
     camera_config_t c = {};
     c.ledc_channel = LEDC_CHANNEL_0;
@@ -22,7 +20,6 @@ bool initCamera() {
     c.pin_reset = RESET_GPIO_NUM;
     c.xclk_freq_hz = 20000000;
     c.pixel_format = PIXFORMAT_JPEG;
-    //check if external psram memory is available for higher resolutions
     if (psramFound()) {
         c.frame_size   = FRAMESIZE_SVGA;  // 800x600 resolution
         c.jpeg_quality = 12;
@@ -32,7 +29,6 @@ bool initCamera() {
         c.jpeg_quality = 14;
         c.fb_count     = 1;
     }
-    //initialize camera driver and check for hardware errors
     esp_err_t err = esp_camera_init(&c);
     return err == ESP_OK;
 }
