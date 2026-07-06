@@ -131,7 +131,7 @@ pull-up on the shield → driver enabled at rest).
 | M2EN/DIAG      | not wired | optional, not connected as of 2026-06-30 |
 
 > Pin mapping **confirmed 2026-06-30** via multimeter continuity test (see
-> `docs/Scheda_Verifica_Hardware.md` §1.1/T7), superseding an earlier
+> `docs/Hardware_Verification_Sheet.md` §1.1/T7), superseding an earlier
 > best-guess mapping that paired PWM/INA/INB from different shield channels —
 > the actual root cause of the 0 V outputs seen on the bench.
 >

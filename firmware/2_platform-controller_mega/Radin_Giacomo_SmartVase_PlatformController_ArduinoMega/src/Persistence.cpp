@@ -39,26 +39,26 @@ static_assert(sizeof(CumulativeStats) <= 128, "CumulativeStats exceeds the EEPRO
 #define EEPROM_STATS_SLOT_1_ADDR   256    ///< Statistics slot 1.
 /*! @} */
 
-/*! @name Throttling delle scritture EEPROM (anti-usura)
+/*! @name EEPROM write throttling (anti-wear)
  *  @{ */
-#define EEPROM_CONFIG_WRITE_INTERVAL  60000UL    ///< Intervallo minimo tra due scritture di config (ms).
-#define EEPROM_STATS_WRITE_INTERVAL  300000UL    ///< Intervallo minimo tra due scritture di stats (ms).
+#define EEPROM_CONFIG_WRITE_INTERVAL  60000UL    ///< Minimum interval between two config writes (ms).
+#define EEPROM_STATS_WRITE_INTERVAL  300000UL    ///< Minimum interval between two stats writes (ms).
 /*! @} */
 
 /*!
-    @brief    Calcola il CRC16 di una `DeviceConfig`, escludendo il proprio campo `crc16`.
+    @brief    Calculates the CRC16 of a DeviceConfig, excluding its own crc16 field.
 
-    @details  Il blob CONTIENE il proprio campo crc16, quindi il calcolo va fatto su una
-              copia locale con quel campo azzerato, per coprire l'intera struct in modo
-              deterministico. (Bug storico corretto: la versione precedente includeva nel
-              calcolo il crc16 col valore vecchio ed escludeva gli ultimi 2 byte di dati,
-              per cui la verifica al load falliva sempre e config/stats tornavano ai
-              default ad ogni boot.)
+    @details  The blob CONTAINS its own crc16 field, so the calculation must be done on a
+              local copy with that field zeroed out, to cover the entire struct deterministically.
+              (Historical bug fixed: the previous version included in the
+              calculation the crc16 with the old value and excluded the last 2 bytes of data,
+              so the verification at load always failed and config/stats reverted to
+              defaults at each boot.)
 
-    @param[in] c Configurazione di cui calcolare il CRC (passata per copia: il campo
-                 `crc16` dell'originale non viene toccato).
+    @param[in] c Config to calculate the CRC for (passed by copy: the
+                 crc16 field of the original is untouched).
 
-    @return   Il CRC16-CCITT della struct con `crc16` azzerato.
+    @return   The CRC16-CCITT of the struct with crc16 zeroed.
 */
 static uint16_t configCrc(DeviceConfig c) {
     c.crc16 = 0;
@@ -66,10 +66,10 @@ static uint16_t configCrc(DeviceConfig c) {
 }
 
 /*!
-    @brief    Calcola il CRC16 di una `CumulativeStats`, escludendo il proprio campo `crc16`.
-    @details  Stessa logica di ::configCrc, applicata alle statistiche cumulative.
-    @param[in] s Statistiche di cui calcolare il CRC (passate per copia).
-    @return   Il CRC16-CCITT della struct con `crc16` azzerato.
+    @brief    Calculates the CRC16 of a CumulativeStats, excluding its own crc16 field.
+    @details  Same logic as ::configCrc, applied to cumulative statistics.
+    @param[in] s Statistics to calculate the CRC for (passed by copy).
+    @return   The CRC16-CCITT of the struct with crc16 zeroed.
 */
 static uint16_t statsCrc(CumulativeStats s) {
     s.crc16 = 0;

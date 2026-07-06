@@ -3,7 +3,7 @@
 
     @ingroup MegaComm
 
-    @brief  Implementazione del CRC16-CCITT (vedi Crc16.h).
+    @brief  Implementation of CRC16-CCITT (see Crc16.h).
 
     @date   2026-05-20
 

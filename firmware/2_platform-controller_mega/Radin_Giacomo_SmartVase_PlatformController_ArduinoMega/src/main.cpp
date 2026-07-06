@@ -13,11 +13,11 @@
                la cura autonoma è attiva, regola legacy (IDLE + buio) altrimenti
              - Cura autonoma della pianta (layer L2, `care on`): budget luce giornaliero,
                light scan rotante, irrigazione dose-attesa-verifica, profili pianta (Care/CarePolicy)
-             - RTC DS3232 (I2C 0x68) per timestamp epoch nei messaggi
+             - RTC DS3232 (I2C 0x68) for epoch timestamp in messages
              - WDT 4s, doppio slot EEPROM con CRC16 (wear-leveling), log queue
              - Comunicazione Serial1 Protobuf+framing verso ESP32 Hub
-             - Scheduler non bloccante per telemetria/heartbeat/log
-             - Modalità standalone (CLI) per test a banco senza Hub
+             - Non-blocking scheduler for telemetry/heartbeat/log
+             - Standalone mode (CLI) for bench test without Hub
 
     @date   2026-04-29
 
@@ -83,12 +83,12 @@ unsigned long lastLogDrainMs       = 0;  /**< Timestamp of the last log queue dr
 // =================================================================
 
 /*!
-    @brief    Stima la SRAM libera residua (heap libero rispetto allo stack).
-    @details  Usata dagli health check del loop e dai comandi CLI `status`/`diag`
-              per rilevare condizioni di RAM bassa prima che causino corruzione
-              dello stack (AVR non ha protezione di memoria).
-    @return   Byte liberi stimati tra la fine dello heap (`__brkval`/`__heap_start`)
-              e lo stack pointer corrente.
+    @brief    Estimates the remaining free SRAM (free heap relative to the stack).
+    @details  Used by loop health checks and CLI status/diag commands
+              to detect low RAM conditions before they cause stack corruption
+              (AVR has no memory protection).
+    @return   Estimated free bytes between the end of the heap (__brkval/__heap_start)
+              and the current stack pointer.
 */
 int freeRam() {
     extern int __heap_start, *__brkval;
@@ -97,16 +97,16 @@ int freeRam() {
 }
 
 /*!
-    @brief    Disabilita il watchdog subito dopo il reset hardware, prima di `setup()`.
-    @details  Gira nella sezione `.init3` (eseguita prima dell'inizializzazione delle
-              variabili globali), quindi prima ancora di `main()`. Necessario perché
-              su AVR il WDT resta attivo dopo un reset causato dal WDT stesso: senza
-              questa disabilitazione immediata, un boot lento (es. inizializzazione
-              sensori) potrebbe essere interrotto da un secondo reset prima che
-              `setup()` possa richiamare `wdt_enable()` con il timeout definitivo.
-              Salva inoltre `MCUSR` in `mcusr_mirror` (sezione `.noinit`, sopravvive
-              al reset) per permettere a `setup()` di distinguere un reset da
-              watchdog da un power-on normale.
+    @brief    Disables the watchdog immediately after hardware reset, before setup().
+    @details  Runs in the .init3 section (executed before the initialization of
+              global variables), so even before main(). Necessary because
+              on AVR the WDT remains active after a reset caused by the WDT itself: without
+              this immediate disable, a slow boot (e.g. sensor initialization)
+              could be interrupted by a second reset before
+              setup() can call wdt_enable() with the final timeout.
+              Also saves MCUSR in mcusr_mirror (.noinit section, survives
+              reset) to allow setup() to distinguish a watchdog reset from
+              a normal power-on.
 */
 void wdt_init(void) __attribute__((naked)) __attribute__((section(".init3")));
 void wdt_init(void) {
@@ -116,14 +116,14 @@ void wdt_init(void) {
 }
 
 /*!
-    @brief    Entra in modalità degradata, disabilitando motori e pompa.
-    @details  Idempotente: se il sistema è già in degraded mode non fa nulla (evita
-              di rilanciare il log/salvataggio statistiche ad ogni iterazione del
-              loop mentre la condizione persiste). Registra il motivo, ferma
-              immediatamente l'attuazione fisica (motori e pompa), logga un evento
-              CRITICAL verso l'Hub e forza il salvataggio delle statistiche.
-    @param[in] reason Stringa breve che identifica la causa (es. "low_sram", "hub_missing"),
-                       copiata in `systemStatus.degradedReason`.
+    @brief    Enters degraded mode, disabling motors and pump.
+    @details  Idempotent: if the system is already in degraded mode it does nothing (avoids
+              relaunching log/stats saving on every loop iteration
+              while the condition persists). Records the reason, stops
+              physical actuation immediately (motors and pump), logs a
+              CRITICAL event to the Hub and forces stats saving.
+    @param[in] reason Short string identifying the cause (e.g. "low_sram", "hub_missing"),
+                       copied to systemStatus.degradedReason.
 */
 void enterDegradedMode(const char* reason) {
     if (systemStatus.degradedModeActive) return;
@@ -139,11 +139,11 @@ void enterDegradedMode(const char* reason) {
 }
 
 /*!
-    @brief    Esce dalla modalità degradata e logga il recupero.
-    @details  Va chiamata solo quando NESSuna delle condizioni di degraded mode è
-              più attiva (RAM bassa, Hub assente, ecc.): i chiamanti nel `loop()`
-              verificano già le altre cause prima di invocarla. Idempotente: se il
-              sistema non è in degraded mode non fa nulla.
+    @brief    Exits degraded mode and logs the recovery.
+    @details  Should only be called when NO degraded mode conditions are
+              active anymore (low RAM, Hub missing, etc.): callers in loop()
+              already verify other causes before invoking it. Idempotent: if the
+              system is not in degraded mode it does nothing.
 */
 void exitDegradedMode() {
     if (!systemStatus.degradedModeActive) return;
@@ -154,11 +154,11 @@ void exitDegradedMode() {
 }
 
 /*!
-    @brief    Esegue un reset software via watchdog, su richiesta di un comando.
-    @details  Salva le statistiche, logga l'evento, poi forza un reset volontario
-              armando il WDT con un timeout brevissimo (15 ms) ed entrando in un
-              loop infinito di attesa: non c'è un modo "pulito" di fare un reset
-              software su AVR, quindi si sfrutta deliberatamente il watchdog.
+    @brief    Performs a software reset via watchdog, on command request.
+    @details  Saves stats, logs the event, then forces a voluntary reset
+              by arming the WDT with a very short timeout (15 ms) and entering an
+              infinite wait loop: there is no "clean" way to do a software reset
+              on AVR, so the watchdog is deliberately exploited.
 */
 void performSoftReset() {
     persistence.saveStats(true);
@@ -174,19 +174,19 @@ void performSoftReset() {
 // =================================================================
 
 /*!
-    @brief    Inizializzazione del firmware: seriali, EEPROM, sensori, attuatori, watchdog.
-    @details  Ordine rilevante: carica config/stats da EEPROM prima di diagnosticare
-              il motivo del reset (serve per poter incrementare/salvare
-              `watchdog_resets`), poi abilita il WDT (4 s) solo dopo aver completato
-              le inizializzazioni potenzialmente lente, per non rischiare un reset
-              prematuro durante il boot stesso.
+    @brief    Firmware initialization: serials, EEPROM, sensors, actuators, watchdog.
+    @details  Relevant order: loads config/stats from EEPROM before diagnosing
+              the reset cause (needed to increment/save
+              watchdog_resets), then enables the WDT (4 s) only after completing
+              potentially slow initializations, to avoid risking a premature reset
+              during the boot itself.
 */
 void setup() {
     Serial.begin(115200);   // USB / CLI debug
     Serial1.begin(115200);  // Verso ESP32 Hub (Protobuf framing)
 
     Serial.println(F("\n[SmartVase] Platform Controller v" SMARTVASE_FW_VERSION " boot"));
-    Serial.println(F("[SmartVase] CLI pronta: digita 'help'. Per test senza Hub: 'standalone on'"));
+    Serial.println(F("[SmartVase] CLI ready: type 'help'. For testing without Hub: 'standalone on'"));
 
     // Load config + stats from EEPROM (falling back to defaults if corrupted)
     persistence.loadConfig();
@@ -219,59 +219,59 @@ void setup() {
     if (!sensors.getRTCStatus()) {
         comm.logEvent(Log_LogLevel_WARN, "sensor_init_fail", "DS3232_RTC",
                       systemStatus.deviceId, persistence.getStats());
-        Serial.println(F("[SmartVase] RTC non rilevato su I2C 0x68"));
+        Serial.println(F("[SmartVase] RTC not detected on I2C 0x68"));
     } else if (sensors.rtcOscStopped()) {
         // Oscillatore fermo = ora non valida (modulo nuovo o batteria scarica).
         comm.logEvent(Log_LogLevel_WARN, "rtc_osf", "time_not_set",
                       systemStatus.deviceId, persistence.getStats());
-        Serial.println(F("[SmartVase] RTC presente ma ora NON valida: usa 'rtc set <epoch>'"));
+        Serial.println(F("[SmartVase] RTC present but time NOT valid: use 'rtc set <epoch>'"));
     }
 
     comm.logEvent(Log_LogLevel_INFO, "system_boot", "platform_ready",
                   systemStatus.deviceId, persistence.getStats());
 
-    // Da qui in poi il watchdog vigila (resetta dopo 4s di stallo).
+    // From here on the watchdog is watching (resets after 4s stall).
     wdt_enable(WDTO_4S);
 
     Serial.println(F("[SmartVase] setup complete."));
 }
 
 // =================================================================
-// Main loop (non bloccante)
+// Main loop (non-blocking)
 // =================================================================
 
 /*!
-    @brief    Ciclo principale non bloccante: CLI, comunicazione, sensori, attuazione, scheduler, health check.
-    @details  Nessuna chiamata bloccante (niente `delay()`, salvo `performSoftReset`
-              che termina volontariamente il firmware): ogni sotto-sistema viene
-              "tickato" una volta per iterazione e decide internamente se ha lavoro
-              da fare in base a `millis()`. L'ordine dei passi è rilevante:
-              1. CLI debug USB; 2. RX seriale dall'Hub (può eseguire comandi);
-              3. campionamento sensori; 4. tick pompa (autospegnimento/safety tanica);
-              5. state machine movimento; 5b. luci di coltivazione (accese solo in
-              IDLE con luce insufficiente); 6. trasmissioni periodiche (telemetria/
-              heartbeat/log) con scheduler a intervalli indipendenti; 7. persistenza
-              EEPROM (stats throttled, config deferita a seriale inattiva);
-              8. health check (RAM, deadman Hub) con isteresi per evitare oscillazioni;
-              9. eventuale soft reset richiesto da comando.
+    @brief    Non-blocking main loop: CLI, communication, sensors, actuation, scheduler, health checks.
+    @details  No blocking calls (no delay(), except performSoftReset
+              which voluntarily terminates the firmware): each subsystem is
+              "ticked" once per iteration and internally decides if it has work
+              to do based on millis(). The order of steps is relevant:
+              1. USB debug CLI; 2. serial RX from Hub (can execute commands);
+              3. sensor sampling; 4. pump tick (auto-off/tank safety);
+              5. movement state machine; 5b. grow lights (on only in
+              IDLE with insufficient light); 6. periodic transmissions (telemetry/
+              heartbeat/log) with independent interval scheduler; 7. persistence
+              EEPROM (stats throttled, config deferred to idle serial);
+              8. health checks (RAM, Hub deadman) with hysteresis to avoid oscillations;
+              9. possible soft reset requested by command.
 */
 void loop() {
     wdt_reset();
     const unsigned long now = millis();
 
-    // 0) CLI debug su USB Serial (Serial != Serial1)
+    // 0) USB Serial debug CLI (Serial != Serial1)
     cli.tick(movement, sensors, pump, growLight, care, persistence, systemStatus);
 
-    // 1) RX seriale (drain + eventuale esecuzione comandi)
+    // 1) Serial RX (drain + potential command execution)
     comm.handleSerial(movement, persistence, sensors, pump, systemStatus);
 
-    // 2) Campionamento sensori (round-robin HC-SR04 + ADC)
+    // 2) Sensor sampling (HC-SR04 + ADC round-robin)
     sensors.sampleSensors();
 
     // 3) Pompa: spegnimento automatico a fine timer + protezione tanica.
-    //    Se durante l'irrigazione il livello (filtrato EMA) scende oltre la
-    //    soglia, o US4 smette di dare letture valide, si ferma subito:
-    //    mai far girare la pompa a secco.
+    //    If during watering the level (EMA filtered) drops below the
+    //    threshold, or US4 stops giving valid readings, it stops immediately:
+    //    never run the pump dry.
     pump.tick(persistence.getStats());
     if (pump.isActive() &&
         sensors.tankLooksEmpty(persistence.getConfig().tank_empty_cm)) {
@@ -367,11 +367,11 @@ void loop() {
         }
     } else if (systemStatus.lowMemoryDetected && freeBytes >= HIGH_RAM_THRESHOLD_BYTES) {
         systemStatus.lowMemoryDetected = false;
-        // Recover solo se nessun altro motivo tiene attivo degraded mode.
+        // Recover only if no other reason keeps degraded mode active.
         if (!systemStatus.hubIsMissing) exitDegradedMode();
     }
 
-    // Deadman Hub: sospeso in modalita' standalone (test a banco senza Hub).
+    // Hub Deadman: suspended in standalone mode (bench test without Hub).
     if (systemStatus.standaloneMode) {
         if (systemStatus.hubIsMissing) {
             systemStatus.hubIsMissing = false;
@@ -387,7 +387,7 @@ void loop() {
         if (!systemStatus.lowMemoryDetected) exitDegradedMode();
     }
 
-    // 8) Soft reset richiesto via comando
+    // 8) Soft reset requested via command
     if (systemStatus.softResetRequested) {
         performSoftReset();
     }

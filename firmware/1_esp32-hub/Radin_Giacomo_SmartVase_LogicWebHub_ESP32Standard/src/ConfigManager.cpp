@@ -142,11 +142,11 @@ bool ConfigManager::loadConfig() {
     // moves the config permanently to NVS (which then wins from that point on, see 'provisioned').
     setWifiCredentials(SV_WIFI_SSID, SV_WIFI_PASS);
     setMqttConfig(SV_MQTT_BROKER, SV_MQTT_PORT, SV_MQTT_USER, SV_MQTT_PASS);
-    ESP_LOGW(TAG, "NVS vuota: uso credenziali di fallback da secrets.h (SV_BENCH_MODE).");
+    ESP_LOGW(TAG, "Empty NVS: using fallback credentials from secrets.h (SV_BENCH_MODE).");
     return true;
 #else
     // Production: no credentials -> provisioning via CLI or AP required. Initialize NVS.
-    ESP_LOGW(TAG, "NVS vuota: nessuna credenziale, provisioning necessario.");
+    ESP_LOGW(TAG, "Empty NVS: no credentials, provisioning required.");
     return saveConfig();
 #endif
 }

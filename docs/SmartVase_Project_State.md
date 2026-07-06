@@ -673,7 +673,7 @@ To avoid duplicating ARCHITECTURE.md:
 
 - **Cloud pipeline** (HiveMQ ⇄ Cloud Functions ⇄ Firestore ⇄ App/Vision):
   see `docs/SmartVase_data_structure.md` and `infra/cloud-functions/`.
-- **Vision** (`firmware/3_esp32-cam/.../VisionBotanist.cpp` & `vision/`): analisi on-edge in C++ sulla CAM; script Python usati offline per test/calibrazione.
+- **Vision** (`firmware/3_esp32-cam/.../VisionBotanist.cpp` & `vision/`): on-edge C++ analysis on the CAM; Python scripts used offline for test/calibration.
 - **Android App** (Francesco): outside this repo (under local development).
 - **Server scripts** (`server/mqtt_firestore_bridge.py`): dev bridge.
 

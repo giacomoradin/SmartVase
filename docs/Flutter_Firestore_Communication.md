@@ -29,14 +29,14 @@ smartvase/HUB_123456/command/{action}
     - JSON:  {"cmd_id": 101, "type": "water", "duration_ms": 5000} 
 - Set Mode:
     - Path:  smartvase/HUB_123456/command/setMode 
-    - JSON:  {"cmd_id": 102, "type": "setMode", "mode": "LIGHT"}  (mode può essere "LIGHT" , "SHADOW" o "IDLE" )
+    - JSON:  {"cmd_id": 102, "type": "setMode", "mode": "LIGHT"}  (mode can be "LIGHT" , "SHADOW" or "IDLE" )
 - Emergency Stop:
     - Path:  smartvase/HUB_123456/command/stop 
     - JSON:  {"cmd_id": 103, "type": "stop"} 
 - Request Diagnostics:
     - Path:  smartvase/HUB_123456/command/requestDiagnostics 
     - JSON:  {"cmd_id": 104, "type": "requestDiagnostics"} 
-- Cambia parametri di sterzata/inversione:
+- Change steering/reversing parameters:
     - Path:  smartvase/HUB_123456/command/setMotionParams 
     - JSON:  {"cmd_id": 105, "type": "setMotionParams", "reverse_ms": 1000, "turn_ms": 1200} 
 - Read Soil Humidity:

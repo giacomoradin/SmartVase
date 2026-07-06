@@ -119,7 +119,7 @@ void MainLogic::taskRun() {
             strncpy(hb.message.payload.heartbeat.device_id, _deviceId,
                     sizeof(hb.message.payload.heartbeat.device_id) - 1);
             if (xQueueSend(_serialTxQueue, &hb, 0) != pdPASS) {
-                ESP_LOGW(TAG, "TX queue piena: heartbeat verso il Mega saltato");
+                ESP_LOGW(TAG, "TX queue full: heartbeat to Mega skipped");
             }
         }
 
@@ -196,7 +196,7 @@ void MainLogic::processMqttCommand(const MqttCommand& cmd) {
         // Mega's own limits) to protect the plant and pump from anomalous commands.
         uint32_t dur = doc["duration_ms"] | 0;
         if (dur > 30000) {
-            ESP_LOGW(TAG, "Watering %lu ms troncato a 30000 ms (safety)", (unsigned long)dur);
+            ESP_LOGW(TAG, "Watering %lu ms truncated to 30000 ms (safety)", (unsigned long)dur);
             dur = 30000;
         }
         megaCmd.command_type.water.duration_ms = dur;
