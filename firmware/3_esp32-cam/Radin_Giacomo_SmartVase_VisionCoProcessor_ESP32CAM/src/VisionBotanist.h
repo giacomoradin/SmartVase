@@ -4,7 +4,6 @@
 #include <Arduino.h>
 #include "esp_camera.h"
 
-//structure holding foliage color analysis and health assessment results
 struct AnalysisResult {
     bool valid;
     uint32_t green_pixels;
@@ -17,7 +16,6 @@ struct AnalysisResult {
     String status_message;
 };
 
-//perform onboard hsv color analysis on circular camera framebuffer region
 AnalysisResult doAnalysis(camera_fb_t* fb);
 
 #endif // VISION_BOTANIST_H
