@@ -23,6 +23,7 @@ extern Firestore::Documents Docs;
 
 extern unsigned long lastCaptureMs;
 extern unsigned long lastWifiAttemptMs;
+extern bool captureRequested;
 
 #define WIFI_RETRY_INTERVAL_MS 30000UL
 
@@ -33,5 +34,6 @@ uint32_t crc32_le(uint32_t crc, const uint8_t *buf, size_t len);
 String uploadImageToStorage(const uint8_t* buf, size_t len);
 void notifyFirestore(const String& imageUrl, size_t bytes, uint32_t crc, uint32_t capMs, const AnalysisResult& analysis);
 bool doCapture(bool uploadAndPublish);
+void checkCommand();
 
 #endif // CLOUD_SERVICE_H

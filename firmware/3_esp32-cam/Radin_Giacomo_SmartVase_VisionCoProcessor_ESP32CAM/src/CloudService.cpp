@@ -214,3 +214,71 @@ bool doCapture(bool uploadAndPublish) {
     saveStats();
     return true;
 }
+
+static long extractInteger(const String& json, const char* key) {
+    int keyPos = json.indexOf(key);
+    if (keyPos == -1) return -1;
+    int valPos = json.indexOf("\"integerValue\":", keyPos);
+    if (valPos == -1) valPos = json.indexOf("\"stringValue\":", keyPos);
+    if (valPos == -1) return -1;
+    int quote1 = json.indexOf('"', valPos + 14);
+    if (quote1 == -1) return -1;
+    int quote2 = json.indexOf('"', quote1 + 1);
+    if (quote2 == -1) return -1;
+    String numStr = json.substring(quote1 + 1, quote2);
+    return numStr.toInt();
+}
+
+static void commandCallback(AsyncResult &aResult) {
+    if (!aResult.isResult()) return;
+    if (aResult.isError()) {
+        if (aResult.error().code() != 404 && aResult.error().code() != 0) {
+            Serial.printf("[CAM] Command check error: %s (code %d)\n", aResult.error().message().c_str(), aResult.error().code());
+        }
+        return;
+    }
+    if (aResult.available()) {
+        String payload = aResult.c_str();
+        long cmdId = extractInteger(payload, "\"cmd_id\"");
+        long tsUtc = extractInteger(payload, "\"timestamp_utc\"");
+        
+        static long lastProcessedCmdId = -1;
+        static long lastProcessedTs = -1;
+        static bool firstCommandRead = false;
+
+        if (!firstCommandRead) {
+            firstCommandRead = true;
+            if (cmdId != -1) lastProcessedCmdId = cmdId;
+            if (tsUtc != -1) lastProcessedTs = tsUtc;
+            Serial.printf("[CAM] Initial command sync: cmd_id=%ld, ts=%ld\n", lastProcessedCmdId, lastProcessedTs);
+            return;
+        }
+
+        bool newCmd = false;
+        if (cmdId != -1 && cmdId > lastProcessedCmdId) {
+            newCmd = true;
+            lastProcessedCmdId = cmdId;
+        }
+        if (tsUtc != -1 && tsUtc > lastProcessedTs) {
+            newCmd = true;
+            lastProcessedTs = tsUtc;
+        }
+
+        if (newCmd) {
+            Serial.printf("[CAM] New on-demand capture command received! (cmd_id=%ld, ts=%ld)\n", lastProcessedCmdId, lastProcessedTs);
+            captureRequested = true;
+        }
+    }
+}
+
+void checkCommand() {
+    if (!app.ready() || WiFi.status() != WL_CONNECTED) return;
+    if (cfg.firebase_project_id.length() == 0) return;
+    
+    static unsigned long lastCheckMs = 0;
+    if (millis() - lastCheckMs < 5000UL) return;
+    lastCheckMs = millis();
+
+    String documentPath = "smartvase/" + String(deviceId) + "/command/capture";
+    Docs.get(aClient, Firestore::Parent(cfg.firebase_project_id), documentPath, GetDocumentOptions(), commandCallback, "cmd_check");
+}

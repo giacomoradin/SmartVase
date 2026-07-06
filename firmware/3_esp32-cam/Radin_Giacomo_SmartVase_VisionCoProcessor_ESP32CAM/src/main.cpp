@@ -63,6 +63,7 @@ void loop() {
     cliTick();
     wifiEnsure();
     app.loop();
+    checkCommand();
 
     if (millis() - lastDebugMs >= DEBUG_TELEMETRY_INTERVAL_MS) {
         lastDebugMs = millis();
