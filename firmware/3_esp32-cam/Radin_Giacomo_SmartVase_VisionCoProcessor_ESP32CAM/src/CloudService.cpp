@@ -12,6 +12,7 @@ Firestore::Documents Docs;
 unsigned long lastCaptureMs     = 0;
 unsigned long lastWifiAttemptMs = 0;
 
+//calculate crc32 checksum using lookup table for fast bitwise computation
 uint32_t crc32_le(uint32_t crc, const uint8_t *buf, size_t len) {
     static const uint32_t table[16] = {
         0x00000000, 0x1db71064, 0x3b6e20c8, 0x26d930ac,
@@ -28,6 +29,7 @@ uint32_t crc32_le(uint32_t crc, const uint8_t *buf, size_t len) {
     return ~crc;
 }
 
+//start asynchronous station mode wifi connection and sync ntp time
 void wifiStartAttempt() {
     if (cfg.wifi_ssid.length() == 0) return;
     Serial.printf("[CAM] Wi-Fi: attempting connection to '%s'...\n", cfg.wifi_ssid.c_str());
@@ -51,6 +53,7 @@ void wifiStartAttempt() {
     }
 }
 
+//check wifi status periodically and trigger reconnection if disconnected
 void wifiEnsure() {
     if (cfg.wifi_ssid.length() == 0) return;
     if (WiFi.status() != WL_CONNECTED) {
@@ -72,9 +75,11 @@ static void authDebugCallback(AsyncResult &aResult) {
     }
 }
 
+//initialize firebase storage and firestore service connections
 void firebaseInit() {
     if (cfg.firebase_api_key.length() == 0 || app.isInitialized()) return;
     
+    //wait for valid ntp time timestamp before connecting to ssl endpoints
     if (time(nullptr) < NTP_VALID_EPOCH) {
         Serial.println("[CAM] Waiting for NTP time sync before Firebase init...");
         unsigned long t0 = millis();
@@ -95,6 +100,7 @@ void firebaseInit() {
     Serial.println("[CAM] Firebase App Initialized.");
 }
 
+//upload captured image buffer to firebase cloud storage bucket
 String uploadImageToStorage(const uint8_t* buf, size_t len) {
     if (!app.ready()) {
         Serial.println("[CAM] Error: Firebase is not ready for upload.");
@@ -130,6 +136,7 @@ String uploadImageToStorage(const uint8_t* buf, size_t len) {
     }
 }
 
+//patch firestore vision latest document with image url and health telemetry
 void notifyFirestore(const String& imageUrl, size_t bytes, uint32_t crc, uint32_t capMs, const AnalysisResult& analysis) {
     if (!app.ready()) return;
 
@@ -176,6 +183,7 @@ void notifyFirestore(const String& imageUrl, size_t bytes, uint32_t crc, uint32_
     }
 }
 
+//acquire camera frame perform foliage analysis and optionally upload to cloud
 bool doCapture(bool uploadAndPublish) {
     if (!cameraOk) return false;
     
@@ -210,11 +218,13 @@ bool doCapture(bool uploadAndPublish) {
         }
     }
     
+    //return camera frame buffer to sensor memory pool
     esp_camera_fb_return(fb);
     saveStats();
     return true;
 }
 
+//extract integer value string from firestore json response
 static long extractInteger(const String& json, const char* key) {
     int keyPos = json.indexOf(key);
     if (keyPos == -1) return -1;
@@ -229,9 +239,11 @@ static long extractInteger(const String& json, const char* key) {
     return numStr.toInt();
 }
 
+//handle async firestore response for on demand capture command check
 static void commandCallback(AsyncResult &aResult) {
     if (!aResult.isResult()) return;
     if (aResult.isError()) {
+        //ignore 404 error if command document does not exist yet
         if (aResult.error().code() != 404 && aResult.error().code() != 0) {
             Serial.printf("[CAM] Command check error: %s (code %d)\n", aResult.error().message().c_str(), aResult.error().code());
         }
@@ -246,6 +258,7 @@ static void commandCallback(AsyncResult &aResult) {
         static long lastProcessedTs = -1;
         static bool firstCommandRead = false;
 
+        //sync with existing database command on first boot without taking photo
         if (!firstCommandRead) {
             firstCommandRead = true;
             if (cmdId != -1) lastProcessedCmdId = cmdId;
@@ -255,6 +268,7 @@ static void commandCallback(AsyncResult &aResult) {
         }
 
         bool newCmd = false;
+        //check if command id or timestamp increased compared to last execution
         if (cmdId != -1 && cmdId > lastProcessedCmdId) {
             newCmd = true;
             lastProcessedCmdId = cmdId;
@@ -264,6 +278,7 @@ static void commandCallback(AsyncResult &aResult) {
             lastProcessedTs = tsUtc;
         }
 
+        //trigger instant capture if new command detected
         if (newCmd) {
             Serial.printf("[CAM] New on-demand capture command received! (cmd_id=%ld, ts=%ld)\n", lastProcessedCmdId, lastProcessedTs);
             captureRequested = true;
@@ -271,6 +286,7 @@ static void commandCallback(AsyncResult &aResult) {
     }
 }
 
+//poll firestore database periodically for instant capture requests
 void checkCommand() {
     if (!app.ready() || WiFi.status() != WL_CONNECTED) return;
     if (cfg.firebase_project_id.length() == 0) return;

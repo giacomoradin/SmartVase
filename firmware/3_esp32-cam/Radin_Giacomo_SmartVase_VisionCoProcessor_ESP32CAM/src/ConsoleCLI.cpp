@@ -5,9 +5,11 @@
 #include <WiFi.h>
 #include <time.h>
 
+//buffer and index tracking serial command line input
 static char cliBuf[192];
 static size_t cliPos = 0;
 
+//print list of available serial console commands
 static void cliPrintHelp() {
     Serial.println("--- SmartVase CAM CLI v" CAM_FW_VERSION " ---");
     Serial.println("help                  show this menu");
@@ -23,6 +25,7 @@ static void cliPrintHelp() {
     Serial.println("reboot                reboot the camera module");
 }
 
+//print current hardware network and time synchronization status
 static void cliPrintStatus() {
     Serial.println("--- status ---");
     Serial.printf("fw_version = %s\n", CAM_FW_VERSION);
@@ -42,6 +45,7 @@ static void cliPrintStatus() {
     Serial.printf("uptime_s   = %lu\n", millis() / 1000UL);
 }
 
+//print active configuration settings stored in nvs memory
 static void cliPrintShow() {
     Serial.println("--- NVS config ---");
     Serial.printf("wifi_ssid           = %s\n", cfg.wifi_ssid.c_str());
@@ -55,6 +59,7 @@ static void cliPrintShow() {
     Serial.printf("roi_radius          = %u\n", (unsigned)cfg.roi_radius);
 }
 
+//print cumulative capture and error counters
 static void cliPrintStats() {
     Serial.println("--- statistics ---");
     Serial.printf("successful_frames     = %lu\n", (unsigned long)stats.successful_frames);
@@ -64,6 +69,7 @@ static void cliPrintStats() {
     Serial.printf("total_capture_time_ms = %llu\n", stats.total_capture_time_ms);
 }
 
+//parse and apply configuration parameter updates from console
 static bool cliHandleSet(char* args) {
     char* space = strchr(args, ' ');
     if (space == nullptr) return false;
@@ -93,6 +99,7 @@ static bool cliHandleSet(char* args) {
     return true;
 }
 
+//execute parsed command string entered by user
 static void cliExecute(char* line) {
     if (strcmp(line, "help") == 0 || strcmp(line, "?") == 0) { cliPrintHelp();   return; }
     if (strcmp(line, "version") == 0) {
@@ -137,10 +144,12 @@ static void cliExecute(char* line) {
     Serial.printf("[CLI] unknown command: '%s' (try 'help')\n", line);
 }
 
+//read characters from serial buffer and execute completed command lines
 void cliTick() {
     while (Serial.available()) {
         char c = (char)Serial.read();
-        Serial.write(c); // Hardware echo
+        //echo received character back to hardware terminal
+        Serial.write(c);
         if (c == '\r' || c == '\n') {
             cliBuf[cliPos] = '\0';
             if (cliPos > 0) cliExecute(cliBuf);

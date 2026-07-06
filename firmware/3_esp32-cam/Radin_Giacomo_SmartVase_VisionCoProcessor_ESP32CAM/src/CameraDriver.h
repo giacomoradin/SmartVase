@@ -22,8 +22,10 @@
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
+//flag indicating whether camera sensor initialized successfully
 extern bool cameraOk;
 
+//initialize ov2640 camera sensor and return true on success
 bool initCamera();
 
 #endif // CAMERA_DRIVER_H
