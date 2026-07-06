@@ -3,7 +3,6 @@
 
 #include <Arduino.h>
 
-//process incoming serial commands and maintain interactive console
 void cliTick();
 
 #endif // CONSOLE_CLI_H
