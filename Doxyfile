@@ -1,6 +1,6 @@
 # Doxyfile generated for SmartVase Project
 PROJECT_NAME           = "SmartVase"
-PROJECT_NUMBER         = "v1.3.0"
+PROJECT_NUMBER         = "Mega v5.4 / Hub v1.4 / CAM v2.2 (proto v4.2)"
 PROJECT_BRIEF          = "IoT Mobile Greenhouse (ESP32 Hub, ESP32 CAM & Arduino Mega Platform Controller)"
 PROJECT_LOGO           = docs/assets/logo_SmartVase.png
 OUTPUT_DIRECTORY       = docs/doxygen

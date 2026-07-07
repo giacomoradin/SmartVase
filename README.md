@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/logo_SmartVase.png" alt="SmartVase logo" width="140">
+  <img src="https://raw.githubusercontent.com/giacomoradin/SmartVase/main/docs/assets/logo_SmartVase.png" alt="SmartVase logo" width="140">
 </p>
 
 <h1 align="center">SmartVase — IoT Mobile Greenhouse</h1>
@@ -12,7 +12,7 @@
 
 <p align="center">
   <sub>University of Trento — Embedded Software for the Internet of Things</sub><br>
-  <img src="docs/assets/logo_unitn.png" alt="University of Trento" width="48">
+  <img src="https://raw.githubusercontent.com/giacomoradin/SmartVase/main/docs/assets/logo_unitn.png" alt="University of Trento" width="48">
 </p>
 
 SmartVase is a mobile, self-watering planter. A wheeled robot seeks light or
@@ -307,9 +307,9 @@ JSON schemas: [`docs/SmartVase_data_structure.md`](docs/SmartVase_data_structure
 
 ## 8. Documentation
 
-- **API documentation (Doxygen)**: generated from the in-source comments of
-  all three firmwares. CI rebuilds and publishes it to GitHub Pages on every
-  push to `main`
+- **API documentation (Doxygen)**: [https://giacomoradin.github.io/SmartVase/](https://giacomoradin.github.io/SmartVase/).
+  Generated from the in-source comments of all three firmwares. CI rebuilds
+  and publishes it to GitHub Pages on every push to `main`
   ([`.github/workflows/generate-docs.yml`](.github/workflows/generate-docs.yml)).
   To build locally: `doxygen Doxyfile`, then open
   `docs/doxygen/html/index.html`. Includes per-module groups, call graphs
