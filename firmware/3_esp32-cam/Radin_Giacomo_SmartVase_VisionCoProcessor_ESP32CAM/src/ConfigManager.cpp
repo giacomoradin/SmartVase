@@ -23,7 +23,7 @@ void loadConfig() {
     cfg.firebase_password   = prefs.getString("firebase_password",   "");
     cfg.roi_center_x        = prefs.getUInt  ("roi_cx",              400);
     cfg.roi_center_y        = prefs.getUInt  ("roi_cy",              300);
-    cfg.roi_radius          = prefs.getUInt  ("roi_r",               280);
+    cfg.roi_radius          = prefs.getUInt  ("roi_r",               220);
     prefs.end();
 
 #ifdef SMARTVASE_CAM_SECRETS_H
