@@ -1,20 +1,33 @@
 # SmartVase - Platform Controller Firmware (Arduino Mega)
 
-Firmware for the SmartVase **Platform Controller**. Version **5.3** (working tree):
-on top of the v5.1 hardening (pump tank protection, extended CLI, standalone
-mode, local HC-SR04/DS3232 drivers) and the v5.2 batch (irrigation
-rate-limiting, EEPROM no-op on `setMotionParams`, EMA on lux/soil,
-anti-circling, seeking/escape counters in `TelemetryDeep`, `GrowLight` module,
-VNH5019-aware motor driver, software fallback RTC clock, `light <adc>` CLI),
-**v5.3 adds the autonomous plant-care layer** (`Care` + `CarePolicy.h`,
-design in `docs/Plant_Care_Design.md`): daily **light budget** (relative DLI
-proxy with LDR auto-calibration), rotating **light scan** ("solar compass"
-with the single fixed LDR), **dose/soak/verify** autonomous watering,
-per-plant **profiles** (shade/medium/sun presets in EEPROM), UVA grow lights
-repurposed as the end-of-day budget **top-up**, and daily KPIs
-(`care` CLI command + `care_day_end` log toward the Hub). Disabled by
-default: it is enabled explicitly with `care on`.
-**Authoritative** architectural reference: `docs/ARCHITECTURE.md`.
+Firmware for the SmartVase Platform Controller. Current version: **5.4.0**
+(`SMARTVASE_FW_VERSION` in `SystemStatus.h`).
+
+Version history (summary):
+
+- **v5.1** — hardening: pump tank protection, extended CLI, standalone mode,
+  local HC-SR04/DS3232 drivers.
+- **v5.2** — irrigation rate limiting, EEPROM no-op on `setMotionParams`,
+  EMA on lux/soil, anti-circling, seeking/escape counters in `TelemetryDeep`,
+  `GrowLight` module, VNH5019-aware motor driver, software fallback RTC
+  clock, `light <adc>` CLI.
+- **v5.3** — autonomous plant-care layer (`Care` + `CarePolicy.h`, design in
+  `docs/Plant_Care_Design.md`): daily light budget (relative DLI proxy with
+  LDR auto-calibration), rotating light scan with the single fixed LDR,
+  dose/soak/verify autonomous watering, per-plant profiles (shade/medium/sun
+  presets in EEPROM), UVA grow lights as end-of-day budget top-up, daily KPIs
+  (`care` CLI command, `care_day_end` log, `TelemetryDeep` tags 22-27).
+  Disabled by default; enabled explicitly with `care on`.
+- **v5.4** — Hub-to-Mega time synchronization (protocol v4.2): the Hub, NTP
+  synchronized, carries the current epoch in its periodic heartbeat
+  (`Heartbeat.epoch_s`); the Mega validates it (`hubEpochPlausible`) and
+  re-bases its software clock every 30 s, writing the hardware RTC
+  opportunistically when present. The software clock stays authoritative, so
+  a failing RTC chip cannot hijack the time. `rtc` shows the sync state
+  (`hub_sync`). Also in v5.4: `stats reset` and `i2cscan` CLI commands,
+  BME680 enabled (`BME680_ENABLED 1`, sensor wired).
+
+Authoritative architectural reference: `docs/ARCHITECTURE.md`.
 PIN map: `docs/PINS - Sheet1.csv`.
 
 ## Architecture
@@ -28,7 +41,7 @@ Modules (`src/`):
 | File              | Responsibility                                                                            |
 |-------------------|---------------------------------------------------------------------------------------------|
 | `main.cpp`        | Setup + non-blocking loop, telemetry/heartbeat/log scheduler, WDT, degraded mode           |
-| `Sensors.{h,cpp}` | 6 HC-SR04 (round-robin), RTC DS3232, humidity fork, photoresistor, BME680 (flag)           |
+| `Sensors.{h,cpp}` | 6 HC-SR04 (round-robin), RTC DS3232 + software clock + Hub time sync, humidity fork, photoresistor, BME680 |
 | `Movement.{h,cpp}`| Motor state machine (IDLE/MOVING/AVOID*/STUCK/SCAN*); proportional differential steering + wall-following (`driveMotors`), light-seek / shadow-seek, rotating **light scan** |
 | `NavPolicy.h`     | Pure navigation logic (no HW): proportional obstacle avoidance + wall-following, host-testable |
 | `Care.{h,cpp}`    | Autonomous plant-care layer (L2): light-budget accounting, care state machine, dose/soak/verify watering, manual-override suspension |
@@ -107,6 +120,11 @@ Equivalent to `pio run -d firmware/2_platform-controller_mega/...`.
   against dry running. Applies to the remote `water` command and the CLI `pump`.
 - **Standalone mode (v5.1)**: `standalone on` from the CLI suspends the Hub's
   deadman for bench tests without the ESP32 connected.
+- **Hub time sync (v5.4)**: with the Hub connected, `time_valid` becomes true
+  automatically (NTP epoch in every heartbeat, validated and re-based on the
+  software clock every 30 s); `rtc set` is only needed on a fully offline
+  bench. The daylight-window features (grow lights, care layer) depend on a
+  valid time.
 - **Autonomous care (v5.3)**: with `care on`, the robot manages the plant's
   day on its own — seeks the brightest reachable spot in the morning (rotating
   light scan + gradient climb), basks accumulating the daily light budget,
@@ -125,7 +143,8 @@ Equivalent to `pio run -d firmware/2_platform-controller_mega/...`.
 
 ## Debug CLI (Serial USB, 115200, newline)
 
-`help` shows the full menu: `status`, `stats`, `config`, `sensors`, `diag`,
+`help` shows the full menu: `status`, `stats`, `stats reset`, `config`,
+`sensors`, `diag`,
 `i2cscan`, `tank [cm]`, `light <adc>`, `rtc [set <epoch>]`, `mode <idle|light|shadow>`,
 `plant [shade|medium|sun]`, `care [on|off]`, `wall <left|right|off>`,
 `motor <f|b|l|r> <ms>`, `motortest`, `calib <l> <r>`, `pump <ms>`,
@@ -138,10 +157,11 @@ The full test procedure is in `docs/Lab_Bringup_Checklist.md`.
       §8, horizon H1): light scan rotation time (`LIGHT_SCAN_TOTAL_MS` in
       `Movement.cpp`, time-based — measure a real 360°), soil/wet thresholds
       per plant, dose sizing.
-- [ ] Verify the RTC after the CR2032 replacement (2026-07-01, not yet
-      bench-tested): `rtc` must show `time_valid=YES` without the software
-      fallback. The care layer depends on a valid clock.
-- [ ] Mount the BME680 (wiring planned) → set `BME680_ENABLED 1` in `Sensors.h`.
+- [ ] Replace the DS3232 module (HW-084): bench diagnosis shows a progressive
+      hardware failure (devices intermittently disappearing from the I2C bus,
+      SCL clamped low). Mitigated in software by the v5.4 Hub time sync; a
+      working RTC is still desirable for fully offline operation.
+- [x] BME680 mounted and enabled (`BME680_ENABLED 1` in `Sensors.h`).
 - [ ] Confirm the battery divider on the bench → set
       `BATTERY_MONITORING_ENABLED 1` in `Sensors.h`.
 - [x] Care KPIs exported in `TelemetryDeep` (proto v4.1, tags 22-27) and

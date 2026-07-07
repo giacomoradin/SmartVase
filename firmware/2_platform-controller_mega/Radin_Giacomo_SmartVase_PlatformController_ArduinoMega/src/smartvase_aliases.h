@@ -12,7 +12,7 @@
              (`DeviceConfig`, `CumulativeStats`, `CppMovementState`, `CppMode`)
              that are NOT part of the Protobuf protocol, kept
              deliberately separate from protobuf enums to not tie the
-             internal logic to the network schema (vedi `cppMovementStateToProto`).
+             internal logic to the network schema (see `cppMovementStateToProto`).
 
              Protobuf schema v4.0 — 2026-05-19 (total refactor post-new PIN map).
 

@@ -1,14 +1,14 @@
 /**
  * SmartVase — Cloud Function `upload-image` (STUB)
  *
- * Endpoint HTTP gen2. Riceve multipart/form-data dalla ESP32-CAM, carica
- * il JPEG su Firebase Storage e restituisce una signed URL.
+ * HTTP gen2 endpoint. Receives multipart/form-data from the ESP32-CAM,
+ * uploads the JPEG to Firebase Storage and returns a signed URL.
  *
- * NOTE: questa e' una bozza da rifinire con Fia. Possibili refinement:
+ * NOTE: this is a draft to be refined with Fia. Possible refinements:
  *   - Auth via Identity Token / App Check.
- *   - Validazione device_id (regex su CAM_XXXXXX).
- *   - Validazione magic bytes JPEG.
- *   - Rate limiting (Cloud Armor o middleware).
+ *   - device_id validation (regex on CAM_XXXXXX).
+ *   - JPEG magic-bytes validation.
+ *   - Rate limiting (Cloud Armor or middleware).
  */
 
 const { Storage } = require('@google-cloud/storage');

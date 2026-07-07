@@ -1,6 +1,6 @@
 /**
  * @file hivemq_ca_cert.h
- * @brief Definizione delle classi e funzioni per hivemq_ca_cert
+ * @brief HiveMQ Cloud root CA certificate (PEM) used for TLS verification.
  * @author Giacomo Radin
  * @date 2026-06-30
  */
@@ -9,15 +9,15 @@
  * =================================================================
  * HiveMQ Cloud — Root CA certificate
  * =================================================================
- * Sorgente: ISRG Root X1 di Let's Encrypt (CA pubblica usata da
- * HiveMQ Cloud al momento del rilascio v1.1).
+ * Source: Let's Encrypt ISRG Root X1 (the public CA used by
+ * HiveMQ Cloud at the time of the v1.1 release).
  *
- * Se HiveMQ migra a un'altra CA o ne aggiunge un'altra, sostituire
- * o concatenare i certificati PEM qui sotto.
+ * If HiveMQ migrates to another CA, or adds one, replace or
+ * concatenate the PEM certificates below.
  *
- * Per usarlo nel codice firmware:
- *   - Hub:  copiare questo file in firmware/1_esp32-hub/.../include/
- *   - CAM:  copiare in firmware/3_esp32-cam/.../src/   (o include path)
+ * To use it in firmware code:
+ *   - Hub:  copy this file to firmware/1_esp32-hub/.../include/
+ *   - CAM:  copy to firmware/3_esp32-cam/.../src/   (or an include path)
  * =================================================================
  */
 #ifndef SMARTVASE_HIVEMQ_CA_CERT_H

@@ -9,8 +9,8 @@
  *  @note Must be kept aligned by hand with the canonical `.proto`
  *  (`infra/smartvase-proto/smartvase.proto`): if fields or tags are added or
  *  renamed in the `.proto`, update the corresponding aliases here after
- *  regenerating the `.pb.{c,h}` (see CLAUDE.md §5.3 for the complete
- *  schema-first workflow).
+ *  regenerating the `.pb.{c,h}` (see `infra/smartvase-proto/README.txt`
+ *  for the complete schema-first workflow).
  *  @author Giacomo Radin
  *  @date 2025-10-20
  */

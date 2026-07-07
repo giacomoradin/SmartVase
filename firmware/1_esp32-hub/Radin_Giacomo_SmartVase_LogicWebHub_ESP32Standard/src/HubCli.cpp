@@ -16,7 +16,7 @@
 #include "MainLogic.h"
 #include "SerialManager.h"
 
-/*! @brief Versione firmware Hub mostrata dalla CLI (allineata a MainLogic.cpp). */
+/*! @brief Hub firmware version shown by the CLI (aligned with MainLogic.cpp). */
 #define HUB_FW_VERSION "1.4.0"
 
 HubCli::HubCli()
@@ -32,12 +32,12 @@ void HubCli::begin(ConfigManager* cfg, WifiManager* wifi, MqttManager* mqtt,
     _mqtt          = mqtt;
     _logic         = logic;
     _serialTxQueue = serialTxQueue;
-    Serial.println(F("[CLI] pronta: digita 'help'"));
+    Serial.println(F("[CLI] ready: type 'help'"));
     Serial.print(F("> "));
 }
 
 void HubCli::tick() {
-    if (_cfg == nullptr) return; // begin() non ancora chiamato
+    if (_cfg == nullptr) return; // begin() not called yet
     while (Serial.available()) {
         char c = (char)Serial.read();
         if (c == '\r') continue;
@@ -260,7 +260,7 @@ void HubCli::printDiag() {
     time_t now = time(nullptr);
     Serial.print(F("[NTP] epoch=")); Serial.print((unsigned long)now);
     if (now >= (time_t)1700000000UL) Serial.println(F("  [ok valid time]"));
-    else Serial.println(F("  [!! ora NON sincronizzata -> la TLS verso HiveMQ fallisce; serve internet sull'hotspot]"));
+    else Serial.println(F("  [!! time NOT synchronized -> TLS to HiveMQ fails; the hotspot needs internet access]"));
 
     // --- MQTT ---
     Serial.print(F("[MQTT] "));

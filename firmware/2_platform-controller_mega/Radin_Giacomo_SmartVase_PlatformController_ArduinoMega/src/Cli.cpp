@@ -129,12 +129,12 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLig
     if (strcmp(line, "status")  == 0) { printStatus(mv, pp, gl, cr, sys); return; }
     if (strcmp(line, "stats")   == 0) { printStats(ps);            return; }
 
-    // stats reset — reset cumulative statistics in EEPROM (i contatori
-    // storici accumulati nelle sessioni di debug falserebbero il report).
+    // stats reset — reset cumulative statistics in EEPROM (historical counters
+    // accumulated during debug sessions would skew the report).
     if (strcmp(line, "stats reset") == 0) {
         CumulativeStats& s = ps.getStats();
         const uint32_t magic = s.magic_number;
-        const uint16_t wc    = s.write_counter;   // continuita' del wear-leveling
+        const uint16_t wc    = s.write_counter;   // wear-leveling continuity
         memset(&s, 0, sizeof(s));
         s.magic_number  = magic;
         s.write_counter = wc;
@@ -167,13 +167,13 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLig
         return;
     }
 
-    // i2cscan — scansione del bus I2C hardware (pin 20/21), con hint sui
-    // dispositivi attesi. Evita di dover flashare sketch-scanner esterni.
+    // i2cscan — scan of the hardware I2C bus (pins 20/21), with hints on the
+    // expected devices. Avoids having to flash external scanner sketches.
     if (strcmp(line, "i2cscan") == 0) {
         Serial.println(F("[i2cscan] hardware bus SDA=20 / SCL=21, addresses 0x08-0x77..."));
         uint8_t found = 0;
         for (uint8_t addr = 0x08; addr <= 0x77; ++addr) {
-            wdt_reset();   // a bus guasto ogni probe attende il timeout Wire (25 ms)
+            wdt_reset();   // on a faulted bus every probe waits the Wire timeout (25 ms)
             Wire.beginTransmission(addr);
             if (Wire.endTransmission() != 0) continue;
             found++;
@@ -205,7 +205,7 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLig
         return;
     }
 
-    // tank <cm> — soglia tanica-vuota, persistita in EEPROM
+    // tank <cm> — empty-tank threshold, persisted in EEPROM
     if (strncmp(line, "tank ", 5) == 0) {
         int cm;
         if (sscanf(line + 5, "%d", &cm) != 1 || cm < 3 || cm > 120) {
@@ -220,7 +220,7 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLig
         return;
     }
 
-    // light <adc> — soglia luminosita' (seeking LIGHT/SHADOW + luci UVA), persistita in EEPROM
+    // light <adc> — light threshold (LIGHT/SHADOW seeking + UVA lights), persisted in EEPROM
     if (strncmp(line, "light ", 6) == 0) {
         int adc;
         if (sscanf(line + 6, "%d", &adc) != 1 || adc < 0 || adc > 1023) {
@@ -238,14 +238,14 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLig
     // rtc / rtc set <epoch>
     if (strcmp(line, "rtc") == 0) {
         Serial.print(F("rtc_ok      = ")); Serial.println(sn.getRTCStatus() ? F("YES") : F("NO"));
-        Serial.print(F("fake_clock  = ")); Serial.println(sn.isUsingFakeClock() ? F("YES (software, vedi 'rtc set')") : F("NO"));
+        Serial.print(F("fake_clock  = ")); Serial.println(sn.isUsingFakeClock() ? F("YES (software, see 'rtc set')") : F("NO"));
         Serial.print(F("hub_sync    = "));
         if (sn.lastHubSyncMs() == 0) {
-            Serial.println(F("MAI (l'Hub non ha ancora inviato un'ora NTP valida)"));
+            Serial.println(F("NEVER (the Hub has not sent a valid NTP time yet)"));
         } else {
             Serial.print(F("YES, "));
             Serial.print((millis() - sn.lastHubSyncMs()) / 1000UL);
-            Serial.println(F(" s fa (heartbeat Hub, proto v4.2)"));
+            Serial.println(F(" s ago (Hub heartbeat, proto v4.2)"));
         }
         Serial.print(F("epoch_s     = ")); Serial.println(sn.getEpoch());
         Serial.print(F("time_valid  = ")); Serial.println(sn.timeIsValid() ? F("YES") : F("NO (usa 'rtc set <epoch>')"));
@@ -311,18 +311,18 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLig
         return;
     }
 
-    // care — stato del layer di cura autonoma
+    // care — autonomous-care layer status
     if (strcmp(line, "care") == 0) { printCare(cr, ps); return; }
 
-    // care <on|off> — abilita/disabilita la cura autonoma (persistito)
+    // care <on|off> — enables/disables autonomous care (persisted)
     if (strncmp(line, "care ", 5) == 0) {
         const char* arg = line + 5;
         if (strcmp(arg, "on") == 0) {
             ps.getConfig().care_enabled = 1;
             ps.saveConfig(true);
             cr.notifyEnabledChanged(mv, ps);
-            Serial.println(F("[CLI] care ON: cura autonoma attiva (profilo: 'plant')"));
-            Serial.println(F("[CLI] nota: serve un'ora valida ('rtc') e, a banco senza Hub, 'standalone on'"));
+            Serial.println(F("[CLI] care ON: autonomous care active (profile: 'plant')"));
+            Serial.println(F("[CLI] note: needs a valid time ('rtc') and, on the bench without the Hub, 'standalone on'"));
         } else if (strcmp(arg, "off") == 0) {
             ps.getConfig().care_enabled = 0;
             ps.saveConfig(true);
@@ -451,7 +451,7 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLig
                 Serial.print(ps.getConfig().tank_empty_cm);
                 Serial.println(F(" cm)"));
             }
-            Serial.println(F("[CLI] per tarare la soglia: 'tank <cm>'"));
+            Serial.println(F("[CLI] to tune the threshold: 'tank <cm>'"));
             return;
         }
         if (pp.start((uint32_t)ms, ps.getStats())) {
@@ -497,7 +497,7 @@ void Cli::printHelp() {
     Serial.println(F("i2cscan                   I2C bus scan (RTC 0x68, EEPROM 0x50-57, BME 0x76)"));
     Serial.println(F("tank                      water tank state"));
     Serial.println(F("tank <cm>                 empty-tank threshold (3..120)"));
-    Serial.println(F("light <adc>               soglia luminosita' (0..1023): seeking + luci UVA"));
+    Serial.println(F("light <adc>               light threshold (0..1023): seeking + UVA lights"));
     Serial.println(F("rtc                       DS3232 clock state"));
     Serial.println(F("rtc set <epoch>           set time (Unix epoch)"));
     Serial.println(F("mode <idle|light|shadow>  cambia modalita'"));
@@ -676,7 +676,7 @@ void Cli::printDiag(Sensors& sn, Movement& mv, Pump& pp, GrowLight& gl, Persiste
     if (lux < 0)                Serial.println(F("  [!! invalid reading]"));
     else if (lux <= 1 || lux >= 1022)
                                 Serial.println(F("  [!! full scale: LDR disconnected or wrong divider]"));
-    else                        Serial.println(F("  [ok] copri/illumina l'LDR e rilancia: in LIGHT gira a dx se lux<soglia, in SHADOW a sx se lux>soglia"));
+    else                        Serial.println(F("  [ok] cover/illuminate the LDR and rerun: LIGHT turns right if lux<threshold, SHADOW left if lux>threshold"));
 
     // --- Luci di coltivazione (UVA, rele' canale 2 / D11, cablate su NC) ---
     bool timeValid = sn.timeIsValid();
@@ -688,9 +688,9 @@ void Cli::printDiag(Sensors& sn, Movement& mv, Pump& pp, GrowLight& gl, Persiste
         Serial.print(F("  time=")); Serial.print(hour((time_t)sn.getEpoch()));
         Serial.println(F(":xx"));
     } else {
-        Serial.println(F(" [!! senza ora valida le luci restano SEMPRE spente: 'rtc set <epoch>']"));
+        Serial.println(F(" [!! without a valid time the lights stay ALWAYS off: 'rtc set <epoch>']"));
     }
-    Serial.println(F("  [ok] si accendono solo se IDLE, lux < soglia E dentro la finestra diurna; cablate su NC -> rele' diseccitato = ACCESE"));
+    Serial.println(F("  [ok] they turn on only if IDLE, lux < threshold AND inside the daylight window; wired on NC -> relay de-energized = ON"));
 
     // --- Motori (Pololu VNH5019, nessun encoder: si osservano) ---
     Serial.println(F("[MOTORS] Pololu VNH5019 - no encoder -> observe with lifted wheels"));
@@ -701,7 +701,7 @@ void Cli::printDiag(Sensors& sn, Movement& mv, Pump& pp, GrowLight& gl, Persiste
     Serial.print('/'); Serial.println(mv.faultRight() ? F("!!FAULT") : F("n/a (EN not wired)"));
     Serial.print(F("  movementState = ")); Serial.println(movStateName(mv.getCurrentState()));
     if (sys.degradedModeActive)
-        Serial.println(F("  [!! DEGRADED: motori bloccati - vedi causa in [SYSTEM], usa 'standalone on' a banco]"));
+        Serial.println(F("  [!! DEGRADED: motors blocked - see cause in [SYSTEM], use 'standalone on' on the bench]"));
     else {
         Serial.println(F("  [ok] test: 'motor f 60000' poi b/l/r. Ruota al contrario -> inverti i suoi 2 fili (INA<->INB)"));
         Serial.println(F("  0V output (M1A/M1B)? -> 1) common GND Mega-shield  2) PWM/INA/INB pin mapping"));
@@ -711,7 +711,7 @@ void Cli::printDiag(Sensors& sn, Movement& mv, Pump& pp, GrowLight& gl, Persiste
     float wl = sn.getWaterLevel();
     Serial.print(F("[PUMP/TANK] US4 = "));
     if (isnan(wl)) Serial.print(F("nan")); else Serial.print(wl);
-    Serial.print(F(" cm  soglia=")); Serial.print(c.tank_empty_cm);
+    Serial.print(F(" cm  threshold=")); Serial.print(c.tank_empty_cm);
     Serial.print(F("  pompa="));
     if (isnan(wl) || wl > (float)c.tank_empty_cm) Serial.println(F("BLOCKED (empty tank/fault) [fail-safe]"));
     else                                          Serial.println(F("enabled"));

@@ -2,15 +2,16 @@
 PROJECT_NAME           = "SmartVase"
 PROJECT_NUMBER         = "v1.3.0"
 PROJECT_BRIEF          = "IoT Mobile Greenhouse (ESP32 Hub, ESP32 CAM & Arduino Mega Platform Controller)"
+PROJECT_LOGO           = docs/assets/logo_SmartVase.png
 OUTPUT_DIRECTORY       = docs/doxygen
 CREATE_SUBDIRS         = NO
-OUTPUT_LANGUAGE        = Italian
+OUTPUT_LANGUAGE        = English
 BRIEF_MEMBER_DESC      = YES
 REPEAT_BRIEF           = YES
 ALWAYS_DETAILED_SEC    = NO
 FULL_PATH_NAMES        = YES
-# Relativo alla cwd da cui si lancia `doxygen Doxyfile` (la root del repo):
-# niente percorsi assoluti machine-specific, funziona identico in locale e in CI.
+# Relative to the cwd `doxygen Doxyfile` is launched from (the repo root):
+# no machine-specific absolute paths, works identically locally and in CI.
 STRIP_FROM_PATH        = .
 JAVADOC_AUTOBRIEF      = YES
 OPTIMIZE_OUTPUT_FOR_C  = YES
@@ -39,7 +40,9 @@ INPUT                  = README.md \
                          docs/ARCHITECTURE.md \
                          docs/SmartVase_Project_State.md \
                          docs/Lab_Bringup_Checklist.md \
-                         docs/Scheda_Verifica_Hardware.md \
+                         docs/Hardware_Verification_Sheet.md \
+                         docs/Plant_Care_Design.md \
+                         docs/SmartVase_data_structure.md \
                          firmware/1_esp32-hub/Radin_Giacomo_SmartVase_LogicWebHub_ESP32Standard/src \
                          firmware/1_esp32-hub/Radin_Giacomo_SmartVase_LogicWebHub_ESP32Standard/include \
                          firmware/2_platform-controller_mega/Radin_Giacomo_SmartVase_PlatformController_ArduinoMega/src \
@@ -63,8 +66,8 @@ REFERENCES_LINK_SOURCE = YES
 GENERATE_HTML          = YES
 HTML_OUTPUT            = html
 HTML_FILE_EXTENSION    = .html
-# Tema vendorizzato (pinnato) + override SmartVase. Vedi docs/doxygen-theme/README.md.
-# Se doxygen-awesome.css non è presente in locale, Doxygen usa il tema di default (solo warning).
+# Vendored (pinned) theme + SmartVase overrides. See docs/doxygen-theme/README.md.
+# If doxygen-awesome.css is missing locally, Doxygen falls back to the default theme (warning only).
 HTML_EXTRA_STYLESHEET  = docs/doxygen-theme/doxygen-awesome.css docs/doxygen-theme/custom.css
 HTML_DYNAMIC_MENUS     = YES
 HTML_DYNAMIC_SECTIONS  = YES

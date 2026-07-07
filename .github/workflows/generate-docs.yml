@@ -1,9 +1,9 @@
 name: Generate Documentation
 
-# Genera la documentazione Doxygen ad ogni push su main e la pubblica su GitHub Pages.
-# Sorgente di verità unica: i commenti Doxygen nel codice + il Doxyfile in root.
-# L'HTML è un artefatto di build: NON è committato (è in .gitignore), lo rigenera
-# questa Action e lo serve Pages. Per attivarlo una volta:
+# Generates the Doxygen documentation on every push to main and publishes it on GitHub Pages.
+# Single source of truth: the Doxygen comments in the code + the Doxyfile in the repo root.
+# The HTML is a build artifact: it is NOT committed (it is in .gitignore); this Action
+# regenerates it and Pages serves it. One-time activation:
 #   Settings -> Pages -> Build and deployment -> Source = "GitHub Actions".
 
 on:
@@ -11,7 +11,7 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
-# Versioni pinnate per build riproducibili (allineate alla doc locale).
+# Pinned versions for reproducible builds (aligned with the local docs).
 env:
   DOXYGEN_VERSION: "1.10.0"
   DOXYGEN_AWESOME_VERSION: "v2.3.4"
@@ -21,7 +21,7 @@ permissions:
   pages: write
   id-token: write
 
-# Una sola pubblicazione Pages alla volta; non interrompe un deploy in corso.
+# One Pages publication at a time; does not interrupt an in-flight deploy.
 concurrency:
   group: "pages"
   cancel-in-progress: false
@@ -45,8 +45,8 @@ jobs:
 
       - name: Fetch doxygen-awesome-css ${{ env.DOXYGEN_AWESOME_VERSION }} (pinned, non-fatal)
         run: |
-          # Il tema è un extra: se il fetch fallisce (blip di rete), Doxygen usa
-          # comunque il tema di default e il deploy va avanti.
+          # The theme is an extra: if the fetch fails (network blip), Doxygen
+          # falls back to the default theme and the deploy proceeds anyway.
           curl -sSfL -o docs/doxygen-theme/doxygen-awesome.css \
             "https://raw.githubusercontent.com/jothepro/doxygen-awesome-css/${DOXYGEN_AWESOME_VERSION}/doxygen-awesome.css" \
             || echo "::warning::doxygen-awesome.css fetch failed; falling back to default theme"

@@ -58,11 +58,11 @@ void setup() {
     // 1. Debug/CLI Serial (USB)
     pinMode(3, INPUT_PULLUP); // Prevents RXD0 from floating when USB is not connected
     Serial.begin(115200);
-    Serial.println("\n[SmartVase Hub] Avvio... v1.3");
+    Serial.println("\n[SmartVase Hub] Booting... v1.3");
 
     // 2. NVS Configuration
     if (!configManager.init()) {
-        Serial.println("[CRITICAL] Impossibile inizializzare NVS. Riavvio.");
+        Serial.println("[CRITICAL] NVS initialization failed. Rebooting.");
         delay(2000);
         ESP.restart();
     }
@@ -76,7 +76,7 @@ void setup() {
 
     if (serialRxQueue == NULL || serialTxQueue == NULL ||
         mqttTxQueue == NULL || mqttRxQueue == NULL) {
-        Serial.println("[CRITICAL] Impossibile creare le code FreeRTOS. Riavvio.");
+        Serial.println("[CRITICAL] FreeRTOS queue creation failed. Rebooting.");
         delay(2000);
         ESP.restart();
     }
@@ -125,7 +125,7 @@ void setup() {
         NULL,                       // Handle
         1);                         // Core 1 (isolated from TLS spikes on Core 0)
 
-    Serial.println("[SETUP] Setup completato. Avvio dei Task.");
+    Serial.println("[SETUP] Setup complete. Starting tasks.");
 }
 
 /*! @brief Main Arduino loop: only handles non time-critical activity at the

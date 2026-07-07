@@ -3,19 +3,19 @@
 
     @ingroup MegaCore
 
-    @brief  Setup/loop del Platform Controller (Arduino Mega) — "The Brawn".
+    @brief  Platform Controller (Arduino Mega) setup/loop — "The Brawn".
 
-    @details Versione 5.3:
-             - 6 sensori HC-SR04 con pin del PIN map autoritativo (driver locale Ultrasonic)
-             - Forcella umidità suolo su A0, LDR su A1
-             - Pompa irrigazione via relè D10 con protezione tanica vuota (US4)
-             - Luci di coltivazione (UVA) via relè D11: top-up di fine giornata quando
-               la cura autonoma è attiva, regola legacy (IDLE + buio) altrimenti
-             - Cura autonoma della pianta (layer L2, `care on`): budget luce giornaliero,
-               light scan rotante, irrigazione dose-attesa-verifica, profili pianta (Care/CarePolicy)
+    @details Version 5.3:
+             - 6 HC-SR04 sensors on the authoritative PIN-map pins (local Ultrasonic driver)
+             - Soil-moisture fork on A0, LDR on A1
+             - Irrigation pump via relay D10 with empty-tank protection (US4)
+             - Grow lights (UVA) via relay D11: end-of-day top-up when autonomous
+               care is active, legacy rule (IDLE + dark) otherwise
+             - Autonomous plant care (L2 layer, `care on`): daily light budget,
+               rotating light scan, dose-soak-verify watering, plant profiles (Care/CarePolicy)
              - RTC DS3232 (I2C 0x68) for epoch timestamp in messages
-             - WDT 4s, doppio slot EEPROM con CRC16 (wear-leveling), log queue
-             - Comunicazione Serial1 Protobuf+framing verso ESP32 Hub
+             - 4 s WDT, dual-slot EEPROM with CRC16 (wear leveling), log queue
+             - Serial1 Protobuf+framing link to the ESP32 Hub
              - Non-blocking scheduler for telemetry/heartbeat/log
              - Standalone mode (CLI) for bench test without Hub
 

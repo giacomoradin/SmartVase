@@ -11,7 +11,7 @@
 
 /* Enum definitions */
 /* ===================================================================
- Enums Globali
+ Global Enums
  =================================================================== */
 typedef enum _smartvase_MovementState {
     smartvase_MovementState_M_IDLE = 0,
@@ -41,39 +41,39 @@ typedef enum _smartvase_SetModeCommand_Mode {
 } smartvase_SetModeCommand_Mode;
 
 /* Struct definitions */
-/* Telemetria ad alta frequenza (sensori in tempo reale per la navigazione) */
+/* High-frequency telemetry (real-time sensors for navigation) */
 typedef struct _smartvase_TelemetryFast {
-    /* 5 sensori HC-SR04 per navigazione e obstacle avoidance */
-    float top_dist_cm; /* US1 - frontale alto */
-    float front_right_dist_cm; /* US2 - frontale destro */
-    float front_left_dist_cm; /* US3 - frontale sinistro */
-    float left_dist_cm; /* US5 - laterale sinistro */
-    float right_dist_cm; /* US6 - laterale destro */
-    /* US4 - livello acqua nella tanica */
+    /* 5 HC-SR04 sensors for navigation and obstacle avoidance */
+    float top_dist_cm; /* US1 - front top */
+    float front_right_dist_cm; /* US2 - front right */
+    float front_left_dist_cm; /* US3 - front left */
+    float left_dist_cm; /* US5 - left side */
+    float right_dist_cm; /* US6 - right side */
+    /* US4 - water level in the tank */
     float water_level_cm;
-    /* Umidita' del suolo (forcella su A0). Range ADC grezzo 0..1023. */
+    /* Soil moisture (fork on A0). Raw ADC range 0..1023. */
     int32_t soil_moisture;
-    /* Luminosita' ambientale (fotoresistore su A1). Range ADC grezzo 0..1023. */
+    /* Ambient light (photoresistor on A1). Raw ADC range 0..1023. */
     int32_t lux;
-    /* Stato corrente della macchina a stati del movimento */
+    /* Current state of the movement state machine */
     smartvase_MovementState movement_state;
-    /* Timestamp Unix epoch (s) dal RTC DS3232 (0 se RTC non disponibile) */
+    /* Unix epoch timestamp (s) from the DS3232 RTC (0 if RTC not available) */
     uint32_t epoch_s;
     char device_id[16];
 } smartvase_TelemetryFast;
 
-/* Telemetria a bassa frequenza (sensori ambientali + statistiche cumulative) */
+/* Low-frequency telemetry (environmental sensors + cumulative statistics) */
 typedef struct _smartvase_TelemetryDeep {
     /* BME680 (I2C 0x76) */
     float temperature_c;
     float humidity_percent;
     float pressure_hpa;
     uint32_t gas_resistance_ohms;
-    /* Stato del sistema */
+    /* System state */
     uint32_t uptime_s;
     uint32_t free_ram_bytes;
-    uint32_t epoch_s; /* da RTC */
-    /* Contatori cumulativi (persistiti in EEPROM) */
+    uint32_t epoch_s; /* from RTC */
+    /* Cumulative counters (persisted in EEPROM) */
     uint32_t watchdog_resets;
     uint32_t total_irrigations;
     uint32_t obstacles_avoided;
@@ -84,23 +84,23 @@ typedef struct _smartvase_TelemetryDeep {
     uint32_t total_motor_active_time_s;
     uint32_t pb_decode_failures;
     char device_id[16];
-    /* Batteria (disabilitato finche' non viene cablato il partitore resistivo).
- Quando attivo: tensione VBATT in volt dopo divisore. */
+    /* Battery (disabled until the resistive divider is wired).
+ When active: VBATT voltage in volts after divider. */
     float battery_voltage;
-    /* Contatori cumulativi aggiuntivi: prima calcolati in Movement/stats ma mai
- pubblicati in telemetria. Aggiunti in coda (tag 19-21) per compatibilita'. */
+    /* Additional cumulative counters: previously calculated in Movement/stats but never
+ published in telemetry. Appended (tags 19-21) for compatibility. */
     uint32_t light_seeking_sessions;
     uint32_t shadow_seeking_sessions;
     uint32_t escape_attempts;
-    /* KPI della cura autonoma (v4.1, 2026-07-02): contatori GIORNALIERI calcolati
- dal care layer del Mega (Care/CarePolicy, vedi docs/Plant_Care_Design.md).
- Aggiunti in coda (tag 22-27) per compatibilita' con i decoder v4.0. */
-    bool care_enabled; /* true se la cura autonoma e' attiva */
+    /* Autonomous care KPIs (v4.1, 2026-07-02): DAILY counters calculated
+ by the Mega's care layer (Care/CarePolicy, see docs/Plant_Care_Design.md).
+ Appended (tags 22-27) for compatibility with v4.0 decoders. */
+    bool care_enabled; /* true if autonomous care is active */
     uint32_t care_state; /* CareState: 0=NIGHT 1=SEEK_SUN 2=BASK 3=SEEK_SHADE 4=SHELTER 5=TOP_UP */
-    uint32_t light_budget_pct; /* % del target luce giornaliero raggiunta (puo' superare 100) */
-    uint32_t relocations_today; /* sessioni di seeking avviate oggi */
-    uint32_t water_doses_today; /* dosi di irrigazione erogate oggi */
-    uint32_t growlight_minutes_today; /* minuti di top-up UVA consumati oggi */
+    uint32_t light_budget_pct; /* % of daily light target reached (can exceed 100) */
+    uint32_t relocations_today; /* seeking sessions started today */
+    uint32_t water_doses_today; /* irrigation doses delivered today */
+    uint32_t growlight_minutes_today; /* UVA top-up minutes consumed today */
 } smartvase_TelemetryDeep;
 
 typedef struct _smartvase_Log {
@@ -123,14 +123,14 @@ typedef struct _smartvase_Heartbeat {
 typedef struct _smartvase_CommandResponse {
     smartvase_CommandResponse_Status status;
     char detail[64];
-    /* Valore numerico opzionale (es. risposta a ReadSoilCommand) */
+    /* Optional numeric value (e.g. response to ReadSoilCommand) */
     int32_t value;
     uint32_t cmd_id;
     uint32_t exec_time_ms;
 } smartvase_CommandResponse;
 
 /* ===================================================================
- Definizioni dei Comandi Specifici
+ Specific Command Definitions
  =================================================================== */
 typedef struct _smartvase_WaterCommand {
     uint32_t duration_ms;
@@ -162,7 +162,7 @@ typedef struct _smartvase_SoftResetCommand {
 } smartvase_SoftResetCommand;
 
 /* ===================================================================
- Comandi e Risposte
+ Commands and Responses
  =================================================================== */
 typedef struct _smartvase_Command {
     pb_size_t which_command_type;
@@ -179,7 +179,7 @@ typedef struct _smartvase_Command {
 } smartvase_Command;
 
 /* ===================================================================
- Messaggio Contenitore (Wrapper)
+ Wrapper Message
  =================================================================== */
 typedef struct _smartvase_WrapperMessage {
     pb_size_t which_payload;

@@ -67,7 +67,7 @@ public:
         @param[in] targetMode Current target mode of the robot (Movement::getTargetMode()).
         @param[in] lux        Current light ADC value (negative = not valid).
         @param[in] threshold  Configured light ADC threshold (`light_threshold`).
-        @param[in] timeValid  `true` if the RTC has a reliable time (Sensors::getRTCStatus() && !Sensors::rtcOscStopped()).
+        @param[in] timeValid  `true` if a reliable time source is available (see Sensors::timeIsValid()).
         @param[in] epochS     Current UNIX epoch (Sensors::getEpoch()), used to extract the hour of day.
     */
     void update(CppMode targetMode, int lux, uint16_t threshold,

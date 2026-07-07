@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Compila ed esegue gli unit test host (g++). Offline-friendly: usa il g++ di
-# sistema (Strawberry/MinGW), niente piattaforma native PlatformIO richiesta.
+# Builds and runs the host unit tests (g++). Offline-friendly: uses the system
+# g++ (Strawberry/MinGW), no PlatformIO native platform required.
 set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CXX="${CXX:-g++}"
