@@ -15,9 +15,9 @@ try:
 except ImportError:
     print("ERROR: 'pyserial' library is not installed.")
     print("Please run: C:\\Users\\anton\\.platformio\\penv\\Scripts\\pip.exe install pyserial")
-    sys.exit(1)
+    sys.exit
 
-PORT = "COM7"   # SELECT OWN COM
+PORT = "COM5"   # SELECT OWN COM
 BAUD = 115200
 
 def reader_thread(ser):
