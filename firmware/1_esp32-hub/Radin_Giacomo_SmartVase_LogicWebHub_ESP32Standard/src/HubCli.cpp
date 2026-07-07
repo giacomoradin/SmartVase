@@ -59,7 +59,7 @@ void HubCli::tick() {
             } else {
                 pos = 0;
                 buf[0] = '\0';
-                Serial.println(F("\n[CLI] riga troppo lunga, scartata"));
+                Serial.println(F("\n[CLI] line too long, discarded"));
                 Serial.print(F("> "));
             }
         }
@@ -78,11 +78,11 @@ void HubCli::execute(char* line) {
     if (strcmp(line, "telemetry") == 0) { printTelemetry(); return; }
     if (strcmp(line, "save") == 0) {
         Serial.println(_cfg->saveConfig() ? F("[CLI] config salvata su NVS (riavvia con 'reboot')")
-                                          : F("[CLI] ERRORE salvataggio NVS"));
+                                          : F("[CLI] NVS save ERROR"));
         return;
     }
     if (strcmp(line, "reboot") == 0) {
-        Serial.println(F("[CLI] riavvio..."));
+        Serial.println(F("[CLI] rebooting..."));
         delay(200);
         ESP.restart();
         return;
@@ -93,7 +93,7 @@ void HubCli::execute(char* line) {
     }
     if (strncmp(line, "set ", 4) == 0) {
         if (!handleSet(line + 4)) {
-            Serial.println(F("[CLI] usage: set <wifi_ssid|wifi_pass|mqtt_broker|mqtt_port|mqtt_user|mqtt_pass> <valore>"));
+            Serial.println(F("[CLI] usage: set <wifi_ssid|wifi_pass|mqtt_broker|mqtt_port|mqtt_user|mqtt_pass> <value>"));
         }
         return;
     }
@@ -144,7 +144,7 @@ bool HubCli::handleSet(char* args) {
                             _cfg->getMqttUser(), _cfg->getMqttPassword());
     } else if (strcmp(key, "mqtt_port") == 0) {
         int p = atoi(value);
-        if (p <= 0 || p > 65535) { Serial.println(F("[CLI] porta non valida")); return true; }
+        if (p <= 0 || p > 65535) { Serial.println(F("[CLI] invalid port")); return true; }
         _cfg->setMqttConfig(_cfg->getMqttBroker(), (uint16_t)p,
                             _cfg->getMqttUser(), _cfg->getMqttPassword());
     } else if (strcmp(key, "mqtt_user") == 0) {
@@ -177,14 +177,14 @@ void HubCli::sendMegaCommand(uint8_t which, uint32_t arg) {
             cmd.command_type.set_mode.mode = (SetModeCommand_Mode)arg;
             break;
         default:
-            break; // comandi senza payload
+            break; // commands without payload
     }
     if (xQueueSend(_serialTxQueue, &msg, pdMS_TO_TICKS(100)) == pdPASS) {
-        Serial.print(F("[CLI] comando inviato al Mega (cmd_id="));
+        Serial.print(F("[CLI] command sent to Mega (cmd_id="));
         Serial.print(cmd.cmd_id);
-        Serial.println(F("), attendi [ACK Mega]"));
+        Serial.println(F("), wait for [ACK Mega]"));
     } else {
-        Serial.println(F("[CLI] ERRORE: coda TX verso il Mega piena"));
+        Serial.println(F("[CLI] ERROR: TX queue to Mega is full"));
     }
 }
 
@@ -192,12 +192,12 @@ void HubCli::sendMegaCommand(uint8_t which, uint32_t arg) {
  *  first and last character visible, the rest replaced by "***"), so that
  *  passwords/secrets are never fully exposed on the serial monitor.
  *  @param[in] label Text printed before the value (e.g. "wifi_pass   = ").
- *  @param[in] value String to mask; if empty, prints "(vuoto)". */
+ *  @param[in] value String to mask; if empty, prints "(empty)". */
 static void printMasked(const char* label, const char* value) {
     Serial.print(label);
     size_t n = strlen(value);
     if (n == 0) {
-        Serial.println(F("(vuoto)"));
+        Serial.println(F("(empty)"));
     } else {
         Serial.print(value[0]);
         Serial.print(F("***"));
@@ -221,72 +221,72 @@ void HubCli::printStatus() {
     Serial.print(F("device_id   = ")); Serial.println(_logic->deviceId());
     Serial.print(F("wifi        = "));
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.print(F("CONNESSO  ip=")); Serial.print(WiFi.localIP());
+        Serial.print(F("CONNECTED  ip=")); Serial.print(WiFi.localIP());
         Serial.print(F(" rssi="));        Serial.println(WiFi.RSSI());
     } else {
         Serial.println(F("OFFLINE"));
     }
     Serial.print(F("mqtt        = "));
-    if (!_mqtt->isConfigured())     Serial.println(F("NON CONFIGURATO"));
-    else if (_mqtt->isConnected())  Serial.println(F("CONNESSO"));
-    else                            Serial.println(F("DISCONNESSO"));
+    if (!_mqtt->isConfigured())     Serial.println(F("NOT CONFIGURED"));
+    else if (_mqtt->isConnected())  Serial.println(F("CONNECTED"));
+    else                            Serial.println(F("DISCONNECTED"));
     Serial.print(F("mega_link   = "));
     if (_logic->isMegaConnected()) {
-        Serial.print(F("OK (ultimo msg "));
+        Serial.print(F("OK (last msg "));
         Serial.print(_logic->megaLastMessageAgeMs() / 1000UL);
-        Serial.println(F(" s fa)"));
+        Serial.println(F(" s ago)"));
     } else {
-        Serial.println(F("ASSENTE (nessun messaggio dal Mega)"));
+        Serial.println(F("MISSING (no message from Mega)"));
     }
     Serial.print(F("free_heap   = ")); Serial.print(ESP.getFreeHeap()); Serial.println(F(" B"));
     Serial.print(F("uptime_s    = ")); Serial.println(millis() / 1000UL);
 }
 
 void HubCli::printDiag() {
-    Serial.println(F("============== DIAGNOSTICA Hub =============="));
+    Serial.println(F("============== Hub DIAGNOSTICS =============="));
 
     // --- Wi-Fi ---
     bool wifiUp = (WiFi.status() == WL_CONNECTED);
     Serial.print(F("[WiFi] "));
     if (wifiUp) {
-        Serial.print(F("CONNESSO ip=")); Serial.print(WiFi.localIP());
+        Serial.print(F("CONNECTED ip=")); Serial.print(WiFi.localIP());
         Serial.print(F(" rssi=")); Serial.print(WiFi.RSSI()); Serial.println(F(" dBm  [ok]"));
     } else {
         Serial.print(F("OFFLINE  ssid='")); Serial.print(_cfg->getWifiSsid()); Serial.println(F("'"));
         Serial.println(F("  [!! verifica SSID/pass con 'show'; hotspot acceso e a 2.4 GHz; poi 'wifi connect']"));
     }
 
-    // --- NTP / ora (serve alla TLS) ---
+    // --- NTP / time (needed for TLS) ---
     time_t now = time(nullptr);
     Serial.print(F("[NTP] epoch=")); Serial.print((unsigned long)now);
-    if (now >= (time_t)1700000000UL) Serial.println(F("  [ok ora valida]"));
+    if (now >= (time_t)1700000000UL) Serial.println(F("  [ok valid time]"));
     else Serial.println(F("  [!! ora NON sincronizzata -> la TLS verso HiveMQ fallisce; serve internet sull'hotspot]"));
 
     // --- MQTT ---
     Serial.print(F("[MQTT] "));
     if (!_mqtt->isConfigured()) {
-        Serial.println(F("NON CONFIGURATO  [imposta 'set mqtt_broker/user/pass' + 'save' + 'reboot']"));
+        Serial.println(F("NOT CONFIGURED  [imposta 'set mqtt_broker/user/pass' + 'save' + 'reboot']"));
     } else if (_mqtt->isConnected()) {
-        Serial.print(F("CONNESSO ")); Serial.print(_cfg->getMqttBroker());
+        Serial.print(F("CONNECTED ")); Serial.print(_cfg->getMqttBroker());
         Serial.print(':'); Serial.print(_cfg->getMqttPort()); Serial.println(F("  [ok]"));
     } else {
-        Serial.print(F("DISCONNESSO ")); Serial.print(_cfg->getMqttBroker());
+        Serial.print(F("DISCONNECTED ")); Serial.print(_cfg->getMqttBroker());
         Serial.print(':'); Serial.println(_cfg->getMqttPort());
         if (wifiUp) Serial.println(F("  [!! WiFi ok ma MQTT giu' -> ora/TLS/credenziali: controlla [NTP] sopra, user/pass, URL broker]"));
-        else        Serial.println(F("  [in attesa del Wi-Fi]"));
+        else        Serial.println(F("  [waiting for Wi-Fi]"));
     }
 
-    // --- Link seriale col Mega ---
+    // --- Serial link with Mega ---
     Serial.print(F("[MEGA link] "));
     if (_logic->isMegaConnected()) {
-        Serial.print(F("OK (ultimo msg ")); Serial.print(_logic->megaLastMessageAgeMs() / 1000UL);
-        Serial.println(F(" s fa)  [ok]"));
+        Serial.print(F("OK (last msg ")); Serial.print(_logic->megaLastMessageAgeMs() / 1000UL);
+        Serial.println(F(" s ago)  [ok]"));
     } else {
-        Serial.println(F("ASSENTE  [!! nessun frame dal Mega]"));
-        Serial.println(F("  cablaggio: Mega TX1(D18)->partitore->RX2(GPIO16), Hub TX2(GPIO17)->RX1(D19), GND comune"));
+        Serial.println(F("MISSING  [!! no frame from Mega]"));
+        Serial.println(F("  wiring: Mega TX1(D18)->divider->RX2(GPIO16), Hub TX2(GPIO17)->RX1(D19), common GND"));
     }
 
-    // --- Sistema ---
+    // --- System ---
     Serial.print(F("[SISTEMA] device_id=")); Serial.print(_logic->deviceId());
     Serial.print(F(" free_heap=")); Serial.print(ESP.getFreeHeap());
     Serial.print(F(" B uptime=")); Serial.print(millis() / 1000UL); Serial.println(F(" s"));
@@ -299,10 +299,10 @@ void HubCli::printTelemetry() {
     _logic->getTelemetrySnapshot(tf, td);
     if (tf.epoch_s == 0 && tf.lux == 0 && td.uptime_s == 0 &&
         tf.top_dist_cm == 0 && tf.water_level_cm == 0) {
-        Serial.println(F("[CLI] nessuna telemetria ricevuta dal Mega finora"));
+        Serial.println(F("[CLI] no telemetry received from Mega so far"));
         return;
     }
-    Serial.println(F("--- ultima telemetria dal Mega ---"));
+    Serial.println(F("--- last telemetry from Mega ---"));
     Serial.print(F("top         = ")); Serial.print(tf.top_dist_cm);         Serial.println(F(" cm"));
     Serial.print(F("front_right = ")); Serial.print(tf.front_right_dist_cm); Serial.println(F(" cm"));
     Serial.print(F("front_left  = ")); Serial.print(tf.front_left_dist_cm);  Serial.println(F(" cm"));
@@ -318,22 +318,22 @@ void HubCli::printTelemetry() {
 
 void HubCli::printHelp() {
     Serial.println(F("--- SmartVase Hub CLI v" HUB_FW_VERSION " ---"));
-    Serial.println(F("help                      questo menu"));
-    Serial.println(F("version                   versione firmware"));
+    Serial.println(F("help                      this menu"));
+    Serial.println(F("version                   firmware version"));
     Serial.println(F("status                    Wi-Fi, MQTT, link Mega, heap"));
-    Serial.println(F("diag                      diagnostica Wi-Fi/MQTT/Mega con hint"));
-    Serial.println(F("show                      configurazione NVS"));
-    Serial.println(F("set <chiave> <valore>     wifi_ssid|wifi_pass|mqtt_broker|"));
+    Serial.println(F("diag                      Wi-Fi/MQTT/Mega diagnostics with hints"));
+    Serial.println(F("show                      NVS configuration"));
+    Serial.println(F("set <key> <value>     wifi_ssid|wifi_pass|mqtt_broker|"));
     Serial.println(F("                          mqtt_port|mqtt_user|mqtt_pass"));
-    Serial.println(F("save                      salva config su NVS"));
-    Serial.println(F("wifi connect              ritenta connessione Wi-Fi"));
+    Serial.println(F("save                      save config to NVS"));
+    Serial.println(F("wifi connect              retry Wi-Fi connection"));
     Serial.println(F("reboot                    riavvia l'Hub"));
     Serial.println(F("--- passthrough Mega (via seriale Protobuf) ---"));
-    Serial.println(F("telemetry                 ultima telemetria dal Mega"));
-    Serial.println(F("water <ms>                irrigazione (protez. tanica)"));
+    Serial.println(F("telemetry                 last telemetry from Mega"));
+    Serial.println(F("water <ms>                watering (tank protection)"));
     Serial.println(F("mode <idle|light|shadow>  modalita' movimento"));
-    Serial.println(F("stop                      ferma motori e pompa"));
+    Serial.println(F("stop                      stop motors and pump"));
     Serial.println(F("soil                      umidita' suolo"));
-    Serial.println(F("megadiag                  chiede una TelemetryDeep al Mega"));
-    Serial.println(F("megareset                 soft reset del Mega"));
+    Serial.println(F("megadiag                  requests a TelemetryDeep from Mega"));
+    Serial.println(F("megareset                 soft reset of Mega"));
 }

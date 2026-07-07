@@ -1,11 +1,11 @@
-// Shim minimale di <Arduino.h> per compilare i moduli "puri" del firmware
-// come unit test NATIVI con g++ (offline, senza la piattaforma native di
-// PlatformIO, che non e' in cache su questa macchina).
+// Minimal <Arduino.h> shim to compile the "pure" firmware modules
+// as NATIVE unit tests with g++ (offline, without PlatformIO's native
+// platform, which is not cached on this machine).
 //
-// Espone solo i tipi di base che servono ai moduli logici sotto test
-// (es. Crc16). NON e' un'emulazione di Arduino: i moduli che dipendono da
-// HW reale (Serial, analogRead, millis...) non vanno testati per questa via
-// ma rifattorizzati per isolare la logica pura.
+// It only exposes the base types needed by the logic modules under test
+// (e.g. Crc16). It is NOT an Arduino emulation: modules that depend on
+// real HW (Serial, analogRead, millis...) should not be tested this way
+// but refactored to isolate pure logic.
 #ifndef SMARTVASE_HOST_ARDUINO_SHIM_H
 #define SMARTVASE_HOST_ARDUINO_SHIM_H
 

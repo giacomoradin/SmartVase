@@ -45,7 +45,7 @@ static void syncTimeNtp() {
     if (time(nullptr) >= NTP_VALID_EPOCH) {
         ESP_LOGI(TAG, "NTP sync OK (epoch=%lu)", (unsigned long)time(nullptr));
     } else {
-        ESP_LOGW(TAG, "NTP non sincronizzato: la TLS verso HiveMQ potrebbe fallire");
+        ESP_LOGW(TAG, "NTP not synced: TLS to HiveMQ may fail");
     }
 }
 
@@ -78,7 +78,7 @@ void WifiManager::connect() {
     WiFi.mode(WIFI_STA);
 
     if (ssid == nullptr || strlen(ssid) == 0) {
-        ESP_LOGW(TAG, "Nessuna credenziale Wi-Fi in NVS: avvio AP di provisioning.");
+        ESP_LOGW(TAG, "No Wi-Fi credentials in NVS: starting provisioning AP.");
         startProvisioningAP();
         return;
     }
@@ -100,7 +100,7 @@ void WifiManager::connect() {
         _isConnected = true;
         syncTimeNtp();
     } else {
-        ESP_LOGW(TAG, "Wi-Fi non connesso entro %d ms: avvio AP di provisioning.", WIFI_CONNECT_TIMEOUT_MS);
+        ESP_LOGW(TAG, "Wi-Fi not connected within %d ms: starting provisioning AP.", WIFI_CONNECT_TIMEOUT_MS);
         _isConnected = false;
         startProvisioningAP();
     }
@@ -171,11 +171,11 @@ void WifiManager::setupProvisioningServer() {
     _provisioningServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         String html = R"raw(
 <!DOCTYPE html>
-<html lang="it">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SmartVase — Configurazione Wi-Fi</title>
+    <title>SmartVase — Wi-Fi Configuration</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
@@ -322,22 +322,22 @@ void WifiManager::setupProvisioningServer() {
                 <span class="logo-icon">🌿</span>
             </div>
             <h2>SmartVase</h2>
-            <p class="subtitle">Configurazione Rete Wi-Fi</p>
+            <p class="subtitle">Wi-Fi Network Configuration</p>
         </div>
         <form id="setup-form" action="/save" method="post" onsubmit="showLoader()">
             <div class="form-group">
-                <label for="ssid">Nome Rete (SSID)</label>
-                <input type="text" id="ssid" name="ssid" placeholder="es. Wi-Fi Casa" required autocomplete="off">
+                <label for="ssid">Network Name (SSID)</label>
+                <input type="text" id="ssid" name="ssid" placeholder="e.g. Home Wi-Fi" required autocomplete="off">
             </div>
             <div class="form-group">
-                <label for="pass">Password Rete</label>
-                <input type="password" id="pass" name="pass" placeholder="Inserisci password" autocomplete="off">
+                <label for="pass">Network Password</label>
+                <input type="password" id="pass" name="pass" placeholder="Enter password" autocomplete="off">
             </div>
-            <button type="submit">Connetti Dispositivo</button>
+            <button type="submit">Connect Device</button>
         </form>
         <div id="form-loader" class="loader">
             <div class="spinner"></div>
-            <p>Salvataggio credenziali e riavvio in corso...</p>
+            <p>Saving credentials and rebooting...</p>
         </div>
     </div>
 </body>
@@ -372,11 +372,11 @@ void WifiManager::setupProvisioningServer() {
 
         String htmlResponse = R"raw(
 <!DOCTYPE html>
-<html lang="it">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SmartVase — Connessione</title>
+    <title>SmartVase — Connecting</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
@@ -433,8 +433,8 @@ void WifiManager::setupProvisioningServer() {
 <body>
     <div class="card">
         <span class="icon">🚀</span>
-        <h2>Credenziali Ricevute!</h2>
-        <p>Il dispositivo si sta riavviando per connettersi alla tua rete Wi-Fi. Puoi chiudere questa pagina e ricollegarti alla tua rete domestica.</p>
+        <h2>Credentials Received!</h2>
+        <p>The device is rebooting to connect to your Wi-Fi network. You can close this page and reconnect to your home network.</p>
     </div>
 </body>
 </html>

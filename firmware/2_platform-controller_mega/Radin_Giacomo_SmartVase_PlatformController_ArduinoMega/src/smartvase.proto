@@ -1,20 +1,20 @@
-// Autore: Giacomo Radin
-// Versione 4.2 (2026-07-06): sincronizzazione oraria Hub -> Mega
-// - Heartbeat: aggiunto epoch_s (tag 4, in coda per compatibilita' v4.1).
-//   L'Hub, sincronizzato via NTP, allega l'ora corrente all'heartbeat
-//   periodico verso il Mega; il Mega la usa per allineare il proprio clock
-//   software (RTC hardware guasto). 0 = ora non disponibile (niente NTP):
-//   il ricevente DEVE ignorare il campo.
-// Versione 4.1 (2026-07-02): KPI della cura autonoma in TelemetryDeep
-// - TelemetryDeep: aggiunti i contatori giornalieri del care layer del Mega
-//   (tag 22-27, in coda per compatibilita' con i decoder v4.0): stato care,
-//   budget luce %, ricollocazioni, dosi acqua, minuti UVA, flag abilitazione.
-// Versione 4.0 (2026-05-19): Refactor totale per il nuovo prototipo
-// - TelemetryFast: 5 distanze di navigazione (US1, US2, US3, US5, US6)
-//   + livello acqua (US4) + umidita' suolo (forcella A0) + lux + stato + ts
-// - TelemetryDeep: aggiunto epoch_s da RTC DS3232
-// - CommandResponse: aggiunto campo 'value' per risposte con payload numerico
-//   (es. ReadSoilCommand restituisce il valore corrente di umidita')
+// Author: Giacomo Radin
+// Version 4.2 (2026-07-06): Hub -> Mega time synchronization
+// - Heartbeat: added epoch_s (tag 4, queued for v4.1 compatibility).
+//   The Hub, synchronized via NTP, includes the current time in the periodic
+//   heartbeat sent to the Mega; the Mega uses it to synchronize its
+//   software clock (hardware RTC failed). 0 = time not available (no NTP):
+//   the receiver MUST ignore the field.
+// Version 4.1 (2026-07-02): Autonomous care KPIs in TelemetryDeep
+// - TelemetryDeep: added daily counters from the Mega's care layer
+//   (tags 22-27, appended for compatibility with v4.0 decoders): care state,
+//   light budget %, relocations, water doses, UVA minutes, enable flag.
+// Version 4.0 (2026-05-19): Total refactor for the new prototype
+// - TelemetryFast: 5 navigation distances (US1, US2, US3, US5, US6)
+//   + water level (US4) + soil moisture (A0 fork) + lux + state + ts
+// - TelemetryDeep: added epoch_s from RTC DS3232
+// - CommandResponse: added 'value' field for responses with numeric payload
+//   (e.g. ReadSoilCommand returns the current moisture value)
 syntax = "proto3";
 
 import "nanopb.proto";
@@ -22,37 +22,37 @@ import "nanopb.proto";
 package smartvase;
 
 // ===================================================================
-// Messaggi Atomici
+// Atomic Messages
 // ===================================================================
 
-// Telemetria ad alta frequenza (sensori in tempo reale per la navigazione)
+// High-frequency telemetry (real-time sensors for navigation)
 message TelemetryFast {
-  // 5 sensori HC-SR04 per navigazione e obstacle avoidance
-  float top_dist_cm           = 1;  // US1 - frontale alto
-  float front_right_dist_cm   = 2;  // US2 - frontale destro
-  float front_left_dist_cm    = 3;  // US3 - frontale sinistro
-  float left_dist_cm          = 4;  // US5 - laterale sinistro
-  float right_dist_cm         = 5;  // US6 - laterale destro
+  // 5 HC-SR04 sensors for navigation and obstacle avoidance
+  float top_dist_cm           = 1;  // US1 - front top
+  float front_right_dist_cm   = 2;  // US2 - front right
+  float front_left_dist_cm    = 3;  // US3 - front left
+  float left_dist_cm          = 4;  // US5 - left side
+  float right_dist_cm         = 5;  // US6 - right side
 
-  // US4 - livello acqua nella tanica
+  // US4 - water level in the tank
   float water_level_cm        = 6;
 
-  // Umidita' del suolo (forcella su A0). Range ADC grezzo 0..1023.
+  // Soil moisture (fork on A0). Raw ADC range 0..1023.
   int32 soil_moisture         = 7;
 
-  // Luminosita' ambientale (fotoresistore su A1). Range ADC grezzo 0..1023.
+  // Ambient light (photoresistor on A1). Raw ADC range 0..1023.
   int32 lux                   = 8;
 
-  // Stato corrente della macchina a stati del movimento
+  // Current state of the movement state machine
   MovementState movement_state = 9;
 
-  // Timestamp Unix epoch (s) dal RTC DS3232 (0 se RTC non disponibile)
+  // Unix epoch timestamp (s) from the DS3232 RTC (0 if RTC not available)
   uint32 epoch_s              = 10;
 
   string device_id            = 11 [(nanopb).max_size = 16];
 }
 
-// Telemetria a bassa frequenza (sensori ambientali + statistiche cumulative)
+// Low-frequency telemetry (environmental sensors + cumulative statistics)
 message TelemetryDeep {
   // BME680 (I2C 0x76)
   float temperature_c          = 1;
@@ -60,12 +60,12 @@ message TelemetryDeep {
   float pressure_hpa           = 3;
   uint32 gas_resistance_ohms   = 4;
 
-  // Stato del sistema
+  // System state
   uint32 uptime_s              = 5;
   uint32 free_ram_bytes        = 6;
-  uint32 epoch_s               = 7;   // da RTC
+  uint32 epoch_s               = 7;   // from RTC
 
-  // Contatori cumulativi (persistiti in EEPROM)
+  // Cumulative counters (persisted in EEPROM)
   uint32 watchdog_resets       = 8;
   uint32 total_irrigations     = 9;
   uint32 obstacles_avoided     = 10;
@@ -78,25 +78,25 @@ message TelemetryDeep {
 
   string device_id             = 17 [(nanopb).max_size = 16];
 
-  // Batteria (disabilitato finche' non viene cablato il partitore resistivo).
-  // Quando attivo: tensione VBATT in volt dopo divisore.
+  // Battery (disabled until the resistive divider is wired).
+  // When active: VBATT voltage in volts after divider.
   float battery_voltage        = 18;
 
-  // Contatori cumulativi aggiuntivi: prima calcolati in Movement/stats ma mai
-  // pubblicati in telemetria. Aggiunti in coda (tag 19-21) per compatibilita'.
+  // Additional cumulative counters: previously calculated in Movement/stats but never
+  // published in telemetry. Appended (tags 19-21) for compatibility.
   uint32 light_seeking_sessions  = 19;
   uint32 shadow_seeking_sessions = 20;
   uint32 escape_attempts         = 21;
 
-  // KPI della cura autonoma (v4.1, 2026-07-02): contatori GIORNALIERI calcolati
-  // dal care layer del Mega (Care/CarePolicy, vedi docs/Plant_Care_Design.md).
-  // Aggiunti in coda (tag 22-27) per compatibilita' con i decoder v4.0.
-  bool   care_enabled            = 22;  // true se la cura autonoma e' attiva
+  // Autonomous care KPIs (v4.1, 2026-07-02): DAILY counters calculated
+  // by the Mega's care layer (Care/CarePolicy, see docs/Plant_Care_Design.md).
+  // Appended (tags 22-27) for compatibility with v4.0 decoders.
+  bool   care_enabled            = 22;  // true if autonomous care is active
   uint32 care_state              = 23;  // CareState: 0=NIGHT 1=SEEK_SUN 2=BASK 3=SEEK_SHADE 4=SHELTER 5=TOP_UP
-  uint32 light_budget_pct        = 24;  // % del target luce giornaliero raggiunta (puo' superare 100)
-  uint32 relocations_today       = 25;  // sessioni di seeking avviate oggi
-  uint32 water_doses_today       = 26;  // dosi di irrigazione erogate oggi
-  uint32 growlight_minutes_today = 27;  // minuti di top-up UVA consumati oggi
+  uint32 light_budget_pct        = 24;  // % of daily light target reached (can exceed 100)
+  uint32 relocations_today       = 25;  // seeking sessions started today
+  uint32 water_doses_today       = 26;  // irrigation doses delivered today
+  uint32 growlight_minutes_today = 27;  // UVA top-up minutes consumed today
 }
 
 message Log {
@@ -118,7 +118,7 @@ message Heartbeat {
 }
 
 // ===================================================================
-// Comandi e Risposte
+// Commands and Responses
 // ===================================================================
 message Command {
   uint32 cmd_id = 99;
@@ -137,14 +137,14 @@ message CommandResponse {
   enum Status { OK = 0; ERROR = 1; }
   Status status = 1;
   string detail = 2 [(nanopb).max_size = 64];
-  // Valore numerico opzionale (es. risposta a ReadSoilCommand)
+  // Optional numeric value (e.g. response to ReadSoilCommand)
   int32  value = 3;
   uint32 cmd_id = 99;
   uint32 exec_time_ms = 100;
 }
 
 // ===================================================================
-// Definizioni dei Comandi Specifici
+// Specific Command Definitions
 // ===================================================================
 message WaterCommand {
   uint32 duration_ms = 1;
@@ -166,14 +166,14 @@ message ReadSoilCommand {}
 message SoftResetCommand {}
 
 // ===================================================================
-// Enums Globali
+// Global Enums
 // ===================================================================
 enum MovementState {
   M_IDLE = 0; M_MOVING = 1; M_AVOID_START = 2; M_AVOID_REVERSING = 3; M_AVOID_TURNING = 4; M_STUCK = 5;
 }
 
 // ===================================================================
-// Messaggio Contenitore (Wrapper)
+// Wrapper Message
 // ===================================================================
 message WrapperMessage {
   oneof payload {

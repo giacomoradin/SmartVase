@@ -1,12 +1,12 @@
 /*! @file hivemq_ca_cert.h
  *  @ingroup HubMisc
- *  @brief Certificato CA root (ISRG Root X1 di Let's Encrypt) per la
- *  validazione TLS del broker HiveMQ Cloud.
- *  @details Fonte canonica condivisa: questo file viene copiato (sync
- *  automatico via `infra/smartvase-proto/sync_to_firmware.py` per l'Hub;
- *  manuale per la CAM) in `firmware/1_esp32-hub/.../include/` e
- *  `firmware/3_esp32-cam/.../src/`. Se HiveMQ migra a un'altra CA o ne
- *  aggiunge un'altra, sostituire o concatenare i certificati PEM qui sotto.
+ *  @brief Root CA certificate (ISRG Root X1 from Let's Encrypt) for
+ *  TLS validation of the HiveMQ Cloud broker.
+ *  @details Canonical shared source: this file is copied (auto
+ *  sync via `infra/smartvase-proto/sync_to_firmware.py` for the Hub;
+ *  manual for the CAM) into `firmware/1_esp32-hub/.../include/` and
+ *  `firmware/3_esp32-cam/.../src/`. If HiveMQ migrates to another CA or
+ *  adds another one, replace or concatenate the PEM certificates below.
  *  @author Giacomo Radin
  *  @date 2026-05-20
  */

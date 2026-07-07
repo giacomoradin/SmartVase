@@ -35,7 +35,7 @@ MqttManager::MqttManager(QueueHandle_t txQueue, QueueHandle_t rxQueue, ConfigMan
     : _txQueue(txQueue),
       _rxQueue(rxQueue),
       _configManager(configManager),
-      _mqttClient(_wifiClientSecure) // Passa il client sicuro al costruttore di PubSubClient
+      _mqttClient(_wifiClientSecure) // Pass the secure client to the PubSubClient constructor
 {
     _instance = this; // Store the instance pointer for the static callback
 }
@@ -112,8 +112,8 @@ void MqttManager::taskRun() {
         if (!isConfigured()) {
             if (!warnedNotConfigured) {
                 warnedNotConfigured = true;
-                ESP_LOGW(TAG, "Broker MQTT non configurato: pubblicazione disattivata.");
-                Serial.println(F("[MQTT] Non configurato. Dalla CLI: set mqtt_broker <host>, set mqtt_user/mqtt_pass, save, reboot"));
+                ESP_LOGW(TAG, "MQTT broker not configured: publishing disabled.");
+                Serial.println(F("[MQTT] Not configured. From CLI: set mqtt_broker <host>, set mqtt_user/mqtt_pass, save, reboot"));
             }
             while (xQueueReceive(_txQueue, &msgToPublish, 0) == pdPASS) { /* discard */ }
             vTaskDelay(pdMS_TO_TICKS(1000));
@@ -181,19 +181,19 @@ bool MqttManager::reconnect() {
         static uint32_t lastNtpKickMs = 0;
         uint32_t nowMs = millis();
         if (lastNtpKickMs == 0) {
-            configTime(0, 0, "pool.ntp.org", "time.google.com"); // avvia SNTP
+            configTime(0, 0, "pool.ntp.org", "time.google.com"); // start SNTP
             lastNtpKickMs = nowMs;
-            ESP_LOGW(TAG, "Ora non valida: NTP avviato, rimando il connect MQTT.");
+            ESP_LOGW(TAG, "Invalid time: NTP started, postponing MQTT connect.");
         } else if (nowMs - lastNtpKickMs > 30000UL) {
             sntp_stop();
-            configTime(0, 0, "pool.ntp.org", "time.google.com"); // forza nuovo tentativo
+            configTime(0, 0, "pool.ntp.org", "time.google.com"); // force new attempt
             lastNtpKickMs = nowMs;
-            ESP_LOGW(TAG, "NTP ancora non sincronizzato: nuovo tentativo.");
+            ESP_LOGW(TAG, "NTP still not synced: new attempt.");
         }
         return false;
     }
 
-    // Backoff con tetto 30 s + jitter, gestito a timer (no delay bloccante).
+    // Backoff with 30s cap + jitter, timer managed (no blocking delay).
     static uint32_t lastAttemptMs = 0;
     static uint32_t backoffMs     = 0;
     uint32_t now = millis();
@@ -204,11 +204,11 @@ bool MqttManager::reconnect() {
     const char* user     = _configManager.getMqttUser();
     const char* password = _configManager.getMqttPassword();
 
-    // LWT: alla disconnessione anomala il broker pubblica "offline" su /status.
+    // LWT: on abnormal disconnect the broker publishes "offline" on /status.
     if (_mqttClient.connect(_mqttClientId.c_str(), user, password,
                             _topicStatus.c_str(), 1, true, "offline")) {
         ESP_LOGI(TAG, "MQTT Connected!");
-        backoffMs = 0; // reset backoff a connessione riuscita
+        backoffMs = 0; // reset backoff on successful connection
 
         String onlinePayload = "online";
         _mqttClient.publish(_topicStatus.c_str(), (uint8_t*)onlinePayload.c_str(),
@@ -222,10 +222,10 @@ bool MqttManager::reconnect() {
         return true;
     }
 
-    // Backoff esponenziale (5→10→20→30 s) + jitter per evitare polling sincrono.
+    // Exponential backoff (5->10->20->30 s) + jitter to avoid synchronous polling.
     backoffMs = (backoffMs == 0) ? 5000 : (backoffMs < 30000 ? backoffMs * 2 : 30000);
     backoffMs += (esp_random() % 1000);
-    ESP_LOGW(TAG, "MQTT connect failed rc=%d, retry tra ~%lu ms",
+    ESP_LOGW(TAG, "MQTT connect failed rc=%d, retry in ~%lu ms",
              _mqttClient.state(), (unsigned long)backoffMs);
     return false;
 }
@@ -240,27 +240,27 @@ void MqttManager::mqttCallback(char* topic, byte* payload, unsigned int length) 
         return;
     }
 
-    // Controlla che il payload non sia troppo grande per la nostra struct
+    // Check that the payload is not too large for our struct
     if (length >= sizeof(MqttCommand::payload)) {
         ESP_LOGE(TAG, "Incoming MQTT message payload too large (%d bytes)! Max: %d. Discarding.", length, sizeof(MqttCommand::payload) - 1);
         return;
     }
 
-    // Crea il comando da inviare alla coda
+    // Create the command to send to the queue
     MqttCommand cmd;
-    cmd.timestamp = millis(); // Usa millis() o un'altra fonte di tempo
+    cmd.timestamp = millis(); // Use millis() or another time source
 
-    // Copia il topic e il payload nel comando
+    // Copy the topic and payload into the command
     strncpy(cmd.topic, topic, sizeof(cmd.topic) - 1);
-    cmd.topic[sizeof(cmd.topic) - 1] = '\0'; // Assicura terminazione nulla
+    cmd.topic[sizeof(cmd.topic) - 1] = '\0'; // Ensure null termination
 
     memcpy(cmd.payload, payload, length);
-    cmd.payload[length] = '\0'; // Assicura terminazione nulla
+    cmd.payload[length] = '\0'; // Ensure null termination
 
     ESP_LOGD(TAG, "Payload: %s", cmd.payload);
 
-    // Invia il comando alla coda di MainLogic per il processamento
-    // Usa un timeout breve per non bloccare il callback MQTT a lungo
+    // Send the command to the MainLogic queue for processing
+    // Use a short timeout to not block the MQTT callback for long
     if (xQueueSend(_instance->_rxQueue, &cmd, pdMS_TO_TICKS(100)) != pdPASS) {
         ESP_LOGW(TAG, "Failed to queue incoming MQTT command. RX Queue may be full.");
     }

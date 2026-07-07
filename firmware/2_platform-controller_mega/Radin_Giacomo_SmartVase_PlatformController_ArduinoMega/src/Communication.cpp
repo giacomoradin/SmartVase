@@ -3,7 +3,7 @@
 
     @ingroup MegaComm
 
-    @brief  Implementazione di Communication: framing seriale, coda log ed esecuzione comandi.
+    @brief  Implementation of Communication: serial framing, log queue and command execution.
 
     @date   2026-04-29
 
@@ -172,7 +172,7 @@ void Communication::drainLogQueue(const char* deviceId) {
 }
 
 // =================================================================
-// RX: parser a stati per il framing
+// RX: state parser for framing
 // =================================================================
 void Communication::handleSerial(Movement& movement, Persistence& persistence,
                                  Sensors& sensors, Pump& pump, SystemStatus& sys) {
@@ -263,7 +263,7 @@ void Communication::executeCommand(const WrapperMessage& message,
 
     // Idempotency: a cmd_id that was already executed (probably an app retry)
     // is re-ACKed WITHOUT re-executing the effect (e.g. no double irrigation).
-    // cmd_id == 0 = "senza id": non deduplicato.
+    // cmd_id == 0 = "without id": not deduplicated.
     if (cmd_id != 0 && cmd_id == _lastExecutedCmdId) {
         sendCommandResponse(CommandResponse_Status_OK, "duplicate_ignored", 0, cmd_id, 0);
         return;
@@ -284,15 +284,15 @@ void Communication::executeCommand(const WrapperMessage& message,
                 sendCommandResponse(CommandResponse_Status_ERROR, "degraded_mode", 0, cmd_id, millis() - t0);
                 break;
             }
-            // Anti over-watering / flood: minimo WATER_MIN_INTERVAL_MS fra due
-            // irrigazioni accettate (in aggiunta al cap 60 s e al rifiuto se
-            // la pompa e' gia' attiva).
+            // Anti over-watering / flood: minimum WATER_MIN_INTERVAL_MS between two
+            // accepted irrigations (in addition to the 60 s cap and the refusal if
+            // the pump is already active).
             if (!waterAllowed(millis(), last_water_ms, WATER_MIN_INTERVAL_MS)) {
                 sendCommandResponse(CommandResponse_Status_ERROR, "water_rate_limited", 0, cmd_id, millis() - t0);
                 break;
             }
-            // Protezione tanica: niente irrigazione se US4 dice vuota o se
-            // la lettura non e' affidabile (fail-safe contro pompa a secco).
+            // Tank protection: no irrigation if US4 says empty or if
+            // the reading is unreliable (fail-safe against dry pump).
             if (sensors.tankLooksEmpty(cfg.tank_empty_cm)) {
                 float wl = sensors.getWaterLevel();
                 const char* why = isnan(wl) ? "tank_sensor_fault" : "tank_empty";
@@ -348,9 +348,9 @@ void Communication::executeCommand(const WrapperMessage& message,
             }
             cfg.avoid_reverse_ms = newRev;
             cfg.avoid_turn_ms    = newTurn;
-            // Salvataggio EEPROM DEFERITO: lo esegue il main loop quando la
-            // seriale e' a riposo, per non bloccare il loop ~60 ms (rischio
-            // overflow RX) durante la ricezione di un frame.
+            // DEFERRED EEPROM save: executed by the main loop when the
+            // serial is idle, so as not to block the loop for ~60 ms (risk of
+            // RX overflow) during the reception of a frame.
             sys.configSavePending = true;
             sendCommandResponse(CommandResponse_Status_OK, "motion_params_set", 0, cmd_id, millis() - t0);
             break;

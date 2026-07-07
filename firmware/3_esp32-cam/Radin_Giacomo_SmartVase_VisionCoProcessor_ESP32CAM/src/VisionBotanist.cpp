@@ -14,9 +14,11 @@ AnalysisResult doAnalysis(camera_fb_t* fb) {
 
     bool decoded = fmt2rgb888(fb->buf, fb->len, fb->format, rgb_buf);
     if (decoded) {
-        uint32_t cx = cfg.roi_center_x;
-        uint32_t cy = cfg.roi_center_y;
-        uint32_t r_sq = (uint32_t)cfg.roi_radius * (uint32_t)cfg.roi_radius;
+        float scale = (fb->width > 0) ? ((float)fb->width / 800.0f) : 1.0f;
+        uint32_t cx = (uint32_t)(cfg.roi_center_x * scale);
+        uint32_t cy = (uint32_t)(cfg.roi_center_y * scale);
+        uint32_t radius = (uint32_t)(cfg.roi_radius * scale);
+        uint32_t r_sq = radius * radius;
 
         for (uint32_t y = 0; y < fb->height; y++) {
             uint32_t dy = (y > cy) ? (y - cy) : (cy - y);
@@ -47,12 +49,12 @@ AnalysisResult doAnalysis(camera_fb_t* fb) {
                 float s = (cmax > 0.0001f) ? (delta / cmax) : 0.0f;
                 float v = cmax;
 
-                // Healthy green basil foliage (Hue ~35..95 deg, sufficient color & brightness)
-                if (h >= 35.0f && h <= 95.0f && s >= 0.20f && v >= 0.15f) {
+                // Healthy green basil foliage (Hue ~22..160 deg, sufficient color & brightness for shaded inner leaves)
+                if (h >= 22.0f && h <= 160.0f && s >= 0.12f && v >= 0.12f) {
                     res.green_pixels++;
                 }
-                // Yellow/brown/dry foliage (Hue ~10..35 deg)
-                else if (h >= 10.0f && h < 35.0f && s >= 0.25f && v >= 0.15f) {
+                // Yellow/brown/dry foliage (Hue ~8..22 deg for true necrotic/dry leaves)
+                else if (h >= 8.0f && h < 22.0f && s >= 0.25f && v >= 0.15f) {
                     res.brown_pixels++;
                 }
             }
@@ -67,7 +69,7 @@ AnalysisResult doAnalysis(camera_fb_t* fb) {
             if (res.foliage_coverage < 0.05f) {
                 res.plant_healthy = false;
                 res.status_message = "Warning: Very low foliage coverage (possible wilting or missing plant)!";
-            } else if (res.brown_pixels > res.green_pixels * 0.25f) {
+            } else if (res.brown_pixels > res.green_pixels * 0.30f && (float)res.brown_pixels / (res.green_pixels + res.brown_pixels) > 0.20f) {
                 res.plant_healthy = false;
                 res.status_message = "Warning: Detected dry, yellowing, or sick foliage!";
             } else {

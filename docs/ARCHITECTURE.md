@@ -24,17 +24,17 @@
   - Hub: **v1.3** — publishes telemetry, logs, alarms and **command/ack**;
     deadman switch active; TLS to HiveMQ with NTP kick; non-blocking MQTT
     reconnect; OTA (to be bench-validated); AP provisioning + captive portal.
-  - ESP32-CAM: **v2.1** — Wi-Fi STA + NTP + MQTT TLS + **streaming** HTTP
-    upload to a Cloud Function.
+  - ESP32-CAM: **v2.2** — Wi-Fi STA + NTP + MQTT TLS + **streaming** HTTP
+    upload to a Cloud Function, plus on-device C++ leaf-health analysis (`VisionBotanist.cpp`).
   - Protocol: **proto v4.1** — `TelemetryFast` with 5 nav distances
     + soil moisture + epoch_s; `CommandResponse` with a `value` field;
     `TelemetryDeep` extended with the autonomous-care daily KPIs
     (state, light-budget %, relocations, doses, UVA minutes — tags 22-27,
     published by the Hub as the `care` JSON object).
-- **Python vision**: today the repo contains `vision/pixel_analyzer.py`
-  (green/brown pixel analysis on RGB565 + one pytest); the full
-  quality-gate / leaf-health pipeline described in
-  `SmartVase_data_structure.md` is still to be built.
+- **Vision pipeline**: on-device leaf-health analysis (HSV metrics, quality gate,
+  foliage coverage, green/brown ratios) is implemented in C++ on the ESP32-CAM
+  (`VisionBotanist.cpp`). The Python scripts in `vision/` are used offline for
+  prototyping, testing, and calibrating the edge algorithm.
 - **Cloud Function stub** `upload-image` added in `infra/cloud-functions/`
   (Node 20 + Firebase Storage). To be refined with Fia.
 
@@ -71,8 +71,8 @@ Three microcontrollers plus a mobile app:
 |----------------------|-----------------|--------------|-------------------------------------------------------------------------|
 | Platform Controller  | Arduino Mega    | *The Brawn*  | Direct control of motors, pump, sensors, RTC. No networking.            |
 | Logic & Web Hub      | ESP32 standard  | *The Brain*  | Wi-Fi, MQTT/TLS to HiveMQ, coordination, JSON↔Protobuf bridge.          |
-| Vision Co-Processor  | ESP32-CAM       | *The Eye*    | JPEG capture, image upload, `vision/image` publish over MQTT.           |
-| Android App          | —               | —            | User UI (Kotlin, Compose, MVVM).                                        |
+| Vision Co-Processor  | ESP32-CAM       | *The Eye*    | JPEG capture, on-edge C++ leaf-health analysis, image upload, MQTT.     |
+| Android App          | —               | —            | User UI (under local development, tracked separately).                  |
 
 ### 3.1 Communication buses
 
@@ -84,12 +84,11 @@ Three microcontrollers plus a mobile app:
   `HiveMQ ⇄ Cloud Functions ⇄ Firestore ⇄ Android App / Vision`.
   Firestore is the authoritative store. The Cloud Functions bridge MQTT and
   Firestore documents (see [SmartVase_data_structure.md](SmartVase_data_structure.md)).
-- **CAM ↔ Cloud**: **autonomous**. The ESP32-CAM connects to Wi-Fi and
-  publishes directly to MQTT (or uploads to storage and then publishes
-  `vision/image`). The current `main.cpp` that prints to Serial is *bench code*,
-  it does not represent the target architecture.
-- **Python Vision ↔ Cloud**: consumes `vision/image`, writes `vision/result`
-  (both via Firestore).
+- **CAM ↔ Cloud**: **autonomous**. The ESP32-CAM connects to Wi-Fi, captures images,
+  performs on-edge C++ leaf-health analysis (`VisionBotanist.cpp`), uploads images to
+  storage, and publishes results directly to MQTT.
+- **Python Vision**: used offline in `vision/` for prototyping and calibrating
+  the C++ edge algorithm.
 
 ---
 
@@ -132,7 +131,7 @@ pull-up on the shield → driver enabled at rest).
 | M2EN/DIAG      | not wired | optional, not connected as of 2026-06-30 |
 
 > Pin mapping **confirmed 2026-06-30** via multimeter continuity test (see
-> `docs/Scheda_Verifica_Hardware.md` §1.1/T7), superseding an earlier
+> `docs/Hardware_Verification_Sheet.md` §1.1/T7), superseding an earlier
 > best-guess mapping that paired PWM/INA/INB from different shield channels —
 > the actual root cause of the 0 V outputs seen on the bench.
 >
@@ -457,16 +456,13 @@ rolling-avg capture time).
 (`smartvase/{id}/vision/image`) with `image_url` pointing to cloud storage.
 To be designed and implemented from scratch.
 
-### 7.4 Python Vision — `vision/`
+### 7.4 Vision Pipeline — C++ Edge & Python Prototyping
 
-- **`quality_gate.py`** — input `np.ndarray BGR` → output
-  `("ok"|"too_dark"|"too_bright"|"blurry", metrics)`.
-  Current thresholds (to be calibrated on real images):
-  `too_dark_mean_gray=40`, `too_bright_mean_gray=220`,
-  `blurry_laplacian_var=60`.
-- **`tests/test_quality_gate.py`** — covers the 3 base cases.
-- Missing: `leaf_health` pipeline, Firestore/MQTT integration,
-  packaging (no `setup.py`/`pyproject.toml`).
+- **On-Edge C++ Analysis (`firmware/3_esp32-cam/.../src/VisionBotanist.cpp`)** — executes
+  leaf-health analysis directly on the ESP32-CAM (RGB to HSV decoding, circular ROI
+  filtering, green/brown ratio calculation, and foliage quality assessment).
+- **Python Prototyping (`vision/`)** — contains `pixel_analyzer.py` and `tests/test_analyzer.py`,
+  used offline for testing, prototyping, and calibrating the C++ edge algorithm.
 
 ---
 
@@ -521,9 +517,9 @@ The `.bat` files invoke `pio run -d <project>`.
 | Component                | Main owner                                         |
 |--------------------------|----------------------------------------------------|
 | Architecture, Hub & CAM  | Giacomo (PM & Lead Firmware)                       |
-| Vision pipeline          | Antonio                                            |
+| Vision pipeline          | Antonio (Edge C++ algorithm & Python calibration)  |
 | Cloud / MQTT / Firestore | Fia                                                |
-| Android App              | Francesco                                          |
+| Android App              | Francesco (under local development)                |
 
 ---
 
@@ -566,11 +562,9 @@ prototype. The following remain, ordered by priority:
 
 ### C. Vision pipeline
 
-8. **Rule-based pipeline v0.2** in `vision/vision/{metrics,leaf_health,pipeline}.py`
-   with 18 pytest tests. HSV thresholds calibrated on generic leaves, to be
-   re-tuned with real images of the prototype. Once we have a labeled dataset,
-   replace the rule-based classifier with a real model (keeping the
-   `classify_leaf_health` interface).
+8. **On-Edge C++ Vision Algorithm** in `firmware/3_esp32-cam/.../src/VisionBotanist.cpp`.
+   HSV thresholds and circular ROI analysis implemented on the ESP32-CAM. Python scripts
+   in `vision/` are maintained for offline testing and calibration of these parameters.
 9. **`upload-image` Cloud Function** in `infra/cloud-functions/upload-image/`
    (Node 20 + busboy + Firebase Storage). Functional stub to be refined with
    Fia: auth, App Check, rate limiting, CA cert pinning on the CAM side.
@@ -581,9 +575,9 @@ prototype. The following remain, ordered by priority:
     new schema `distances_cm{top,front_right,front_left,left,right}` +
     `soil_moisture` + separate `water_level_cm`.
     Add a subscription to the new `command/ack` topic.
-11. **Second Cloud Function** (out of scope of `upload-image`): reads
-    `vision/image` from HiveMQ, downloads the JPEG via `image_url`, invokes the
-    Python pipeline `vision.analyze_image`, publishes `vision/result`.
+11. **Cloud Vision Processing**: with leaf-health analysis now running on-edge via
+    `VisionBotanist.cpp` on the ESP32-CAM, cloud-side image evaluation is optional
+    and superseded by edge results published directly to MQTT.
 
 ### E. Cleanup / housekeeping
 
