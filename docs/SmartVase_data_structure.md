@@ -17,18 +17,18 @@ The system employs a hybrid communication model to optimize for hardware capabil
 **MQTT Topic:** `smartvase/{hub_id}/telemetry`
 **Firestore Path:** `smartvase/{hub_id}/telemetry/telemetry` *(Document ID: telemetry)*
 
-**JSON Payload Example** (Hub v1.3 / proto v4.1; ambient fields such as
+**JSON Payload Example** (Hub v1.4.0 / proto v4.2; ambient fields such as
 `temperature_c`, `humidity_percent`, `pressure_hpa` and `battery_voltage` are
 included only when the corresponding sensor is fitted and returns a valid
-reading; `time_valid` is false while the Mega runs on its software fallback
-clock — RTC absent or never set — meaning `timestamp_utc` restarts from
+reading; `time_valid` is false while the Mega runs on an unsynchronized software fallback
+clock (RTC absent and no NTP sync received yet), meaning `timestamp_utc` defaults to
 1970-01-01 08:00 and must not be used to date historical data):
 {
   "timestamp_utc": 1678886400,
   "time_valid": true,
   "uptime_s": 12345,
   "device_id": "HUB_123456",
-  "fw_version": "1.3.0",
+  "fw_version": "1.4.0",
   "movement_state": "IDLE",
   "lux": 540,
   "soil_moisture": 550,
@@ -59,12 +59,19 @@ clock — RTC absent or never set — meaning `timestamp_utc` restarts from
   }
 }
 
-The `care` object (proto v4.1, Mega v5.3+) carries the daily KPIs of the
+The `care` object (proto v4.2, Mega v5.4.0+) carries the daily KPIs of the
 autonomous care layer: `state` is one of `NIGHT | SEEK_SUN | BASK |
 SEEK_SHADE | SHELTER | TOP_UP`, `light_budget_pct` is the percentage of the
 plant profile's daily light target achieved so far (may exceed 100), and the
 remaining fields are today's actuation counters. `enabled: false` means the
 care layer is off and the values are static zeros.
+
+### 1.1 LWT Status and Command Acknowledgment
+
+**Purpose:** Connection status (Last Will and Testament) and command execution feedback.
+**Direction:** ESP32 Hub -> MQTT Broker -> Oracle Server -> Firestore -> Flutter App
+- **Status Topic:** `smartvase/{hub_id}/status` (retained `online` or `offline`)
+- **Ack Topic:** `smartvase/{hub_id}/command/ack` (returns `status`, `value`, `cmd_id`, and `exec_time_ms`)
 
 ## 2. Log Events
 
@@ -81,7 +88,7 @@ care layer is off and the values are static zeros.
   "detail": "Water level below 5cm"
 }
 
-### 2.1 Autonomous-care events (Mega v5.3)
+### 2.1 Autonomous-care events (Mega v5.4.0)
 
 With the autonomous care layer enabled (`care on`, see
 `docs/Plant_Care_Design.md`), the Mega emits the following events through the

@@ -1,7 +1,7 @@
-# Cloud Function — upload-image
+# Cloud Function: upload-image
 
-> ⚠️ Stub: this is a draft to be refined with **Fia** (Cloud Architect).
-> Consistent with the 2026-05-19 decision (HiveMQ + Cloud Functions + Firestore).
+> Note: This is an optional legacy draft stub for HTTP image ingestion.
+> In the active production architecture (CAM v2.2.0), the ESP32-CAM executes leaf-health analysis on-device in C++ (`VisionBotanist.cpp`) and communicates directly with Firebase Storage and Firestore via C++ SDKs (`CloudService.cpp`), bypassing this Cloud Function and MQTT entirely.
 
 ## Purpose
 
@@ -11,10 +11,7 @@ HTTP endpoint that receives a `multipart/form-data` upload from the ESP32-CAM an
 2. Uploads the blob to **Firebase Storage** under `smartvase/{device_id}/images/{ts}.jpg`.
 3. Returns JSON `{ "image_url": "<signed_url>", "ok": true }`.
 
-The CAM then autonomously publishes to MQTT `smartvase/{device_id}/vision/image`
-with the `image_url`. A **second** Cloud Function (out of scope here) reads
-that topic from HiveMQ, downloads the image, invokes the Python pipeline in
-`vision/` and publishes the result to `smartvase/{device_id}/vision/result`.
+The CAM can optionally use this endpoint to store blobs. In the primary production workflow, however, the ESP32-CAM uploads directly to Google Firebase Storage and Firestore without relying on MQTT publishing or secondary Python cloud pipelines.
 
 ## API contract
 
@@ -58,7 +55,7 @@ gcloud functions deploy upload-image \
 The resulting URL must be saved in the CAM's NVS under the `upload_url` key
 (see the comment in its `main.cpp`).
 
-## Security (Fia TODO)
+## Security Considerations and TODO
 
 - Auth via App Check / Identity Token instead of `--allow-unauthenticated`.
 - Pin the CA cert in the CAM (currently `client.setInsecure()`).

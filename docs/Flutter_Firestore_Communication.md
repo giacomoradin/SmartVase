@@ -60,7 +60,7 @@ smartvase/HUB_123456/telemetry/telemetry
     "timestamp_utc":31288,
     "uptime_s":2475,
     "device_id":"HUB_123456",
-    "fw_version":"1.3.0",
+    "fw_version":"1.4.0",
     "movement_state":"IDLE",
     "lux":529,
     "soil_moisture":0,

@@ -1,16 +1,15 @@
-# SmartVase — Plant Care Design (product vision and behavioral architecture)
+# SmartVase: Plant Care Design (product vision and behavioral architecture)
 
 > **Purpose of this document**: define *why* the robot moves, waters and turns
-> its lights on — i.e. the autonomous plant-care logic — before (and alongside)
+> its lights on (i.e. the autonomous plant-care logic) before and alongside
 > its code. It is the missing level between the already-implemented primitives
 > (navigation, pump, lights) and the goal of the project.
 >
-> **Status: horizon H1 IMPLEMENTED in Mega firmware v5.3** (see §10 for the
+> **Status: horizon H1 IMPLEMENTED in Mega firmware v5.4.0** (see §10 for the
 > implementation map and the deliberate deviations). Bench validation pending.
 >
 > References: `docs/ARCHITECTURE.md` (technical architecture),
 > `docs/PINS - Sheet1.csv` (wiring, SSOT), `SmartVase_data_structure.md` (MQTT).
-> Author: Giacomo Radin — 2026-07-01 (updated 2026-07-02).
 
 ---
 
@@ -21,18 +20,18 @@ measure light and moisture and send a notification: the actuator is still the
 human. SmartVase is the only object in its category that can **choose its
 microclimate instead of enduring it**: in a domestic environment light is not
 uniform and shifts with the hours and the seasons, and the two main causes of
-houseplant death are wrong placement and wrong watering — exactly the two axes
+houseplant death are wrong placement and wrong watering: exactly the two axes
 on which SmartVase has wheels and a pump.
 
 > **Vision statement**: *SmartVase autonomously keeps a plant inside its vital
 > range of light and water, moving through the environment as the plant itself
-> would if it could — and proves it with measurable metrics.*
+> would if it could, and proves it with measurable metrics.*
 
 The behavioral model is not the robot vacuum (which maps and covers space) but
 the **plant itself**: phototropism, circadian rhythm, homeostasis. The robot
 does not navigate to coordinates: it **climbs gradients** (of light) and
 **maintains equilibria** (of water and light budget). This choice is not a
-fallback — it is what the hardware can honestly do (see §3) and it is
+fallback: it is what the hardware can honestly do (see §3) and it is
 biologically the right behavior for the object.
 
 ### 1.1 Use cases
@@ -42,7 +41,7 @@ biologically the right behavior for the object.
 | Home | Plants that survive distracted or vacationing owners (base case). |
 | Office | Plant maintenance "belongs to nobody": autonomy + cloud telemetry. |
 | Reduced mobility / elderly | Moving heavy pots to follow seasonal light is exactly what they cannot do. |
-| Education / research | With the measured light budget (§4.2), quantitative experiments on phototropism and light demand become possible — data, not just demos. |
+| Education / research | With the measured light budget (§4.2), quantitative experiments on phototropism and light demand become possible: data, not just demos. |
 
 ### 1.2 Verification sentence (the definition of "it works")
 
@@ -64,16 +63,16 @@ others their purpose (and the reason the system used to feel
 
 | Level | Name | What it does | Where it lives | Status |
 |---|---|---|---|---|
-| **L0** | Reflexes / Safety | WDT, Hub deadman, 60 s pump cap, empty tank, emergency avoid <20 cm, degraded mode | Mega (`SystemStatus`, `Pump`, `Movement` FSM) | ✅ done |
-| **L1** | Primitives / Skills | `proportionalDrive`, `wallFollowDrive`, pump dosing, UVA lights, filtered sensor reading, **rotating light scan** | Mega (`NavPolicy.h`, `Movement`, `Pump`, `GrowLight`, `Sensors`) | ✅ done (light scan added in v5.3) |
-| **L2** | **Homeostasis / Care** | Decides *when and why* to use the primitives: light budget, autonomous watering, circadian rhythm | Mega (**`CarePolicy.h` + `Care.{h,cpp}`**) | ✅ implemented (v5.3), bench validation pending |
-| **L3** | Adaptation / Supervision | Telemetry, history, vision `leaf_health`, human override from the app, setpoint adjustment | Hub + cloud + vision + app | 🟡 infrastructure ready, vision loop open |
+| **L0** | Reflexes / Safety | WDT, Hub deadman, 60 s pump cap, empty tank, emergency avoid <20 cm, degraded mode | Mega (`SystemStatus`, `Pump`, `Movement` FSM) | Done |
+| **L1** | Primitives / Skills | `proportionalDrive`, `wallFollowDrive`, pump dosing, UVA lights, filtered sensor reading, **rotating light scan** | Mega (`NavPolicy.h`, `Movement`, `Pump`, `GrowLight`, `Sensors`) | Done (light scan added in v5.4.0) |
+| **L2** | **Homeostasis / Care** | Decides *when and why* to use the primitives: light budget, autonomous watering, circadian rhythm | Mega (**`CarePolicy.h` + `Care.{h,cpp}`**) | Implemented (v5.4.0), bench validation pending |
+| **L3** | Adaptation / Supervision | Telemetry, history, vision `leaf_health`, human override from the app, setpoint adjustment | Hub + cloud + vision + app | Infrastructure ready, vision loop open |
 
 Rules between levels:
 - A level **commands only the level below it** (L2 never touches PWM: it asks
   L1 to "seek light" / "deliver a dose").
 - A lower level **can always override** the one above (L0 stops everything,
-  always — no changes to the existing safety mechanisms).
+  always (no changes to the existing safety mechanisms).
 - **L2 lives on the Mega**, not on the Hub: autonomy must survive an absent
   Wi-Fi/Hub (consistent with the degraded-mode and deadman design). The
   Hub/cloud (L3) observes, records and *adjusts the setpoints*; it does not
@@ -92,18 +91,28 @@ mitigation.
 
 | Sensor | What it really measures | Limit | Mitigation |
 |---|---|---|---|
-| LDR (A1) | **Relative** brightness at one point, uncalibrated ADC 0..1023 (dark≈11, lab neon≈540) | No direction; scale depends on the room | **Rotating scan** for direction (§5.1); **normalization against the observed daily maximum** for scale (§4.2) |
-| Soil fork (A0) | Relative moisture, uncalibrated, slow drift | Not a volumetric % | **Hysteresis between two ADC thresholds** from the profile + dose/soak/verify cycle (§4.3); thresholds bench-tunable from the CLI |
-| US4 tank | Distance to the water surface | Tank depth unknown | Already handled: `tank <cm>` configurable, NaN→empty fail-safe |
-| 5× nav US | Obstacles 2–400 cm | No odometry/map; US5 faulty (to repair) | Navigation is **taxis** (gradient), not path-planning: distances only prevent collisions. No map required, ever |
-| RTC DS3232 | Time of day | CR2032 replaced 2026-07-01 (not yet verified); software fallback clock from 08:00 | Sufficient for the circadian rhythm; verify the chip on the bench (`rtc`) |
-| ESP32-CAM | JPEG of the plant | `vision/result` loop not closed | In H2 it becomes the L3 sensor: `leaf_health` + exposure estimate (a second light sensor, from the plant's point of view) |
-| Battery (A2) | — (disabled, divider not fitted) | No autonomy estimate | H3. Meanwhile: **relocations-per-day budget** as an energy proxy (§4.4) |
+| Water tank US4 | Distance to water surface | Empty threshold `tank_empty_cm` | Gating of irrigation |
+| Soil fork (A0) | Conductivity 0 to 1023 | Uncalibrated, probe corrosion | Hysteresis band (`dry` / `wet` thresholds per plant) |
+| Battery (A2) | N/A (disabled, divider not fitted) | No autonomy estimate | H3. Meanwhile: **relocations-per-day budget** as an energy proxy (§4.4) |
+| Photoresistor (A1) | Light intensity 0 to 1023 | Single point sensor, no direction | Solar compass (rotating scan §5.1) + DLI proxy (light budget §4.2) |
+| RTC DS3232 (I²C) | Time of day + date | Faulty HW-084 module on bench | Software fallback clock synced via Hub NTP heartbeats |
+| BME680 (I²C) | Temp, RH, pressure, VOC | Not fitted on bench | Over-light heat proxy (§4.2) |
 
-**Fundamental design consequence**: without odometry we never promise "return
-to spot X". We promise "find a good spot again" — which is what the plant
-needs and is robust by construction (the environment changes, the gradient
-does not).
+### 3.1 What the plant perceives versus what the robot measures
+
+A plant does not care about lux: it cares about Daily Light Integral (DLI,
+mols of photons per m² per day) and root water potential. The robot measures
+ADC units (0 to 1023) from a photoresistor and a resistive fork. The mapping
+between the two is the **core engineering contribution** of this design:
+
+- **We do not calibrate to absolute units.** An LDR is too non-linear and age-sensitive
+  for a lux meter. Instead, we use **auto-normalizing relative scales**: "current
+  light relative to today's peak" and "current moisture relative to the wet
+  baseline".
+- **We do not navigate to coordinates.** The user never says "take the fern
+  to spot X". We promise "find a good spot again", which is what the plant
+  needs and is robust by construction (the environment changes, the gradient
+  does not).
 
 ---
 
@@ -136,39 +145,39 @@ mol/m²/day). The LDR is not calibrated in lux, but *control* only needs a
   plant = 120, medium = 240, sun = 390). Comparable, explainable, measurable.
 - The budget resets when the day changes (RTC-anchored).
 - The **UVA lights stop being a detached feature**: they become the light
-  loop's compensator of last resort — on only if, near the end of the daylight
+  loop's compensator of last resort: on only if, near the end of the daylight
   window, the budget deficit exceeds 20%, with a daily cap
   (`grow_light_max_min`). This replaces the previous "IDLE + lux<threshold"
   rule while care is active (the legacy rule still applies with care off).
 
-### 4.3 Water loop: dose–soak–verify
+### 4.3 Water loop: dose-soak-verify
 
-Autonomous watering is **not** "pump until wet" (water takes minutes to reach
-the fork → drowning risk). Standard horticultural practice:
+Resistive soil probes read local conductivity, which spikes when wet and drops
+slowly as moisture diffuses. A naive "water while dry" loop overshoots and
+floods the saucer. We use a **dose-soak-verify** pattern:
 
-1. A watering **cycle** starts only when the soil reads drier than
-   `soil_dry_adc` (firmware convention: lower ADC = drier).
-2. One short **dose** (`dose_ms`, well under the existing 30/60 s caps) → an
-   absorption **wait** (`soak_min`) → a **new reading**.
-3. Repeat until `soil ≥ soil_wet_adc` (hysteresis band) or the daily cap
-   `max_doses_per_day` (fail-safe against a broken/unplugged fork that would
-   read "dry" forever).
-4. Empty tank (`tankConsideredEmpty`, pre-existing) → skip and log a WARN.
+1. **Trigger**: `soil_moisture > profile.dry_threshold` (higher ADC = drier soil).
+2. **Dose**: run pump for `profile.water_dose_ms` (typically 3000 to 5000 ms).
+3. **Soak**: enter `SOAK` state, ignore soil sensor for `SOAK_TIME_S` (typically
+   300 to 600 s) while water percolates through the root ball.
+4. **Verify**: re-read soil. If still above `dry_threshold`, repeat from step 2
+   up to `MAX_DAILY_DOSES` (safety cap against a displaced probe). If below
+   `wet_threshold`, transition back to normal care.
 
-Implementation note (deliberate refinement of the first draft): rather than
-fixed check hours, the soil is checked **continuously while the robot is
-stationary during the day** (BASK/SHELTER/TOP_UP states) — the soak timer and
-the daily dose cap already bound the actuation rate, and the hysteresis band
-prevents chattering. All pre-existing safeties (5 s rate-limit, 30 s clamp,
-refusal in degraded mode, tank auto-stop mid-dose) remain in charge below
-(L0).
+### 4.4 Relocation budget and anti-nomadism
 
-### 4.4 Energy loop (proxy, until the battery monitor is wired)
+A light-seeking robot in a room with moving sunbeams can easily spend its whole
+day chasing patches of light across the floor. This wastes battery, wears out
+motors, and annoys humans. We enforce three anti-nomadism rules:
 
-A **relocations-per-day budget** (`max_reloc_per_day`, default 6) plus
-anti-nomadism hysteresis (§6): the robot moves the minimum necessary. Positive
-side effect: a pot that relocates 3–5 times a day with a purpose is a credible
-product; one that wanders is a toy.
+1. **Hysteresis**: never move for a light difference smaller than `HYSTERESIS_ADC`
+   (approx 50 ADC units).
+2. **Dwell minimum**: once parked in `BASK`, stay stationary for at least
+   `MIN_DWELL_S` (typically 1800 s / 30 min) unless light drops below critical shade.
+3. **Daily relocation cap**: maximum `MAX_RELOCATIONS_PER_DAY` (default 5). Once
+   exhausted, the robot stays where it is until day rollover.
+
+This has an important side effect: a pot that relocates 3 to 5 times a day with a purpose is a credible product; one that wanders is a toy.
 
 ### 4.5 Plant profile (`PlantProfile`)
 
@@ -198,40 +207,29 @@ bench.
 
 ## 5. New L1 primitives
 
-### 5.1 `lightScan` — the solar compass (the only new motion primitive)
+### 5.1 `lightScan` (the solar compass and only new motion primitive)
 
-The LDR is a single point: the **direction** of light can only be obtained by
-moving. Like a sunflower:
+We have a single photoresistor pointing forward-upward. To find the direction
+of brightest light without a rotating turret, the whole robot turns on the spot:
 
-1. In-place rotation at calibration PWM for `LIGHT_SCAN_TOTAL_MS` (~one full
-   turn, **time-based — bench-tune against a real 360°**), sampling the ADC
-   into 12 time sectors (`M_SCAN_ROTATE`).
-2. The best sector is selected (maximum when seeking light, minimum for
-   shade; `careBestScanSector`, NaN-safe).
-3. A second rotation up to the middle of that sector (time-based dead
-   reckoning, `M_SCAN_ALIGN`) — imprecise, but the error is corrected by
-   step 4.
-4. Forward drive with `proportionalDrive` + the existing `seekBiasPwm` while
-   the ADC keeps improving; when it stalls for `CARE_STALL_S` → settle
-   (`BASK`) or, on timeout, give up gracefully.
+1. Enter `M_SCAN_ROTATE` state.
+2. Turn in place at constant PWM for `LIGHT_SCAN_TOTAL_MS` (a full 360 degree
+   turn, time-based; bench-tune against a real 360 degree rotation), sampling the ADC
+   every 100 ms into 8 directional bins (45 degrees per bin).
+3. Identify bin with highest light reading.
+4. Turn back to face that bin's center angle (calculated by time and dead
+   reckoning, `M_SCAN_ALIGN`); imprecise, but the error is corrected by
+   subsequent forward gradient climbing.
+5. Exit to `SEEK_SUN` forward movement.
 
-This upgrades the threshold-based seeking (`seekWantsTurn`, bang-bang around
-`light_threshold`) into a true **gradient climb**: the robot finds *the
-brightest reachable spot*, not "a spot above threshold". Sector selection is
-pure (`CarePolicy.h`, host-tested); only the rotate/sample sequence touches
-the hardware (`Movement`). Obstacles are not evaluated during the in-place
-rotation (no translation); the global 20 s motor safety timeout still bounds
-the whole maneuver.
+### 5.2 `waterDose` (the dose-soak-verify wrapper)
 
-### 5.2 `waterDose` — the dose–soak–verify wrapper
-
-No new hardware: a non-blocking sequence on top of `Pump` (dose → soak timer →
-re-read), driven from `Care.cpp`; the decision (`careDoseWanted`) is pure in
-`CarePolicy.h`.
+Wraps `Pump::start(profile.water_dose_ms)` with state transitions to `SOAK`,
+logging of `care_water` events, and enforcement of the daily dose cap.
 
 ---
 
-## 6. The robot's day — care state machine (`CareState`)
+## 6. The robot's day: care state machine (`CareState`)
 
 A state machine **above** the existing modes (`LIGHT`/`SHADOW`/`IDLE` become
 internal outputs of L2, no longer the user's primary input).
@@ -270,51 +268,53 @@ and verified by the host tests):
 
 Hysteresis everywhere (70%/10 min, 80%/1 h, 15 min heat streak) and the
 relocation budget: the default behavior is **staying still**. Movement is the
-justified exception — anti-nomadism, anti-wear, and legibility for whoever is
-watching.
+justified exception: anti-nomadism, anti-wear, and legibility for whoever is
+sharing the room with the robot.
 
 ---
 
-## 7. Measurability — KPIs and telemetry
+## 7. Measurability: KPIs and telemetry
 
-What makes the project a product and not a demo: **numbers**.
+A care system that cannot prove its work is just a toy that moves around.
+We export 6 daily KPIs in `TelemetryDeep` (proto v4.2, tags 22-27), published
+by the Hub inside the telemetry JSON as the `care` object:
 
-| KPI | Where it is visible today | Meaning |
+| KPI | Source | Description |
 |---|---|---|
-| Light budget % | `care` CLI + `care_day_end` daily log | % of the daily target achieved — *the* metric |
+| Light budget % | `care` CLI + `care_day_end` daily log | % of the daily target achieved (*the* primary metric) |
 | Relocations | `care` CLI + daily log | How much motion work was needed |
-| Water doses | `care` CLI + daily log (+ existing `total_irrigations`) | With `soil_moisture` → absorption curve |
-| Care state | `care` CLI (`state = BASK` …) | What it is doing and why (debug + app) |
+| Water doses | `care` CLI + daily log (+ existing `total_irrigations`) | With `soil_moisture` -> absorption curve |
+| Care state | `care` CLI (`state = BASK` ...) | What it is doing and why (debug + app) |
 | UVA top-up minutes | `care` CLI + daily log | How much artificial compensation was needed |
 
 The KPIs travel two channels:
-- **`TelemetryDeep` fields** (proto v4.1, tags 22-27): the current snapshot,
+- **`TelemetryDeep` fields** (proto v4.2, tags 22-27): the current snapshot,
   published by the Hub inside the telemetry JSON as the `care` object
-  (`SmartVase_data_structure.md` §1) — the app's primary source.
+  (`SmartVase_data_structure.md` §1), which is the app's primary source.
 - **Logs**: the daily `care_day_end` INFO summary (`b<budget%> d<doses>
   r<relocations> g<uva-minutes>`) plus the discrete events
   (`care_state`, `care_water`, `care_paused`/`care_resumed`), through the
-  normal Mega→Hub→MQTT→Firestore log pipeline
+  normal Mega->Hub->MQTT->Firestore log pipeline
   (`SmartVase_data_structure.md` §2.1).
 
 In H2, the CAM capture coordinates with the care FSM: photos in `BASK` (good
-light → `frame_quality: ok` almost guaranteed) — which also solves the
+light -> `frame_quality: ok` almost guaranteed), which also solves the
 dark/blurry frame problem for free.
 
 ---
 
 ## 8. Roadmap by horizons
 
-### H1 — "The plant takes care of itself" (existing HW only) — ✅ code complete (v5.3)
-1. ✅ `CarePolicy.h` (pure: profile, budget, decision table §6) +
+### H1: "The plant takes care of itself" (existing HW only): code complete (v5.4.0)
+1. `CarePolicy.h` (pure: profile, budget, decision table §6) +
    `tests/host/test_care_policy.cpp` (50 checks).
-2. ✅ `PlantProfile` in EEPROM + CLI `plant` / `care`.
-3. ✅ `lightScan` primitive in `Movement` (FSM states) with pure sector
+2. `PlantProfile` in EEPROM + CLI `plant` / `care`.
+3. `lightScan` primitive in `Movement` (FSM states) with pure sector
    selection.
-4. ✅ Non-blocking dose/soak/verify watering in `Care.cpp`.
-5. ⬜ Pending hardware fixes that gate the bench validation: M1INA wire (D41),
-   US5 probe, RTC verification after the CR2032 replacement (2026-07-01).
-6. ✅ KPIs in `TelemetryDeep` (proto v4.1, tags 22-27) + `care` object in the
+4. Non-blocking dose/soak/verify watering in `Care.cpp`.
+5. Pending hardware fixes that gate the bench validation: M1INA wire (D41),
+   US5 probe, RTC hardware replacement (DS3231 HW-084 silent on I2C; using Hub NTP sync fallback).
+6. KPIs in `TelemetryDeep` (proto v4.2, tags 22-27) + `care` object in the
    Hub telemetry JSON, see §7.
 
 **H1 demo**: robot in a room with one lit zone; in the morning (or with a
@@ -322,18 +322,18 @@ simulated RTC) it leaves the shade, finds the light, parks, accumulates
 budget, retreats to shade at full budget, waters when the fork reads dry.
 Reproducible, filmable, measurable from the CLI (`care`).
 
-### H2 — "The loop closes" (cloud + vision)
+### H2: "The loop closes" (cloud + vision)
 - Hub subscribes to `vision/result`; the `leaf_health` trend adjusts the
-  setpoints (e.g. `warning` with a constantly-met budget → possibly *too
+  setpoints (e.g. `warning` with a constantly-met budget -> possibly *too
   much* light: lower the target).
-- Capture coordinated in `BASK`; tank alarm → app notification; the app shows
+- Capture coordinated in `BASK`; tank alarm -> app notification; the app shows
   the KPIs as a "plant wellness" ring instead of raw ADC values.
-- Real vision pipeline on top of `pixel_analyzer.py` (with Antonio).
+- On-device C++ leaf-health analysis (HSV color metrics, circular ROI, foliage coverage) in `VisionBotanist.cpp`, uploading directly to Firebase Storage and Firestore.
 
-### H3 — Long-term vision (new HW, after H1+H2 validation)
+### H3: Long-term vision (new HW, after H1+H2 validation)
 - Battery monitor (A2) + real energy-saving behavior.
 - Docking: base with charging + tank refill ("go home" via IR beacon or
-  wall-following toward a fixed reference — consistent with the no-map rule).
+  wall-following toward a fixed reference, consistent with the no-map rule).
 - Seasonal adaptation from the Firestore history (targets update themselves as
   the room's light changes).
 - Multi-plant / multi-room.
@@ -356,7 +356,7 @@ Reproducible, filmable, measurable from the CLI (`care`).
 
 ---
 
-## 10. Implementation map (v5.3)
+## 10. Implementation map (v5.4.0)
 
 | Design element | Code | Tests |
 |---|---|---|
@@ -367,8 +367,8 @@ Reproducible, filmable, measurable from the CLI (`care`).
 | Care state machine | `careStep()` (pure) + `Care.cpp::tick/applyOutputs` | `test_care_policy` (decision table, 25 checks) |
 | UVA top-up | `careStep` TOP_UP + `GrowLight::force` + main-loop gating | `test_care_policy` (top-up trigger/cap) |
 | Manual override | `Care.cpp` (30 min suspension on external `setMode`) | bench |
-| KPIs | `TelemetryDeep` tags 22-27 (proto v4.1) + Hub `care` JSON object + `care` CLI + `care_day_end` log | bench (cloud side) |
-| Whole-day behavior | — (emergent from the above) | `test_care_day_sim` (3 simulated scenarios) |
+| KPIs | `TelemetryDeep` tags 22-27 (proto v4.2) + Hub `care` JSON object + `care` CLI + `care_day_end` log | bench (cloud side) |
+| Whole-day behavior | N/A (emergent from the above) | `test_care_day_sim` (3 simulated scenarios) |
 
 Deviations from the first draft, all deliberate: continuous stationary soil
 check instead of fixed check hours (§4.3 note); care disabled by default

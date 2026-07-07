@@ -51,7 +51,7 @@ SmartVase is a **mobile, autonomous IoT planter and greenhouse**:
   enforcing tank-protection and maximum duration limits.
 - It periodically captures images of the plant with the ESP32-CAM and evaluates
   frame quality and leaf health via the onboard C++ vision algorithm.
-- It is controlled by an **Android app** (MVVM + Compose, developed by Francesco).
+- It is controlled by an **Android app** (MVVM + Compose).
 - It reports telemetry and logs to HiveMQ Cloud, with Firestore acting as the primary database.
 
 Project engineering principles:

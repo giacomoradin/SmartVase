@@ -1,4 +1,4 @@
-# SmartVase — Firmware status (Mega + ESP32 Hub + ESP32-CAM)
+# SmartVase: Firmware status (Mega + ESP32 Hub + ESP32-CAM)
 
 > **Scope of this document.** Operational summary of the state of the
 > **three firmware** targets of the project (Arduino Mega, ESP32 Hub,
@@ -12,7 +12,7 @@
 
 ---
 
-## 0-quater. 2026-07-06 update — Hub→Mega time sync (Mega v5.4, Hub v1.4, proto v4.2)
+## 0-quater. 2026-07-06 update: Hub->Mega time sync (Mega v5.4.0, Hub v1.4.0, proto v4.2)
 
 Bench diagnosis closed the RTC saga: the I²C bus is **healthy** (the newly
 wired **BME680 answers at 0x76**, `i2cscan`), but the HW-084 RTC module is
@@ -38,17 +38,17 @@ care layer on a hardware replacement, the Mega's time now comes from the Hub:
   (age of the last accepted sync).
 - **BME680 enabled** (`BME680_ENABLED 1`): sensor wired and detected; cost
   measured at ~+8.9 KB flash / ~+250 B RAM (the Adafruit driver).
-- Builds: Mega ✅ RAM **70.4%** / Flash 29.5% (headroom check: ~2.4 KB static
-  free vs the 800 B degraded threshold — acceptable, now the tightest point
-  of the system); Hub ✅. Host suite 8/8 green (new `hubEpochPlausible`
+- Builds: Mega RAM **70.4%** / Flash 29.5% (headroom check: ~2.4 KB static
+  free vs the 800 B degraded threshold, acceptable, now the tightest point
+  of the system); Hub SUCCESS. Host suite 8/8 green (new `hubEpochPlausible`
   checks in `test_command_policy`).
 - Consequence for the care layer: with the Hub connected, `time_valid` is
-  automatic (no more `rtc set` at every boot) → the daily care cycle can run
+  automatic (no more `rtc set` at every boot) -> the daily care cycle can run
   unattended. Standalone bench sessions still use `rtc set`.
 
 ---
 
-## 0-ter. 2026-07-02 update — autonomous plant care (Mega v5.3)
+## 0-ter. 2026-07-02 update: autonomous plant care (Mega v5.4.0)
 
 The Mega gains the behavioral layer the project was missing: instead of only
 *executing* modes commanded from the app, it can now *decide* them from the
@@ -83,9 +83,9 @@ including the new `test_care_policy`).
   of the daylight window, daily cap), replacing the legacy "IDLE + dark" rule
   (which still applies with care off).
 - **`DeviceConfig`** extended with the care fields (enable flag + profile);
-  EEPROM layout still fits the 64 B slot (34 B used). ⚠️ The struct change
+  EEPROM layout still fits the 64 B slot (34 B used). Note: The struct change
   invalidates both stored slots via CRC on the first boot of v5.3: config
-  falls back to factory defaults → re-run `calib`, `tank`, `light` on the
+  falls back to factory defaults -> re-run `calib`, `tank`, `light` on the
   bench.
 - **CLI** — new `plant [shade|medium|sun]` (profile show/apply) and
   `care [on|off]` (enable + status with daily KPIs); `status`/`config`
@@ -113,7 +113,7 @@ including the new `test_care_policy`).
   0x57 (AT24C32)** → the HW-084 RTC module is wired and alive; remaining T6
   steps: `rtc set`, 30 s power-off retention test, removal of the module's
   LIR2032 charging resistor (a non-rechargeable CR2032 is fitted).
-- ⚠️ **Known regression — CAM no longer builds offline** (verified
+- Note: **Known regression: CAM no longer builds offline** (verified
   2026-07-02): commit `279da08` added `mobizt/FirebaseClient @ ^2.2.9` to the
   CAM `platformio.ini` and the library is neither in the offline PlatformIO
   cache nor vendored → `build_cam.bat` fails with `HTTPClientError`.
@@ -124,22 +124,23 @@ including the new `test_care_policy`).
 ---
 
 ## 0-bis. 2026-06-30 update — lab bring-up (Mega v5.2)
+## 0-bis. 2026-06-30 update: lab bring-up (Mega v5.2)
 
 Bench session with the robot connected. News on the **Mega** firmware
 (offline build SUCCESS, RAM ~61.8% / Flash ~19.5%):
 
 - **UVA grow lights** — new `GrowLight` module on relay D11 (channel 2).
-  The lights are wired on the **NC** contact: with the relay at rest they are
-  ON (polarity inverted compared to the pump). They turn on automatically
-  **only if**: `IDLE` mode **and** `lux < light_threshold` **and** the current
+  Controlled via L1 command `setGrowLight(true/false)`. Automatic rule: ON if
+  mode is IDLE AND light reading is below threshold (`light_threshold`
+  default **500**, approx 50% ADC) AND battery voltage is > 11.5 V AND current
   time is within the daylight window **06:00–20:00**. Pure logic in
   `SensorPolicy.h` (`growLightWanted()` + `withinDaylightWindow()`).
 - **Motor driver = Pololu Dual VNH5019 Shield** (model `ash02b`). The
   firmware has been made VNH5019-aware: pins renamed `PWM`/`INA`/`INB` + a new
   **EN/DIAG** line (D41/D39) read as `INPUT_PULLUP` to surface **faults**
-  in `diag` (without ever disabling the driver). ⚠️ Symptom found on the
-  bench: outputs M1A/M1B/M2A/M2B at 0V with VIN=11.6V/VDD=5.2V → hardware
-  cause (suspect #1: **common ground** Mega↔shield, then pin mapping). To be
+  in `diag` (without ever disabling the driver). Note: Symptom found on the
+  bench: outputs M1A/M1B/M2A/M2B at 0V with VIN=11.6V/VDD=5.2V -> hardware
+  cause (suspect #1: **common ground** Mega<->shield, then pin mapping). To be
   closed on the bench.
 - **RTC — software fallback clock**: the DS3232 chip does not respond
   (dead CR2032 battery). `setEpoch()` now falls back to a `millis()`-based
@@ -157,7 +158,7 @@ Bench session with the robot connected. News on the **Mega** firmware
 
 ---
 
-## 0. 2026-06-11 update — pre-lab hardening
+## 0. 2026-06-11 update: pre-lab hardening
 
 Repo re-aligned with `origin/main` (the staged renames have been resolved,
 `docs/PINS - Sheet1.csv` and this document are committed). All three
@@ -203,14 +204,14 @@ Main changes (details in the sections and commits):
   Automatic capture only once the full chain is configured; upload metrics
   counted only on real attempts.
 - **Build system** — the `build_*.bat` files pointed to a non-existent user
-  profile (`C:\Users\Giacomo Radin\...`): they now use `%USERPROFILE%`
+  profile (`C:\Users\<user>\...`): they now use `%USERPROFILE%`
   and accept extra arguments (`build_mega.bat -t upload`). Seeded
   PubSubClient in the CAM's libdeps cache (registry unreachable).
 - **Docs** — new [`docs/Lab_Bringup_Checklist.md`](Lab_Bringup_Checklist.md):
   step-by-step procedure for tomorrow's bring-up (safe order, troubleshooting
   table, tank calibration). Mega README aligned with v5.1.
 
-Hardware decisions confirmed by Giacomo on 2026-06-11: **only the RTC
+Hardware decisions confirmed on 2026-06-11: **only the RTC
 DS3232 mounted** (no BME680, no battery divider), relay polarity to be
 verified on the bench, tank depth unknown (configurable threshold),
 lab **without networking** (debug only via serial CLIs), credential
@@ -245,10 +246,10 @@ dangerous patterns: no debug print on Serial1 (framing preserved), no
 
 | Module                    | Version | Sources                                                  | Build |
 |---------------------------|---------|-----------------------------------------------------------|-------|
-| Platform Controller Mega  | **v5.1** | `firmware/2_platform-controller_mega/.../src/`          | ✅ SUCCESS (offline) |
-| ESP32 Hub                 | **v1.2** | `firmware/1_esp32-hub/.../src/` + `include/`            | ✅ SUCCESS (offline) |
-| ESP32-CAM                 | **v2.1** | `firmware/3_esp32-cam/.../src/main.cpp`                 | ✅ SUCCESS (offline) |
-| nanopb protocol           | **v4.1** | `infra/smartvase-proto/` (canonical) + synced copies in Hub/Mega | care KPIs appended (tags 22-27), 2026-07-02 |
+| Platform Controller Mega  | **v5.4.0** | `firmware/2_platform-controller_mega/.../src/`          | SUCCESS (offline) |
+| ESP32 Hub                 | **v1.4.0** | `firmware/1_esp32-hub/.../src/` + `include/`            | SUCCESS (offline) |
+| ESP32-CAM                 | **v2.2.0** | `firmware/3_esp32-cam/.../src/main.cpp`                 | SUCCESS (offline) |
+| nanopb protocol           | **v4.2** | `infra/smartvase-proto/` (canonical) + synced copies in Hub/Mega | care KPIs appended (tags 22-27), 2026-07-02 |
 
 No firmware has been **flashed** on real hardware yet: the bring-up is
 planned for 2026-06-12 following
@@ -256,7 +257,7 @@ planned for 2026-06-12 following
 
 ---
 
-## 2. Arduino Mega — Platform Controller v5.0
+## 2. Arduino Mega: Platform Controller v5.4.0
 
 **Path**: `firmware/2_platform-controller_mega/Radin_Giacomo_SmartVase_PlatformController_ArduinoMega/`
 
@@ -289,7 +290,7 @@ planned for 2026-06-12 following
 | Photoresistor              | A1                             | raw ADC 0..1023 (moved from A0); `light_threshold` default **500** |
 | Battery (divider)          | A2                             | `BATTERY_MONITORING_ENABLED = 0` by default   |
 | Motor L (VNH5019)          | PWM 6, INA 43, INB 45, EN/DIAG 41 | Pololu Dual VNH5019; EN optional (fault read) |
-| Motor R (VNH5019)          | PWM 7, INA 47, INB 49, EN/DIAG 39 | ⚠️ common GND Mega↔shield mandatory           |
+| Motor R (VNH5019)          | PWM 7, INA 47, INB 49, EN/DIAG 39 | Note: common GND Mega<->shield mandatory           |
 | Pump relay                 | D10 (IN1) — active LOW         | `Pump` module                                 |
 | UVA grow-light relay       | D11 (IN2)                      | `GrowLight` module; lights on **NC** contact (rest = ON) |
 | RTC DS3232                 | SDA 20 / SCL 21 (I²C 0x68)     | software fallback clock if chip absent/dead battery |
@@ -358,7 +359,7 @@ M_IDLE ───────► M_MOVING ───────► M_AVOID_START 
 
 ---
 
-## 3. ESP32 Hub — Logic & Web Hub v1.0
+## 3. ESP32 Hub: Logic & Web Hub v1.4.0
 
 **Path**: `firmware/1_esp32-hub/Radin_Giacomo_SmartVase_LogicWebHub_ESP32Standard/`
 
@@ -422,7 +423,7 @@ setMotionParams | readSoil | softReset`. Unrecognized commands → `alarm`
 
 ---
 
-## 4. ESP32-CAM — Vision Co-Processor v2.0
+## 4. ESP32-CAM: Vision Co-Processor v2.2.0
 
 **Path**: `firmware/3_esp32-cam/Radin_Giacomo_SmartVase_VisionCoProcessor_ESP32CAM/`
 
@@ -537,7 +538,7 @@ in the generated `.pb.h`, `#include <pb.h>` must be replaced with
 ## 6. Build & dependencies
 
 PlatformIO wrappers at the repo root: `build_mega.bat`, `build_hub.bat`,
-`build_cam.bat`. They use the `pio.exe` in `C:\Users\Giacomo Radin\.platformio\penv\Scripts\`.
+`build_cam.bat`. They use the `pio.exe` in `C:\Users\<user>\.platformio\penv\Scripts\`.
 
 ### 6.1 `lib_deps`
 
@@ -567,12 +568,12 @@ extended CLI). To be realigned to v5 or removed in favor of ARCHITECTURE.md.
 ## 7. What's missing or needs fixing — firmware TODO
 
 > **Note 2026-06-11**: many items in this section were closed with the
-> pre-bring-up hardening (see §0): builds of the 3 targets ✅, BME680
-> clarified (absent, behind a flag) ✅, battery flag-off confirmed ✅,
-> Hub+CAM CLI provisioning ✅, CAM `t0` bug ✅, fb use-after-free ✅,
-> non-blocking CAM Wi-Fi ✅, upload metrics ✅, duplicated Hub telemetry
-> publish ✅, anti-stuck backoff with reset ✅, empty-tank pump
-> protection ✅, bench deadman (standalone) ✅, Hub→Mega heartbeat ✅.
+> pre-bring-up hardening (see §0): builds of the 3 targets SUCCESS, BME680
+> clarified (absent, behind a flag) SUCCESS, battery flag-off confirmed SUCCESS,
+> Hub+CAM CLI provisioning SUCCESS, CAM `t0` bug SUCCESS, fb use-after-free SUCCESS,
+> non-blocking CAM Wi-Fi SUCCESS, upload metrics SUCCESS, duplicated Hub telemetry
+> publish SUCCESS, anti-stuck backoff with reset SUCCESS, empty-tank pump
+> protection SUCCESS, bench deadman (standalone) SUCCESS, Hub->Mega heartbeat SUCCESS.
 > Still open: flashing/validation on HW (tomorrow), CAM upload TLS pinning,
 > vision/result in the Hub, autonomous automation, OTA, command rate-limit,
 > consolidating proto/cert copies.
@@ -669,7 +670,7 @@ to complete · **[POL]** = polish / quality / security.
   (c) a temporary hard-code in `setup()` during bring-up are needed.
 - **[BLK]** `uploadJpeg()` uses `WiFiClientSecure::setInsecure()` towards
   the Cloud Function: TLS is not validated. The endpoint's cert/CA must be
-  pinned before taking the robot outside the house (decision shared with Fia).
+  pinned before taking the robot outside the house.
 - **[FUNC]** The only supported MQTT commands are `captureNow` and `reboot`.
   Missing: `setInterval(s)`, `setQuality(0..63)`, `getStats`, `flashOn/Off`.
 - **[FUNC]** Hub ↔ CAM coordination: the Hub never requests a capture; the
@@ -695,7 +696,7 @@ to complete · **[POL]** = polish / quality / security.
   `generate_proto.bat` updates `infra/smartvase-proto/` and *probably*
   needs to be manually copied to the other two. Verify and centralize
   (single source + simlink/copy step in the `.bat`).
-- **[POL]** The Hub and CAM share `infra/hivemq_ca_cert.h` ✅. But there are
+- **[POL]** The Hub and CAM share `infra/hivemq_ca_cert.h` (shared). But there are
   also local copies: `firmware/1_esp32-hub/.../include/hivemq_ca_cert.h`
   and `firmware/3_esp32-cam/.../src/hivemq_ca_cert.h`. Should be consolidated
   with a PlatformIO `extra_scripts` that copies them at build time, or an
@@ -707,10 +708,10 @@ to complete · **[POL]** = polish / quality / security.
 
 To avoid duplicating ARCHITECTURE.md:
 
-- **Cloud pipeline** (HiveMQ ⇄ Cloud Functions ⇄ Firestore ⇄ App/Vision):
+- **Cloud pipeline** (HiveMQ <-> Cloud Functions <-> Firestore <-> App/Vision):
   see `docs/SmartVase_data_structure.md` and `infra/cloud-functions/`.
 - **Vision** (`firmware/3_esp32-cam/.../VisionBotanist.cpp` & `vision/`): on-edge C++ analysis on the CAM; Python scripts used offline for test/calibration.
-- **Android App** (Francesco): outside this repo (under local development).
+- **Android App**: outside this repo (under local development).
 - **Server scripts** (`server/mqtt_firestore_bridge.py`): dev bridge.
 
 ---
