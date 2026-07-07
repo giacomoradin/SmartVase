@@ -25,6 +25,7 @@ except KeyError as e:
 TOPICS_TO_SUBSCRIBE = [
     "smartvase/+/telemetry",
     "smartvase/+/logs",
+    "smartvase/+/command/ack",
 ]
 
 # --- Initialize Firebase Admin ---
@@ -101,6 +102,11 @@ def on_message(client, userdata, msg):
             col_ref = db.collection("smartvase").document(vase_id).collection("logs")
             col_ref.add(payload_json)
             print(f"Firestore: Added log for {vase_id}")
+
+        elif message_type == "command" and len(topic_parts) == 4 and topic_parts[3] == "ack":
+            doc_ref = db.collection("smartvase").document(vase_id).collection("command").document("ack")
+            doc_ref.set(payload_json, merge=False)
+            print(f"Firestore: Updated command ACK for {vase_id}")
 
         else:
             print(f"WARN: Unhandled topic structure: {topic}")

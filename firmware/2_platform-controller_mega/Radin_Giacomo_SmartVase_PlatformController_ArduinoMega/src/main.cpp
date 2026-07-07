@@ -230,6 +230,11 @@ void setup() {
     comm.logEvent(Log_LogLevel_INFO, "system_boot", "platform_ready",
                   systemStatus.deviceId, persistence.getStats());
 
+    // Allow hardware (especially ultrasonic sensors) to stabilize after a cold boot.
+    // Without this, the HC-SR04 might return a false short pulse at power-on,
+    // making the tank look full and triggering an immediate false irrigation.
+    delay(1500);
+
     // From here on the watchdog is watching (resets after 4s stall).
     wdt_enable(WDTO_4S);
 
