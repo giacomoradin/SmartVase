@@ -17,6 +17,10 @@ struct CamConfig {
     String firebase_email;
     String firebase_password;
     String upload_url;
+    String mqtt_broker;
+    uint16_t mqtt_port;
+    String mqtt_user;
+    String mqtt_password;
     uint32_t interval_s;
     uint16_t roi_center_x;
     uint16_t roi_center_y;

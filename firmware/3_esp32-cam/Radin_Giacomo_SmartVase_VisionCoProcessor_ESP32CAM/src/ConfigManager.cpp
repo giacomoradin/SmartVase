@@ -24,6 +24,10 @@ void loadConfig() {
     cfg.roi_center_x        = prefs.getUInt  ("roi_cx",              400);
     cfg.roi_center_y        = prefs.getUInt  ("roi_cy",              300);
     cfg.roi_radius          = prefs.getUInt  ("roi_r",               220);
+    cfg.mqtt_broker         = prefs.getString("mqtt_broker",         "");
+    cfg.mqtt_port           = prefs.getUInt  ("mqtt_port",           8883);
+    cfg.mqtt_user           = prefs.getString("mqtt_user",           "");
+    cfg.mqtt_password       = prefs.getString("mqtt_password",       "");
     prefs.end();
 
 #ifdef SMARTVASE_CAM_SECRETS_H
@@ -33,9 +37,14 @@ void loadConfig() {
     cfg.firebase_project_id = SECRET_FIREBASE_PROJECT_ID;
     cfg.firebase_email      = SECRET_FIREBASE_EMAIL;
     cfg.firebase_password   = SECRET_FIREBASE_PASSWORD;
+    cfg.mqtt_broker         = SECRET_MQTT_BROKER;
+    cfg.mqtt_port           = SECRET_MQTT_PORT;
+    cfg.mqtt_user           = SECRET_MQTT_USER;
+    cfg.mqtt_password       = SECRET_MQTT_PASS;
 #else
     cfg.wifi_ssid   = "XXL";
     cfg.wifi_pass   = "pomodoro";
+    cfg.mqtt_port   = 8883;
 #endif
 }
 
@@ -52,6 +61,10 @@ void saveConfig() {
     prefs.putUInt  ("roi_cx",              cfg.roi_center_x);
     prefs.putUInt  ("roi_cy",              cfg.roi_center_y);
     prefs.putUInt  ("roi_r",               cfg.roi_radius);
+    prefs.putString("mqtt_broker",         cfg.mqtt_broker);
+    prefs.putUInt  ("mqtt_port",           cfg.mqtt_port);
+    prefs.putString("mqtt_user",           cfg.mqtt_user);
+    prefs.putString("mqtt_password",       cfg.mqtt_password);
     prefs.end();
 }
 

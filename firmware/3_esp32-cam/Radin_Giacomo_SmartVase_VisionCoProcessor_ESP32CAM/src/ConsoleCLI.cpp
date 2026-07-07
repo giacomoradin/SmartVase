@@ -14,7 +14,7 @@ static void cliPrintHelp() {
     Serial.println("version               firmware version");
     Serial.println("status                Wi-Fi, camera, free heap");
     Serial.println("show                  show NVS config & circular ROI settings");
-    Serial.println("set <key> <val>       wifi_ssid|wifi_pass|firebase_project_id|firebase_api_key|roi_center_x|roi_center_y|roi_radius");
+    Serial.println("set <key> <val>       wifi_ssid|wifi_pass|firebase_project_id|firebase_api_key|mqtt_broker|mqtt_port|mqtt_user|mqtt_password|roi_center_x|roi_center_y|roi_radius");
     Serial.println("save                  save current config to NVS");
     Serial.println("wifi connect          trigger STA Wi-Fi connection attempt");
     Serial.println("capture               test capture & onboard HSV circular ROI analysis");
@@ -49,6 +49,10 @@ static void cliPrintShow() {
     Serial.printf("firebase_api_key    = %s\n", cfg.firebase_api_key.length() ? "***" : "(empty)");
     Serial.printf("firebase_project_id = %s\n", cfg.firebase_project_id.c_str());
     Serial.printf("upload_url          = %s\n", cfg.upload_url.c_str());
+    Serial.printf("mqtt_broker         = %s\n", cfg.mqtt_broker.c_str());
+    Serial.printf("mqtt_port           = %u\n", (unsigned)cfg.mqtt_port);
+    Serial.printf("mqtt_user           = %s\n", cfg.mqtt_user.c_str());
+    Serial.printf("mqtt_password       = %s\n", cfg.mqtt_password.length() ? "***" : "(empty)");
     Serial.printf("interval_s          = %lu\n", (unsigned long)cfg.interval_s);
     Serial.printf("roi_center_x        = %u\n", (unsigned)cfg.roi_center_x);
     Serial.printf("roi_center_y        = %u\n", (unsigned)cfg.roi_center_y);
@@ -79,6 +83,10 @@ static bool cliHandleSet(char* args) {
     else if (strcmp(key, "firebase_email")      == 0) cfg.firebase_email      = value;
     else if (strcmp(key, "firebase_password")   == 0) cfg.firebase_password   = value;
     else if (strcmp(key, "upload_url")          == 0) cfg.upload_url          = value;
+    else if (strcmp(key, "mqtt_broker")         == 0) cfg.mqtt_broker         = value;
+    else if (strcmp(key, "mqtt_port")           == 0) cfg.mqtt_port           = (uint16_t)atoi(value);
+    else if (strcmp(key, "mqtt_user")           == 0) cfg.mqtt_user           = value;
+    else if (strcmp(key, "mqtt_password")       == 0) cfg.mqtt_password       = value;
     else if (strcmp(key, "interval_s")          == 0) {
         long s = atol(value);
         if (s < 10) { Serial.println("[CLI] minimum interval is 10 s"); return true; }

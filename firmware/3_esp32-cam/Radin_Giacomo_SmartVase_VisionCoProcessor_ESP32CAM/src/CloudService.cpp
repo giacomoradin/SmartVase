@@ -7,7 +7,6 @@ AsyncClient aClient(ssl_client);
 FirebaseApp app;
 UserAuth user_auth("", "", "");
 Storage fbStorage;
-Firestore::Documents Docs;
 
 unsigned long lastCaptureMs     = 0;
 unsigned long lastWifiAttemptMs = 0;
@@ -90,7 +89,6 @@ void firebaseInit() {
     initializeApp(aClient, app, getAuth(user_auth), authDebugCallback, "auth_task");
     
     app.getApp<Storage>(fbStorage);
-    app.getApp<Firestore::Documents>(Docs);
     
     Serial.println("[CAM] Firebase App Initialized.");
 }
@@ -130,51 +128,6 @@ String uploadImageToStorage(const uint8_t* buf, size_t len) {
     }
 }
 
-void notifyFirestore(const String& imageUrl, size_t bytes, uint32_t crc, uint32_t capMs, const AnalysisResult& analysis) {
-    if (!app.ready()) return;
-
-    time_t nowEpoch = time(nullptr);
-    String documentPath = "smartvase/" + String(deviceId) + "/vision/latest";
-
-    Values::IntegerValue tsVal((nowEpoch > NTP_VALID_EPOCH) ? nowEpoch : 0);
-    Values::StringValue  urlVal(imageUrl);
-    Values::StringValue  resVal(psramFound() ? "800x600" : "640x480");
-    Values::IntegerValue sizeVal(bytes);
-    Values::IntegerValue crcVal(crc);
-    Values::IntegerValue capVal(capMs);
-    Values::BooleanValue healthVal(analysis.plant_healthy);
-    Values::StringValue  msgVal(analysis.status_message);
-    Values::StringValue  covVal(String(analysis.foliage_coverage * 100.0f, 1) + "%");
-    Values::StringValue  grnVal(String(analysis.green_ratio * 100.0f, 1) + "%");
-    Values::StringValue  brnVal(String(analysis.brown_ratio * 100.0f, 1) + "%");
-
-    Document<Values::Value> doc("timestamp_utc", Values::Value(tsVal));
-    doc.add("image_url",        Values::Value(urlVal));
-    doc.add("resolution",       Values::Value(resVal));
-    doc.add("size_bytes",       Values::Value(sizeVal));
-    doc.add("crc32",            Values::Value(crcVal));
-    doc.add("capture_time_ms",  Values::Value(capVal));
-    doc.add("plant_healthy",    Values::Value(healthVal));
-    doc.add("status_message",   Values::Value(msgVal));
-    doc.add("foliage_coverage", Values::Value(covVal));
-    doc.add("green_ratio",      Values::Value(grnVal));
-    doc.add("brown_ratio",      Values::Value(brnVal));
-
-    Serial.printf("[CAM] Updating Firestore document at: %s\n", documentPath.c_str());
-
-    DocumentMask updateMask;
-    DocumentMask mask;
-    Precondition precondition;
-    PatchDocumentOptions patchOptions(updateMask, mask, precondition);
-    Docs.patch(aClient, Firestore::Parent(cfg.firebase_project_id), documentPath, patchOptions, doc);
-
-    if (aClient.lastError().code() == 0) {
-        Serial.println("[CAM] Firestore document updated successfully.");
-    } else {
-        Serial.printf("[CAM] Firestore update failed: %s\n", aClient.lastError().message().c_str());
-        stats.firebase_errors++;
-    }
-}
 
 bool doCapture(bool uploadAndPublish) {
     if (!cameraOk) return false;
@@ -206,7 +159,7 @@ bool doCapture(bool uploadAndPublish) {
     if (uploadAndPublish) {
         String gsUrl = uploadImageToStorage(fb->buf, fb->len);
         if (gsUrl.length() > 0) {
-            notifyFirestore(gsUrl, frameLen, crc, capMs, analysis);
+            mqttPublishVision(gsUrl, frameLen, crc, capMs, analysis);
         }
     }
     

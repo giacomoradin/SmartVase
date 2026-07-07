@@ -54,6 +54,7 @@ void setup() {
     }
 
     firebaseInit();
+    mqttInit();
 
     Serial.println("[CAM] CLI ready: type 'help'");
     Serial.print("> ");
@@ -63,6 +64,7 @@ void loop() {
     cliTick();
     wifiEnsure();
     app.loop();
+    mqttLoop();
 
     if (millis() - lastDebugMs >= DEBUG_TELEMETRY_INTERVAL_MS) {
         lastDebugMs = millis();
