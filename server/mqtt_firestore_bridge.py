@@ -21,10 +21,10 @@ except KeyError as e:
     exit(1)
 
 # Topics to subscribe to (using MQTT wildcard '+')
-# Note: Vision topics removed as ESP32-CAM now connects directly to Firebase
 TOPICS_TO_SUBSCRIBE = [
     "smartvase/+/telemetry",
     "smartvase/+/logs",
+    "smartvase/+/vision/+",
 ]
 
 # --- Initialize Firebase Admin ---
@@ -101,6 +101,12 @@ def on_message(client, userdata, msg):
             col_ref = db.collection("smartvase").document(vase_id).collection("logs")
             col_ref.add(payload_json)
             print(f"Firestore: Added log for {vase_id}")
+
+        elif message_type == "vision":
+            doc_id = topic_parts[3] if len(topic_parts) > 3 else "latest"
+            doc_ref = db.collection("smartvase").document(vase_id).collection("vision").document(doc_id)
+            doc_ref.set(payload_json, merge=True)
+            print(f"Firestore: Updated vision ({doc_id}) for {vase_id}")
 
         else:
             print(f"WARN: Unhandled topic structure: {topic}")

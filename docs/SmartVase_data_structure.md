@@ -5,7 +5,7 @@ This document outlines the communication pathways, MQTT topics, and Firestore pa
 ### Architectural Overview
 The system employs a hybrid communication model to optimize for hardware capabilities:
 1. **ESP32-HUB (Telemetry & Control):** Communicates exclusively via lightweight MQTT. An Oracle Linux server running `mqtt_firestore_bridge.py` acts as a secure bi-directional bridge, translating MQTT payloads to/from Cloud Firestore.
-2. **ESP32-CAM (Vision & Storage):** Communicates with Firebase Storage and Firestore, bypassing MQTT entirely.
+2. **ESP32-CAM (Vision & Storage):** Uploads images directly to Firebase Cloud Storage via HTTPS. For vision result notifications and capture commands, it communicates via lightweight MQTT over TLS, which is bridged to/from Cloud Firestore by `mqtt_firestore_bridge.py`.
 3. **Flutter App:** Communicates exclusively with Firebase (real-time listeners for UI updates via Firestore, and loading images from Firebase Storage)
 
 ---
@@ -143,13 +143,17 @@ Supported actions:
 - **Soft Reset Arduino Mega:**
   - Path: `smartvase/{hub_id}/command/softReset`
   - JSON: `{"cmd_id": 107, "type": "softReset"}`
+- **Request Capture (ESP32-CAM):**
+  - Path: `smartvase/{cam_id}/command/capture_requested`
+  - MQTT Topic: `smartvase/{cam_id}/command/capture_requested`
+  - JSON: `{"cmd_id": 201, "type": "capture_requested"}`
 
 ## 5. Image Ready Notification (Edge Computed)
 
 **Purpose:** This gets updated when a new image has been uploaded to Firebase Cloud Storage AND the leaf health analysis has been completed (by the lightweight vision algorithm on the edge).
-**Direction:** ESP32-CAM -> Firebase (Storage & Firestore) -> Flutter App
-*Note: This data path bypasses MQTT entirely.*
-**Firestore Path:** `smartvase/{cam_id}/vision/latest`
+**Direction:** ESP32-CAM -> Firebase Storage (image upload via HTTPS) & MQTT Broker -> Oracle Server (`mqtt_firestore_bridge.py`) -> Firestore -> Flutter App
+**MQTT Topic:** `smartvase/{cam_id}/vision/latest`
+**Firestore Path:** `smartvase/{cam_id}/vision/latest` *(Document ID: latest)*
 
 **JSON Payload Example:**
 {
