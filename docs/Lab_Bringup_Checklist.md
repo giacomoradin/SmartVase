@@ -1,7 +1,7 @@
-# SmartVase — Lab bring-up checklist
+# SmartVase: Lab bring-up checklist
 
 > Step-by-step procedure for the first flash and testing of the three
-> firmwares (Mega v5.3, Hub v1.3, CAM v2.1) on the new prototype.
+> firmwares (Mega v5.4.0, Hub v1.4.0, CAM v2.2.0) on the new prototype.
 > The order is designed to be **safe**: each actuator is first verified
 > "unloaded", and only then is the load connected.
 >
@@ -51,14 +51,14 @@
 
 ## 1. Arduino Mega alone (the longest phase)
 
-Flash + serial monitor. At boot, `Platform Controller v5.1 boot` appears.
+Flash + serial monitor. At boot, `Platform Controller v5.4.0 boot` appears.
 
 ### 1.1 Session setup
 
-- [ ] `standalone on` — **the first command to always give on the bench**: it
+- [ ] `standalone on`: **the first command to always give on the bench**: it
       suspends the Hub's deadman (otherwise, after 120 s without the Hub, the
       Mega enters degraded mode and stops the motors and pump).
-- [ ] `version` → v5.1.0.
+- [ ] `version` → v5.4.0.
 - [ ] `status` → degradedMode=NO, freeRam ≳ 3500 B.
 
 ### 1.2 Ultrasonic sensors (one at a time)
@@ -76,7 +76,7 @@ Flash + serial monitor. At boot, `Platform Controller v5.1 boot` appears.
       wiring (check against `docs/PINS - Sheet1.csv`) or VCC/GND is missing.
 - [ ] Note: the EMA filter takes ~1 s to settle after a change.
 
-### 1.3 Analog sensors — write down the values!
+### 1.3 Analog sensors: write down the values!
 
 - [ ] Fork (A0): read `sensors` with the fork **dry** and then **immersed**.
       Write down the two ADC values here: dry=____ wet=____
@@ -103,14 +103,14 @@ Flash + serial monitor. At boot, `Platform Controller v5.1 boot` appears.
       testing (it is lost on every reset, must be re-set). The UVA lights
       depend on the time: with `time_valid = NO` they stay off forever.
 
-### 1.5 Motors — Pololu Dual VNH5019 — ROBOT LIFTED off the ground
+### 1.5 Motors (Pololu Dual VNH5019, ROBOT LIFTED off the ground)
 
-- [ ] 🔴 **FIRST OF ALL — common GND**: with a multimeter, verify continuity
+- [ ] **FIRST OF ALL: common GND**: with a multimeter, verify continuity
       (0Ω) between Mega GND, the shield's (logic) GND and the battery −.
       Without a common ground the signals do not arrive and the outputs stay
       at **0V** even with VDD present (cause #1).
 - [ ] Pin mapping (see `docs/PINS - Sheet1.csv`): D6→M1PWM, D43→M1INA,
-      D45→M1INB, D7→M2PWM, D47→M2INA, D49→M2INB. ⚠️ On the standard shield
+      D45→M1INB, D7→M2PWM, D47→M2INA, D49→M2INB. Note: On the standard shield
       pin 6 is M1EN, not M1PWM: make sure the wire really goes to **M1PWM**.
 - [ ] `diag` → the `fault L/R` line: must read `ok/ok`. If `!!FAULT` on a
       motor, the VNH5019 is in protection mode (EN/DIAG low): check the
@@ -128,7 +128,7 @@ Flash + serial monitor. At boot, `Platform Controller v5.1 boot` appears.
 - [ ] Straight-drive calibration (can be done later, on the ground):
       `calib <left> <right>` (0..255, persists in EEPROM). Default 255/240.
 
-### 1.6 Pump relay — PUMP DISCONNECTED
+### 1.6 Pump relay (PUMP DISCONNECTED)
 
 - [ ] At boot the relay must remain **de-energized** (no click at power-on).
       If the relay activates on its own at boot: the module is active-high →
@@ -156,7 +156,7 @@ Flash + serial monitor. At boot, `Platform Controller v5.1 boot` appears.
 
 > The lights are wired on the **NC** contact of the 2nd relay channel: with
 > the relay at rest they are **ON**. They turn on automatically only if
-> `IDLE` + `lux<threshold` + the time is within 06:00–20:00. Use the `diag`
+> `IDLE` + `lux<threshold` + the time is within 06:00 to 20:00. Use the `diag`
 > `[LUCI UVA]` line to read the state.
 
 - [ ] `mode idle` + LDR covered (dark) + `time_valid=YES` → `diag` must show
@@ -168,16 +168,16 @@ Flash + serial monitor. At boot, `Platform Controller v5.1 boot` appears.
 - [ ] Check the time window: if `time_valid=NO` the lights stay off forever
       (no time available); set `rtc set <epoch>` or rely on the 08:00 fallback.
 
-### 1.9 Autonomous care layer (Mega v5.3, `care on`)
+### 1.9 Autonomous care layer (Mega v5.4.0, `care on`)
 
 > Full behavior description and decision table: `docs/Plant_Care_Design.md`.
-> ⚠️ First boot of v5.3: the extended `DeviceConfig` invalidates the stored
+> Note: First boot of v5.4.0: the extended `DeviceConfig` invalidates the stored
 > EEPROM config (CRC) → factory defaults. Re-apply `calib`, `tank`, `light`
 > before this section. Prerequisites: `standalone on` (no Hub), a valid time
-> (`rtc` → `time_valid=YES` — verify the new CR2032 here: it must NOT need the
-> software fallback), pump and motors already verified in §1.5–1.7.
+> (`rtc` → `time_valid=YES`: verify the new CR2032 here: it must NOT need the
+> software fallback), pump and motors already verified in §1.5 to 1.7.
 
-- [ ] **Scan rotation calibration**: `motor l 6000` with wheels on the ground —
+- [ ] **Scan rotation calibration**: `motor l 6000` with wheels on the ground:
       the robot should complete roughly ONE full turn. If not, adjust
       `LIGHT_SCAN_TOTAL_MS` in `Movement.cpp` (time-based, no encoders) and
       re-flash. The light scan depends on it.
@@ -270,7 +270,7 @@ Flash (GPIO0→GND for the bootloader if using FTDI) + monitor.
 | All probes `nan` | common GND missing | check the grounds |
 | `pump` always BLOCKED | US4 does not see the water / threshold too low | `tank` to diagnose, `tank <cm>` to calibrate |
 | Pump relay energized at boot | active-high module | `PUMP_RELAY_ACTIVE_LOW 0` in Pump.cpp |
-| **Motors: 0V on M1A/M1B/M2A/M2B** | **common GND Mega↔shield missing** | check the ground with a multimeter (§1.5) — cause #1 |
+| **Motors: 0V on M1A/M1B/M2A/M2B** | **common GND Mega↔shield missing** | check the ground with a multimeter (§1.5), cause #1 |
 | Motors: outputs 0V, GND ok | wrong PWM/INA/INB pin mapping | check D6→M1PWM etc. (§1.5) |
 | `diag` shows `fault !!FAULT` | VNH5019 in protection | power/wiring of the channel, EN A=B jumper |
 | Motor turns the wrong way | motor polarity | swap the 2 wires or INA/INB in Movement.cpp |

@@ -1,6 +1,6 @@
-# SmartVase — Tests
+# SmartVase: Tests
 
-## `tests/host/` — Native unit tests (g++)
+## `tests/host/`: Native unit tests (g++)
 
 Tests of the firmware's **pure logic**, compiled and run on the PC with `g++`
 (host), **without hardware**. Meant for the days when the lab is closed: they
@@ -28,34 +28,34 @@ tests\host\run.bat
 
 ### What's here now
 
-- `test_crc16.cpp` — CRC16-CCITT: known vectors (XMODEM) + a **protocol
+- `test_crc16.cpp`: CRC16-CCITT: known vectors (XMODEM) + a **protocol
   invariant** ("the Mega and the Hub compute the same CRC"; a mismatch
   between them once made the serial link go silent).
-- `test_crc_utils.cpp` — Hub-side CRC utilities: CCITT (poly `0x1021`,
+- `test_crc_utils.cpp`: Hub-side CRC utilities: CCITT (poly `0x1021`,
   0x31C3 test vector) and IBM (0xBB3D test vector) variants.
-- `test_command_policy.cpp` — pure command policies (`CommandPolicy.h`):
+- `test_command_policy.cpp`: pure command policies (`CommandPolicy.h`):
   water rate-limit, motion-param no-op, duration/param clamping.
-- `test_sensor_policy.cpp` — pure sensor policies (`SensorPolicy.h`):
+- `test_sensor_policy.cpp`: pure sensor policies (`SensorPolicy.h`):
   tank fail-safe, light/shadow seeking direction, grow-light gating,
   daylight window, `medianOf3` anti-bounce pre-filter.
-- `test_nav_policy.cpp` — pure navigation policies (`NavPolicy.h`):
+- `test_nav_policy.cpp`: pure navigation policies (`NavPolicy.h`):
   front-emergency detection (NaN-safe), proportional differential steering
   (safe/slow/emergency zones, steer away from the closer side, seek bias),
   and side-sensor wall-following (too far/too close/lost-wall/emergency).
-- `test_care_policy.cpp` — pure autonomous-care policies (`CarePolicy.h`):
+- `test_care_policy.cpp`: pure autonomous-care policies (`CarePolicy.h`):
   plant-profile presets, daily light-budget accounting (auto-calibration,
   daily reset/decay, invalid-reading fail-safes), light-scan sector
   selection, dose/soak/verify watering hysteresis, and the full decision
   table of the daily care state machine (night/clock fail-safe, morning
   seek, settle-on-stall, heat-proxy shade, anti-nomadism caps, UVA top-up).
-- `test_care_day_sim.cpp` — whole-day **simulation** of the care layer:
+- `test_care_day_sim.cpp`: whole-day **simulation** of the care layer:
   drives the real `careStep()`/`careBudgetUpdate()` through simulated days
   at 1-minute ticks and asserts the *emergent* behavior (the "robot's day"
   of `docs/Plant_Care_Design.md` §6): sunny-day arc with exactly two
-  relocations and a 100–130% budget, dim-day UVA top-up bounded by the
+  relocations and a 100 to 130% budget, dim-day UVA top-up bounded by the
   window and the daily cap, watering-cycle convergence and the stuck-dry
   probe fail-safe.
-- `test_persistence.cpp` — dual-slot EEPROM wear-leveling (`Persistence`):
+- `test_persistence.cpp`: dual-slot EEPROM wear-leveling (`Persistence`):
   slot selection on load, write throttling, no-op on unchanged writes.
 
 ### How to add a test

@@ -318,7 +318,7 @@ JSON schemas: [`docs/SmartVase_data_structure.md`](docs/SmartVase_data_structure
 
 ## 9. Project Status
 
-Firmware: Mega v5.4, Hub v1.3, CAM v2.2, serial protocol v4.2. All three
+Firmware: Mega v5.4, Hub v1.4, CAM v2.2, serial protocol v4.2. All three
 firmwares build offline and the host test suite passes. Hardware bring-up is
 in progress: motor channel M1 has an intermittent direction wire, one side
 ultrasonic sensor must be replaced, the RTC module is being replaced (its
@@ -330,7 +330,7 @@ items are tracked in
 
 ## 10. Presentation and Demo Video
 
-- Pitch video (2 min): link TBD (YouTube)
+- Pitch video (2 min): [https://youtu.be/UZbBSWGEUTA](https://youtu.be/UZbBSWGEUTA)
 - Presentation slides: link TBD (will be added to this repository)
 
 ## 11. Team Members and Contributions

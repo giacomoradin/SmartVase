@@ -347,7 +347,7 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLig
         return;
     }
 
-    // mfp0 — test continuo motori in avanti (10 min)
+    // mfp0 — continuous forward motor test (10 min)
     if (strcmp(line, "mfp0") == 0) {
         if (sys.degradedModeActive) {
             Serial.println(F("[CLI] Cannot start: degraded mode active (motors blocked)"));
@@ -364,7 +364,7 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLig
         bool stoppedByUser = false;
         
         while (millis() - startMs < durationMs) {
-            wdt_reset(); // Impedisce il reset dell'Arduino (watchdog a 4 secondi)
+            wdt_reset(); // Prevents an Arduino reset (4-second watchdog)
             
             if (Serial.available()) {
                 while (Serial.available()) Serial.read(); // Clear serial buffer
@@ -388,7 +388,7 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLig
         mv.stopMotors(ps.getStats());
         
         if (stoppedByUser) {
-            Serial.println(F("[CLI] Test mfp0 INTERROTTO dall'utente. Motori spenti."));
+            Serial.println(F("[CLI] Test mfp0 STOPPED by user. Motors off."));
         } else {
             Serial.println(F("[CLI] Test mfp0 COMPLETED. Motors off."));
         }

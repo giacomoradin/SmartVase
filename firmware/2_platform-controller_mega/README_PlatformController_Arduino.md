@@ -16,7 +16,7 @@ Version history (summary):
   LDR auto-calibration), rotating light scan with the single fixed LDR,
   dose/soak/verify autonomous watering, per-plant profiles (shade/medium/sun
   presets in EEPROM), UVA grow lights as end-of-day budget top-up, daily KPIs
-  (`care` CLI command, `care_day_end` log, `TelemetryDeep` tags 22-27).
+  (`care` CLI command, `care_day_end` log, `TelemetryDeep` tags 22-27, proto v4.1).
   Disabled by default; enabled explicitly with `care on`.
 - **v5.4** — Hub-to-Mega time synchronization (protocol v4.2): the Hub, NTP
   synchronized, carries the current epoch in its periodic heartbeat
@@ -24,8 +24,8 @@ Version history (summary):
   re-bases its software clock every 30 s, writing the hardware RTC
   opportunistically when present. The software clock stays authoritative, so
   a failing RTC chip cannot hijack the time. `rtc` shows the sync state
-  (`hub_sync`). Also in v5.4: `stats reset` and `i2cscan` CLI commands,
-  BME680 enabled (`BME680_ENABLED 1`, sensor wired).
+  (`hub_sync`). Also in v5.4: `stats reset`, `i2cscan` and `mfp0` CLI
+  commands, BME680 enabled (`BME680_ENABLED 1`, sensor wired).
 
 Authoritative architectural reference: `docs/ARCHITECTURE.md`.
 PIN map: `docs/PINS - Sheet1.csv`.
@@ -47,7 +47,7 @@ Modules (`src/`):
 | `Care.{h,cpp}`    | Autonomous plant-care layer (L2): light-budget accounting, care state machine, dose/soak/verify watering, manual-override suspension |
 | `CarePolicy.h`    | Pure care logic (no HW): plant profiles/presets, daily light budget, scan sector selection, care decision table, host-testable |
 | `Pump.{h,cpp}`    | Non-blocking irrigation pump (relay D10, 60s max safety)                                    |
-| `GrowLight.{h,cpp}` | UVA lights on relay D11 (NC contact). Care active: end-of-day budget top-up; otherwise legacy rule (IDLE + lux<threshold + daylight window 06:00–20:00) |
+| `GrowLight.{h,cpp}` | UVA lights on relay D11 (NC contact). Care active: end-of-day budget top-up; otherwise legacy rule (IDLE + lux<threshold + daylight window 06:00-20:00) |
 | `SensorPolicy.h` / `CommandPolicy.h` | Pure functions (no HW) for tank/seeking/lights and command clamp/rate-limit, unit-testable on host |
 | `Persistence.{h,cpp}` | Dual-slot EEPROM with magic+CRC16, wear leveling                                        |
 | `Communication.{h,cpp}` | SOF/len/payload/CRC16 serial framing, state parser, log queue, command dispatcher  |
@@ -116,8 +116,8 @@ Equivalent to `pio run -d firmware/2_platform-controller_mega/...`.
 - **Log queue**: circular, 20 slots, drained every 200 ms by the main loop.
 - **Tank protection (v5.1)**: the pump does not start (and stops on its own)
   if US4 measures a distance beyond `tank_empty_cm` (default 20, tunable with
-  `tank <cm>` from the CLI) **or** if the reading is invalid — fail-safe
-  against dry running. Applies to the remote `water` command and the CLI `pump`.
+  `tank <cm>` from the CLI) **or** if the reading is invalid (fail-safe
+  against dry running). Applies to the remote `water` command and the CLI `pump`.
 - **Standalone mode (v5.1)**: `standalone on` from the CLI suspends the Hub's
   deadman for bench tests without the ESP32 connected.
 - **Hub time sync (v5.4)**: with the Hub connected, `time_valid` becomes true
@@ -126,7 +126,7 @@ Equivalent to `pio run -d firmware/2_platform-controller_mega/...`.
   bench. The daylight-window features (grow lights, care layer) depend on a
   valid time.
 - **Autonomous care (v5.3)**: with `care on`, the robot manages the plant's
-  day on its own — seeks the brightest reachable spot in the morning (rotating
+  day on its own: seeks the brightest reachable spot in the morning (rotating
   light scan + gradient climb), basks accumulating the daily light budget,
   seeks shade when the budget is met (or on the over-light heat proxy),
   waters in dose/soak/verify cycles on the soil hysteresis band, and tops up
@@ -147,7 +147,7 @@ Equivalent to `pio run -d firmware/2_platform-controller_mega/...`.
 `sensors`, `diag`,
 `i2cscan`, `tank [cm]`, `light <adc>`, `rtc [set <epoch>]`, `mode <idle|light|shadow>`,
 `plant [shade|medium|sun]`, `care [on|off]`, `wall <left|right|off>`,
-`motor <f|b|l|r> <ms>`, `motortest`, `calib <l> <r>`, `pump <ms>`,
+`motor <f|b|l|r> <ms>`, `mfp0`, `motortest`, `calib <l> <r>`, `pump <ms>`,
 `standalone <on|off>`, `version`, `reboot`.
 The full test procedure is in `docs/Lab_Bringup_Checklist.md`.
 
@@ -155,14 +155,15 @@ The full test procedure is in `docs/Lab_Bringup_Checklist.md`.
 
 - [ ] Bench-validate the care layer end-to-end (see `docs/Plant_Care_Design.md`
       §8, horizon H1): light scan rotation time (`LIGHT_SCAN_TOTAL_MS` in
-      `Movement.cpp`, time-based — measure a real 360°), soil/wet thresholds
+      `Movement.cpp`, time-based, measure a real 360°), soil/wet thresholds
       per plant, dose sizing.
 - [ ] Replace the DS3232 module (HW-084): bench diagnosis shows a progressive
       hardware failure (devices intermittently disappearing from the I2C bus,
-      SCL clamped low). Mitigated in software by the v5.4 Hub time sync; a
-      working RTC is still desirable for fully offline operation.
+      SCL clamped low). Mitigated in software by the v5.4 Hub time sync
+      (`rtc` shows `time_valid=YES` via the Hub even with the RTC chip down);
+      a working RTC is still desirable for fully offline operation.
 - [x] BME680 mounted and enabled (`BME680_ENABLED 1` in `Sensors.h`).
-- [ ] Confirm the battery divider on the bench → set
+- [ ] Confirm the battery divider on the bench, then set
       `BATTERY_MONITORING_ENABLED 1` in `Sensors.h`.
 - [x] Care KPIs exported in `TelemetryDeep` (proto v4.1, tags 22-27) and
       published by the Hub as the `care` JSON object; also visible from the
@@ -172,4 +173,4 @@ The full test procedure is in `docs/Lab_Bringup_Checklist.md`.
 
 ## License
 
-MIT — see `LICENSE`.
+MIT: see `LICENSE`.
