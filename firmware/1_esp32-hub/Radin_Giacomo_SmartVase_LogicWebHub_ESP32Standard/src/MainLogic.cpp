@@ -46,7 +46,7 @@ static const char* careStateToStr(uint32_t s);
  *         are not enough to keep it alive. */
 #define HUB_HEARTBEAT_INTERVAL_MS      (30 * 1000)
 /*! @brief Hub firmware version published in telemetry (aligned with HubCli.cpp). */
-#define HUB_FW_VERSION                 "1.3.0"
+#define HUB_FW_VERSION                 "1.4.0"
 
 MainLogic::MainLogic(QueueHandle_t serialRxQueue, QueueHandle_t serialTxQueue,
                      QueueHandle_t mqttTxQueue, QueueHandle_t mqttRxQueue,
@@ -108,7 +108,11 @@ void MainLogic::taskRun() {
         }
 
         // Keepalive towards the Mega: any valid frame resets its deadman,
-        // so a periodic Heartbeat is enough.
+        // so a periodic Heartbeat is enough. Since proto v4.2 the heartbeat
+        // doubles as the Mega's time source: the Hub attaches its NTP epoch
+        // (epoch_s) so the Mega can align its software clock (its hardware
+        // RTC turned out to be faulty). 0 = "no NTP time yet" and the Mega
+        // ignores the field, so an offline Hub degrades gracefully.
         if (millis() - lastHubHeartbeatMs >= HUB_HEARTBEAT_INTERVAL_MS) {
             lastHubHeartbeatMs = millis();
             SerialMessage hb;
@@ -116,6 +120,9 @@ void MainLogic::taskRun() {
             hb.message.which_payload = WrapperMessage_heartbeat_tag;
             hb.message.payload.heartbeat.uptime_s = millis() / 1000UL;
             hb.message.payload.heartbeat.is_degraded = false;
+            const time_t nowEpoch = time(nullptr);
+            hb.message.payload.heartbeat.epoch_s =
+                (nowEpoch >= 1600000000) ? (uint32_t)nowEpoch : 0;
             strncpy(hb.message.payload.heartbeat.device_id, _deviceId,
                     sizeof(hb.message.payload.heartbeat.device_id) - 1);
             if (xQueueSend(_serialTxQueue, &hb, 0) != pdPASS) {

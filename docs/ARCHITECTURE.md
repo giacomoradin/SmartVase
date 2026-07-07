@@ -153,13 +153,20 @@ pull-up on the shield → driver enabled at rest).
 | RTC DS3232 — SDA               | D20 (SDA)      | I²C 0x68                                              |
 | RTC DS3232 — SCL               | D21 (SCL)      | I²C 0x68                                              |
 
-> **RTC — software fallback clock**: if the DS3232 chip does not respond on I²C
-> or has a stopped oscillator (dead/absent CR2032 battery), `setEpoch()` enables
-> a `millis()`-based software clock; at boot, if no valid time is available, it
-> starts from **08:00** (`DEFAULT_BOOT_HOUR`, inside the grow-light daylight
-> window). It is lost on every reset (must be re-set with `rtc set <epoch>`), but
-> it avoids blocking the time-dependent features. The real chip always takes
-> precedence when it responds.
+> **RTC — software fallback clock + Hub NTP sync**: if the DS3232 chip does not
+> respond on I²C or has a stopped oscillator, the Mega runs a `millis()`-based
+> software clock; at boot, if no valid time is available, it starts from
+> **08:00** (`DEFAULT_BOOT_HOUR`, inside the grow-light daylight window). Since
+> proto v4.2 the software clock is **re-synced by every Hub heartbeat** carrying
+> the Hub's NTP epoch (~30 s period, see §5.1), so with a connected Hub the Mega
+> tracks real time with negligible drift and no manual `rtc set`. Standalone
+> bench sessions still use `rtc set <epoch>`. While the software clock is
+> active it takes precedence over the chip (a flaky chip with an unset time
+> must not hijack a good clock); a healthy chip is opportunistically kept
+> aligned by the Hub syncs. ⚠️ Bench status 2026-07-06: the HW-084 module
+> (DS3231) is **faulty** — the I²C bus is healthy (BME680 at 0x76 answers,
+> `i2cscan` CLI) but both chips on the RTC module are silent; the Hub sync IS
+> the time source until the module is replaced.
 
 ### 4.4 Pump, relays and grow lights
 
@@ -237,7 +244,17 @@ Atomic messages wrapped in `WrapperMessage`:
   `bme_read_errors`, `log_overflows`, …), `battery_voltage`.
 - **Log** — `level` (INFO/WARN/ERROR/CRITICAL), `event`, `detail`,
   `timestamp_ms`, `source_device`.
-- **Heartbeat** — `uptime_s`, `is_degraded`, `device_id`.
+- **Heartbeat** — `uptime_s`, `is_degraded`, `device_id`, `epoch_s`
+  (proto v4.2). In the Hub→Mega direction the heartbeat doubles as the
+  Mega's **time source**: the Hub attaches its NTP epoch (UTC; `0` = "no
+  NTP time yet", ignored) and the Mega re-bases its software clock on it —
+  the hardware RTC module proved faulty on the bench (2026-07-06: I²C bus
+  healthy, BME680 answers, DS3231 and its on-module EEPROM silent). The
+  software clock stays authoritative between syncs (worst-case drift = one
+  30 s heartbeat period) and a half-dead RTC chip that occasionally ACKs
+  cannot hijack the time (see `Sensors::syncEpochFromHub`,
+  `hubEpochPlausible` in `CommandPolicy.h`). Timezone offset applied on the
+  Mega (`HUB_EPOCH_TZ_OFFSET_S`, Sensors.cpp).
 - **Command** (Hub → Mega) — oneof: `water`, `set_mode`, `stop`,
   `request_diagnostics`, `set_motion_params`, `read_soil`, `soft_reset`.
 - **CommandResponse** (Mega → Hub) — `status` (OK/ERROR), `detail`,

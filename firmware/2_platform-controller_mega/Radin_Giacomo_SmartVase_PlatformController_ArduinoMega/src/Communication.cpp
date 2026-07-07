@@ -222,7 +222,20 @@ void Communication::handleSerial(Movement& movement, Persistence& persistence,
                     pb_istream_t stream = pb_istream_from_buffer(protobuf_rx_buffer, len);
                     if (pb_decode(&stream, WrapperMessage_fields, &msg)) {
                         last_hub_message_ms = millis();
-                        executeCommand(msg, movement, persistence, sensors, pump, sys);
+                        if (msg.which_payload == WrapperMessage_heartbeat_tag) {
+                            // Hub -> Mega time sync (proto v4.2): the periodic
+                            // heartbeat carries the Hub's NTP epoch. With the
+                            // hardware RTC faulty, this keeps the software
+                            // clock aligned to real time. 0 or implausible
+                            // values (Hub not yet NTP-synced) are ignored
+                            // (hubEpochPlausible, CommandPolicy.h).
+                            const uint32_t hubEpoch = msg.payload.heartbeat.epoch_s;
+                            if (hubEpochPlausible(hubEpoch)) {
+                                sensors.syncEpochFromHub(hubEpoch);
+                            }
+                        } else {
+                            executeCommand(msg, movement, persistence, sensors, pump, sys);
+                        }
                     } else {
                         persistence.getStats().pb_decode_failures++;
                     }

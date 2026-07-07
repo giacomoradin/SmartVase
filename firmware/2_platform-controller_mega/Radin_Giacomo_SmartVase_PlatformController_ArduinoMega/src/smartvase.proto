@@ -1,4 +1,10 @@
 // Autore: Giacomo Radin
+// Versione 4.2 (2026-07-06): sincronizzazione oraria Hub -> Mega
+// - Heartbeat: aggiunto epoch_s (tag 4, in coda per compatibilita' v4.1).
+//   L'Hub, sincronizzato via NTP, allega l'ora corrente all'heartbeat
+//   periodico verso il Mega; il Mega la usa per allineare il proprio clock
+//   software (RTC hardware guasto). 0 = ora non disponibile (niente NTP):
+//   il ricevente DEVE ignorare il campo.
 // Versione 4.1 (2026-07-02): KPI della cura autonoma in TelemetryDeep
 // - TelemetryDeep: aggiunti i contatori giornalieri del care layer del Mega
 //   (tag 22-27, in coda per compatibilita' con i decoder v4.0): stato care,
@@ -106,6 +112,9 @@ message Heartbeat {
   uint32 uptime_s = 1;
   bool is_degraded = 2;
   string device_id = 3 [(nanopb).max_size = 16];
+  // Epoch UNIX (s, UTC) dell'orologio NTP dell'Hub, per la sincronizzazione
+  // del clock software del Mega. 0 = non disponibile: ignorare.
+  uint32 epoch_s = 4;
 }
 
 // ===================================================================

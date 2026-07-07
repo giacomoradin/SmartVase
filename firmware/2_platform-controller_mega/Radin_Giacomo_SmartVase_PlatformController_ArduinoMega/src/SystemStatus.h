@@ -26,7 +26,7 @@
 */
 
 /*! @brief Mega firmware version, logged at boot and shown by the CLI (`version`). */
-#define SMARTVASE_FW_VERSION "5.3.0"
+#define SMARTVASE_FW_VERSION "5.4.0"
 
 /*! @brief Maximum length (including terminator) of the `deviceId` buffer. */
 #define DEVICE_ID_MAX_LEN 16

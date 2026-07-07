@@ -17,7 +17,7 @@
 #include "SerialManager.h"
 
 /*! @brief Versione firmware Hub mostrata dalla CLI (allineata a MainLogic.cpp). */
-#define HUB_FW_VERSION "1.3.0"
+#define HUB_FW_VERSION "1.4.0"
 
 HubCli::HubCli()
     : _cfg(nullptr), _wifi(nullptr), _mqtt(nullptr), _logic(nullptr),

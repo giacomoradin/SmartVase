@@ -115,6 +115,9 @@ typedef struct _smartvase_Heartbeat {
     uint32_t uptime_s;
     bool is_degraded;
     char device_id[16];
+    /* Epoch UNIX (s, UTC) dell'orologio NTP dell'Hub, per la sincronizzazione
+ del clock software del Mega. 0 = non disponibile: ignorare. */
+    uint32_t epoch_s;
 } smartvase_Heartbeat;
 
 typedef struct _smartvase_CommandResponse {
@@ -235,7 +238,7 @@ extern "C" {
 #define smartvase_TelemetryFast_init_default     {0, 0, 0, 0, 0, 0, 0, 0, _smartvase_MovementState_MIN, 0, ""}
 #define smartvase_TelemetryDeep_init_default     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 #define smartvase_Log_init_default               {_smartvase_Log_LogLevel_MIN, "", "", 0, ""}
-#define smartvase_Heartbeat_init_default         {0, 0, ""}
+#define smartvase_Heartbeat_init_default         {0, 0, "", 0}
 #define smartvase_Command_init_default           {0, {smartvase_WaterCommand_init_default}, 0}
 #define smartvase_CommandResponse_init_default   {_smartvase_CommandResponse_Status_MIN, "", 0, 0, 0}
 #define smartvase_WaterCommand_init_default      {0}
@@ -249,7 +252,7 @@ extern "C" {
 #define smartvase_TelemetryFast_init_zero        {0, 0, 0, 0, 0, 0, 0, 0, _smartvase_MovementState_MIN, 0, ""}
 #define smartvase_TelemetryDeep_init_zero        {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 #define smartvase_Log_init_zero                  {_smartvase_Log_LogLevel_MIN, "", "", 0, ""}
-#define smartvase_Heartbeat_init_zero            {0, 0, ""}
+#define smartvase_Heartbeat_init_zero            {0, 0, "", 0}
 #define smartvase_Command_init_zero              {0, {smartvase_WaterCommand_init_zero}, 0}
 #define smartvase_CommandResponse_init_zero      {_smartvase_CommandResponse_Status_MIN, "", 0, 0, 0}
 #define smartvase_WaterCommand_init_zero         {0}
@@ -308,6 +311,7 @@ extern "C" {
 #define smartvase_Heartbeat_uptime_s_tag         1
 #define smartvase_Heartbeat_is_degraded_tag      2
 #define smartvase_Heartbeat_device_id_tag        3
+#define smartvase_Heartbeat_epoch_s_tag          4
 #define smartvase_CommandResponse_status_tag     1
 #define smartvase_CommandResponse_detail_tag     2
 #define smartvase_CommandResponse_value_tag      3
@@ -391,7 +395,8 @@ X(a, STATIC,   SINGULAR, STRING,   source_device,     5)
 #define smartvase_Heartbeat_FIELDLIST(X, a) \
 X(a, STATIC,   SINGULAR, UINT32,   uptime_s,          1) \
 X(a, STATIC,   SINGULAR, BOOL,     is_degraded,       2) \
-X(a, STATIC,   SINGULAR, STRING,   device_id,         3)
+X(a, STATIC,   SINGULAR, STRING,   device_id,         3) \
+X(a, STATIC,   SINGULAR, UINT32,   epoch_s,           4)
 #define smartvase_Heartbeat_CALLBACK NULL
 #define smartvase_Heartbeat_DEFAULT NULL
 
@@ -510,7 +515,7 @@ extern const pb_msgdesc_t smartvase_WrapperMessage_msg;
 #define SMARTVASE_SMARTVASE_PB_H_MAX_SIZE        smartvase_WrapperMessage_size
 #define smartvase_CommandResponse_size           92
 #define smartvase_Command_size                   21
-#define smartvase_Heartbeat_size                 25
+#define smartvase_Heartbeat_size                 31
 #define smartvase_Log_size                       83
 #define smartvase_ReadSoilCommand_size           0
 #define smartvase_RequestDiagnosticsCommand_size 0

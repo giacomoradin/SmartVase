@@ -42,6 +42,13 @@ int main() {
     CHECK(clampMotionParamMs(50, 100, 5000)    == 100,  "motion 50 -> min 100");
     CHECK(clampMotionParamMs(99999, 100, 5000) == 5000, "motion 99999 -> max 5000");
 
+    // --- hubEpochPlausible(epoch_s) — sync oraria Hub->Mega (proto v4.2) ---
+    CHECK(!hubEpochPlausible(0),            "epoch 0 (Hub senza NTP) -> ignorato");
+    CHECK(!hubEpochPlausible(28800),        "epoch da clock fittizio 1970 -> ignorato");
+    CHECK(!hubEpochPlausible(1599999999UL), "epoch pre-soglia 2020 -> ignorato");
+    CHECK(hubEpochPlausible(1600000000UL),  "epoch alla soglia -> accettato");
+    CHECK(hubEpochPlausible(1780000000UL),  "epoch odierno (2026) -> accettato");
+
     if (g_failures == 0) { printf("RESULT: ALL PASSED\n"); return 0; }
     printf("RESULT: %d FAILED\n", g_failures);
     return 1;

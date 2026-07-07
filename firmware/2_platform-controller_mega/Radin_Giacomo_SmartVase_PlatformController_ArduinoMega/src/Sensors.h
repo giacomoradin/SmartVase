@@ -29,7 +29,7 @@
  * The BME680 is not fitted on the current prototype (PIN map 2026-05-19, confirmed 2026-06-11).
  * Keep at 0 until it is wired. If set to 1, re-enables the I2C probe, readings in TelemetryDeep and logging.
  */
-#define BME680_ENABLED 0
+#define BME680_ENABLED 1
 
 /**
  * @def BATTERY_MONITORING_ENABLED
@@ -145,6 +145,26 @@ public:
     /** @brief true if the current time comes from the software fallback clock rather than the real RTC chip. */
     bool isUsingFakeClock() const { return fake_clock_active; }
 
+    /**
+     * @brief Aligns the software clock to the epoch received from the Hub (NTP).
+     * @details Called by Communication when a Hub heartbeat carries a plausible
+     *          `epoch_s` (proto v4.2, see hubEpochPlausible() in CommandPolicy.h):
+     *          the software clock is re-based on the fresh value, so with the
+     *          hardware RTC absent/faulty the Mega still tracks real time with a
+     *          worst-case drift of one heartbeat period (~30 s of millis() drift,
+     *          i.e. negligible). The software clock is deliberately kept ACTIVE
+     *          (and therefore authoritative, see getEpoch()): a half-dead RTC chip
+     *          that occasionally ACKs must not take over with a garbage time. If a
+     *          healthy chip is detected, it is opportunistically kept aligned too,
+     *          so a future module replacement inherits the right time for free.
+     * @param epoch_s Plausible UNIX epoch from the Hub, in seconds (already
+     *                timezone-adjusted by the caller if desired).
+     */
+    void syncEpochFromHub(uint32_t epoch_s);
+
+    /** @brief millis() timestamp of the last accepted Hub time sync (0 = never). */
+    unsigned long lastHubSyncMs() const { return last_hub_sync_ms; }
+
     // --- BME680 ---
     /** @brief Returns the operating/detection status of the BME680 sensor. */
     bool getBMEStatus() const { return bme_status; }
@@ -251,6 +271,7 @@ private:
     bool          fake_clock_active;     /**< true if the software fallback clock is in use (see setEpoch()). */
     uint32_t      fake_clock_base_epoch; /**< Epoch set by the user when the software clock was activated. */
     unsigned long fake_clock_set_millis; /**< millis() at activation time, used to compute elapsed time. */
+    unsigned long last_hub_sync_ms;      /**< millis() of the last accepted Hub time sync (0 = never, see syncEpochFromHub()). */
 };
 
 #endif // SENSORS_H

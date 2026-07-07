@@ -239,6 +239,14 @@ void Cli::execute(const char* line, Movement& mv, Sensors& sn, Pump& pp, GrowLig
     if (strcmp(line, "rtc") == 0) {
         Serial.print(F("rtc_ok      = ")); Serial.println(sn.getRTCStatus() ? F("YES") : F("NO"));
         Serial.print(F("fake_clock  = ")); Serial.println(sn.isUsingFakeClock() ? F("YES (software, vedi 'rtc set')") : F("NO"));
+        Serial.print(F("hub_sync    = "));
+        if (sn.lastHubSyncMs() == 0) {
+            Serial.println(F("MAI (l'Hub non ha ancora inviato un'ora NTP valida)"));
+        } else {
+            Serial.print(F("YES, "));
+            Serial.print((millis() - sn.lastHubSyncMs()) / 1000UL);
+            Serial.println(F(" s fa (heartbeat Hub, proto v4.2)"));
+        }
         Serial.print(F("epoch_s     = ")); Serial.println(sn.getEpoch());
         Serial.print(F("time_valid  = ")); Serial.println(sn.timeIsValid() ? F("YES") : F("NO (usa 'rtc set <epoch>')"));
         return;

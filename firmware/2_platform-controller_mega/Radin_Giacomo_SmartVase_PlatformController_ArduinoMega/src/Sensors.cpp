@@ -67,6 +67,14 @@
            good, without waiting for a reboot (see sampleSensors()). */
 #define RTC_REPROBE_INTERVAL_MS 60000UL
 
+/*! @brief Timezone offset (s) applied to the UTC epoch received from the Hub
+           heartbeat (see syncEpochFromHub()). The wire carries UTC (NTP);
+           the Mega's hour-of-day features (grow-light daylight window, care
+           day anchor) want local time. 7200 = CEST (Italy, summer); set 3600
+           for CET in winter. Note: `rtc set` from the CLI applies NO offset —
+           pass a locally-adjusted epoch there if the exact local hour matters. */
+#define HUB_EPOCH_TZ_OFFSET_S   7200L
+
 Sensors::Sensors() :
     us1_top         (US1_TOP_TRIG,         US1_TOP_ECHO,         US_NAV_MAX_CM),
     us2_front_right (US2_FRONT_RIGHT_TRIG, US2_FRONT_RIGHT_ECHO, US_NAV_MAX_CM),
@@ -96,7 +104,8 @@ Sensors::Sensors() :
     rtc_status(false),
     fake_clock_active(false),
     fake_clock_base_epoch(0),
-    fake_clock_set_millis(0)
+    fake_clock_set_millis(0),
+    last_hub_sync_ms(0)
 {
     for (uint8_t i = 0; i < 6; ++i) {
         raw_hist0[i] = NAN;
@@ -302,6 +311,27 @@ bool Sensors::setEpoch(uint32_t epoch_s) {
 bool Sensors::timeIsValid() {
     if (rtc_status && !rtc.oscillatorStopped()) return true;
     return fake_clock_active;
+}
+
+void Sensors::syncEpochFromHub(uint32_t epoch_s) {
+    const uint32_t local_epoch = epoch_s + (uint32_t)HUB_EPOCH_TZ_OFFSET_S;
+
+    // Re-base the software clock on the fresh NTP time and keep it ACTIVE:
+    // while the Hub keeps syncing (one heartbeat every ~30 s) the software
+    // clock is the authoritative source (see getEpoch()), and between syncs
+    // it free-runs on millis() with negligible drift.
+    fake_clock_base_epoch = local_epoch;
+    fake_clock_set_millis = millis();
+    fake_clock_active     = true;
+    last_hub_sync_ms      = millis();
+
+    // Opportunistic hardware write: if a (healthy or replaced) RTC chip is on
+    // the bus, keep it aligned too — it clears the OSF flag and lets a future
+    // module hold the time across power cycles. Failure is irrelevant here:
+    // the software clock above is already up to date.
+    if (rtc_status) {
+        (void)rtc.set((time_t)local_epoch);
+    }
 }
 
 TelemetryFast Sensors::buildFastTelemetry(CppMovementState movState, const char* deviceId) {

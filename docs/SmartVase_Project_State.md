@@ -8,7 +8,43 @@
 > cloud / Python vision / Android app are not discussed unless strictly
 > necessary.
 >
-> Updated as of **2026-07-02** (lab bring-up in progress).
+> Updated as of **2026-07-06** (lab bring-up in progress).
+
+---
+
+## 0-quater. 2026-07-06 update — Hub→Mega time sync (Mega v5.4, Hub v1.4, proto v4.2)
+
+Bench diagnosis closed the RTC saga: the I²C bus is **healthy** (the newly
+wired **BME680 answers at 0x76**, `i2cscan`), but the HW-084 RTC module is
+**faulty** — both its chips (DS3231 at 0x68 and the on-module EEPROM at 0x57)
+went from answering to silent across sessions, with SCL momentarily clamped
+low: a progressively dying module, to be replaced. Rather than blocking the
+care layer on a hardware replacement, the Mega's time now comes from the Hub:
+
+- **Proto v4.2** — `Heartbeat.epoch_s` (tag 4, appended): the Hub attaches its
+  NTP epoch (UTC) to the periodic heartbeat it already sends every 30 s;
+  `0` = "no NTP yet" and is ignored. Regenerated offline, `Heartbeat_size`
+  31 B (buffers untouched).
+- **Hub v1.4** — populates the field in `MainLogic::taskRun` only when
+  `time(nullptr)` is plausible (≥ 2020-09-13).
+- **Mega v5.4** — the serial parser adopts a plausible heartbeat epoch via
+  `Sensors::syncEpochFromHub()` (validation in `hubEpochPlausible`,
+  `CommandPolicy.h`, host-tested): the software clock is re-based every 30 s
+  (worst-case drift = one heartbeat period) and **stays authoritative** — a
+  half-dead RTC chip that occasionally ACKs cannot hijack the time. A healthy
+  chip, when present, is opportunistically written too (future module
+  replacement inherits the time for free). Timezone offset on the Mega
+  (`HUB_EPOCH_TZ_OFFSET_S`, 7200 = CEST). CLI `rtc` now shows `hub_sync`
+  (age of the last accepted sync).
+- **BME680 enabled** (`BME680_ENABLED 1`): sensor wired and detected; cost
+  measured at ~+8.9 KB flash / ~+250 B RAM (the Adafruit driver).
+- Builds: Mega ✅ RAM **70.4%** / Flash 29.5% (headroom check: ~2.4 KB static
+  free vs the 800 B degraded threshold — acceptable, now the tightest point
+  of the system); Hub ✅. Host suite 8/8 green (new `hubEpochPlausible`
+  checks in `test_command_policy`).
+- Consequence for the care layer: with the Hub connected, `time_valid` is
+  automatic (no more `rtc set` at every boot) → the daily care cycle can run
+  unattended. Standalone bench sessions still use `rtc set`.
 
 ---
 

@@ -106,6 +106,26 @@ static inline uint16_t clampMotionParamMs(uint32_t ms, uint16_t lo, uint16_t hi)
     return (uint16_t)ms;
 }
 
+/*!
+    @brief    Validates an epoch received from the Hub heartbeat before adopting it.
+
+    @details  The Hub attaches its NTP time to the periodic heartbeat
+              (`Heartbeat.epoch_s`, proto v4.2) so the Mega can keep its
+              software clock aligned when the hardware RTC is absent/faulty.
+              Defense-in-depth on the receiving side: `0` is the protocol's
+              explicit "no time available" marker (Hub not yet NTP-synced),
+              and anything before 2020-09-13 (1'600'000'000) cannot be a real
+              NTP time — adopting it would poison the daylight-window logic
+              of the grow lights and of the care layer.
+
+    @param[in] epoch_s Epoch received in the heartbeat, in seconds.
+
+    @return   `true` if the epoch is plausible and can be adopted.
+*/
+static inline bool hubEpochPlausible(uint32_t epoch_s) {
+    return epoch_s >= 1600000000UL;
+}
+
 /*! @} */ // MegaPolicy
 
 #endif // COMMAND_POLICY_H
