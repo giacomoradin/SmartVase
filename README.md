@@ -331,7 +331,7 @@ items are tracked in
 ## 10. Presentation and Demo Video
 
 - Pitch video (2 min): [https://youtu.be/UZbBSWGEUTA](https://youtu.be/UZbBSWGEUTA)
-- Presentation slides: link TBD (will be added to this repository)
+- Presentation slides: [`docs/assets/SmartVaseProjectPresentation.pdf`](docs/assets/SmartVaseProjectPresentation.pdf)
 
 ## 11. Team Members and Contributions
 
