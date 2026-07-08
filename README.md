@@ -58,7 +58,7 @@ strict separation of concerns, plus a cloud backbone and a mobile app:
 | ESP32-CAM (OV2640) | *The Eye* | Periodic JPEG capture, on-edge leaf-health analysis, cloud upload, MQTT publish |
 
 ```
-Mega  <== UART 115200 (Protobuf/nanopb, CRC16 framing) ==>  ESP32 Hub
+Mega  <==> UART 115200 (Protobuf/nanopb, CRC16 framing) <==>  ESP32 Hub
 ESP32 Hub / ESP32-CAM  <== MQTT over TLS ==>  HiveMQ Cloud  ==>  Firestore  ==>  Mobile app
 ```
 
@@ -337,7 +337,7 @@ items are tracked in
 
 | Member | Role | Contributions |
 |---|---|---|
-| **Giacomo Radin** | PM, Lead Firmware Engineer | System architecture; Mega platform-controller firmware (movement FSM, sensor pipeline, safety layer, EEPROM persistence, autonomous care layer, CLI); ESP32 Hub firmware (FreeRTOS tasks, MQTT/TLS, serial bridge); serial protocol design (Protobuf + framing); host test suite; documentation and Doxygen pipeline |
+| **Giacomo Radin** | PM, Firmware, Hardware | System architecture; Mega platform-controller firmware (movement FSM, sensor pipeline, safety layer, EEPROM persistence, autonomous care layer, CLI); ESP32 Hub firmware (FreeRTOS tasks, MQTT/TLS, serial bridge); serial protocol design (Protobuf + framing); host test suite; documentation and Doxygen pipeline |
 | **Antonio** | Computer Vision | ESP32-CAM edge vision (`VisionBotanist`: HSV metrics, leaf-health classification); Python prototyping and calibration tools (`vision/`) |
 | **Fia** | Backend and Cloud | HiveMQ setup, image-upload Cloud Function, Firestore schema, MQTT-to-Firestore bridge |
 | **Francesco** | Mobile App | Companion app (separate repository): Firestore integration, remote control and telemetry UI |
